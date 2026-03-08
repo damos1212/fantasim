@@ -1417,7 +1417,7 @@ export class Simulation {
         tribe.relations[partner.id] = clamp(tribe.relations[partner.id]! + 2, -100, 100);
         partner.relations[tribe.id] = clamp(partner.relations[tribe.id]! + 2, -100, 100);
         const returnCargoType = this.chooseTradeCargo(partner, tribe);
-        const returnCargoAmount = randInt(this.random, 6, 16);
+        const returnCargoAmount = this.chooseTradeCargoAmount(partner, tribe, returnCargoType);
         if (partner.resources[returnCargoType] < returnCargoAmount) {
           caravan.cargoType = ResourceType.Rations;
           caravan.cargoAmount = 4;
@@ -1452,7 +1452,7 @@ export class Simulation {
         caravan.path = findPath(this.world, caravan.x, caravan.y, caravan.targetX, caravan.targetY);
         caravan.pathIndex = 0;
         const outboundCargoType = this.chooseTradeCargo(tribe, partner);
-        const outboundCargoAmount = randInt(this.random, 6, 16);
+        const outboundCargoAmount = this.chooseTradeCargoAmount(tribe, partner, outboundCargoType);
         if (tribe.resources[outboundCargoType] >= outboundCargoAmount) {
           tribe.resources[outboundCargoType] -= outboundCargoAmount;
           caravan.cargoType = outboundCargoType;
@@ -4499,11 +4499,20 @@ export class Simulation {
 
   private generateCraftingPlans(tribe: TribeState): void {
     const population = this.populationOf(tribe.id);
+    const soldiers = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
+    const buildBacklog = this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length;
     const desiredStoneTools = Math.max(6, Math.floor(population * 0.45));
     const desiredBronzeTools = Math.max(4, Math.floor(population * 0.3));
     const desiredIronTools = Math.max(5, Math.floor(population * 0.35));
+    const desiredBasicWeapons = Math.max(4, Math.floor(soldiers * 1.2));
+    const desiredBasicArmor = Math.max(3, Math.floor(soldiers));
+    const desiredMetalWeapons = Math.max(4, Math.floor(soldiers * 1.15));
+    const desiredMetalArmor = Math.max(3, Math.floor(soldiers * 0.95));
     if (tribe.resources[ResourceType.StoneTools] < desiredStoneTools && tribe.resources[ResourceType.Wood] > 12 && tribe.resources[ResourceType.Stone] > 8) {
       this.enqueueCraftJob(tribe, ResourceType.StoneTools, 4, { [ResourceType.Wood]: 4, [ResourceType.Stone]: 4 }, BuildingType.Workshop, 5);
+    }
+    if (tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Planks] < Math.max(4, Math.floor(buildBacklog * 0.7)) && tribe.resources[ResourceType.Wood] > 18) {
+      this.enqueueCraftJob(tribe, ResourceType.Planks, 4, { [ResourceType.Wood]: 8 }, BuildingType.Workshop, 5);
     }
     if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.BronzeTools] < desiredBronzeTools && tribe.resources[ResourceType.Ore] > 8 && tribe.resources[ResourceType.Wood] > 6) {
       this.enqueueCraftJob(tribe, ResourceType.BronzeTools, 3, { [ResourceType.Ore]: 4, [ResourceType.Wood]: 2 }, BuildingType.Workshop, 4);
@@ -4511,13 +4520,18 @@ export class Simulation {
     if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.IronTools] < desiredIronTools && tribe.resources[ResourceType.Ore] > 10 && tribe.resources[ResourceType.Wood] > 4) {
       this.enqueueCraftJob(tribe, ResourceType.IronTools, 3, { [ResourceType.Ore]: 6, [ResourceType.Wood]: 2 }, BuildingType.Smithy, 5);
     }
-    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Wood] > 22) {
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Charcoal] < Math.max(12, Math.floor(population * 0.45)) && tribe.resources[ResourceType.Wood] > 22) {
       this.enqueueCraftJob(tribe, ResourceType.Charcoal, 4, { [ResourceType.Wood]: 10 }, BuildingType.Workshop, 5);
     }
-    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Clay] > 8 && tribe.resources[ResourceType.Stone] > 8) {
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Bricks] < Math.max(10, Math.floor(buildBacklog * 0.5)) && tribe.resources[ResourceType.Clay] > 8 && tribe.resources[ResourceType.Stone] > 8) {
       this.enqueueCraftJob(tribe, ResourceType.Bricks, 4, { [ResourceType.Clay]: 5, [ResourceType.Stone]: 3 }, BuildingType.Workshop, 5);
     }
-    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Ore] > 12 && tribe.resources[ResourceType.Wood] > 8) {
+    if (
+      tribe.age >= AgeType.Bronze
+      && tribe.resources[ResourceType.BasicWeapons] < desiredBasicWeapons
+      && tribe.resources[ResourceType.Ore] > 12
+      && tribe.resources[ResourceType.Wood] > 8
+    ) {
       this.enqueueCraftJob(
         tribe,
         ResourceType.BasicWeapons,
@@ -4527,13 +4541,29 @@ export class Simulation {
         7,
       );
     }
+    if (
+      tribe.age >= AgeType.Bronze
+      && tribe.resources[ResourceType.BasicArmor] < desiredBasicArmor
+      && tribe.resources[ResourceType.Ore] > 12
+      && tribe.resources[ResourceType.Wood] > 8
+    ) {
+      this.enqueueCraftJob(
+        tribe,
+        ResourceType.BasicArmor,
+        this.hasBuilt(tribe.id, BuildingType.Armory) ? 4 : 3,
+        { [ResourceType.Ore]: 6, [ResourceType.Wood]: 3 },
+        this.hasBuilt(tribe.id, BuildingType.Armory) ? BuildingType.Armory : BuildingType.Smithy,
+        6,
+      );
+    }
     if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.Ore] > 18) {
       const militaryShop = this.hasBuilt(tribe.id, BuildingType.Armory) ? BuildingType.Armory : BuildingType.Smithy;
-      this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
-      this.enqueueCraftJob(tribe, ResourceType.MetalArmor, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
-    }
-    if (tribe.age >= AgeType.Medieval && tribe.resources[ResourceType.Wood] > 20) {
-      this.enqueueCraftJob(tribe, ResourceType.Planks, 6, { [ResourceType.Wood]: 8 }, BuildingType.Workshop, 4);
+      if (tribe.resources[ResourceType.MetalWeapons] < desiredMetalWeapons) {
+        this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
+      }
+      if (tribe.resources[ResourceType.MetalArmor] < desiredMetalArmor) {
+        this.enqueueCraftJob(tribe, ResourceType.MetalArmor, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
+      }
     }
     if (tribe.age >= AgeType.Gunpowder && this.hasBuilt(tribe.id, BuildingType.Foundry) && tribe.resources[ResourceType.Ore] > 22 && tribe.resources[ResourceType.Charcoal] > 6) {
       this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, 5, { [ResourceType.Ore]: 10, [ResourceType.Charcoal]: 4, [ResourceType.Wood]: 2 }, BuildingType.Foundry, 7);
@@ -4684,34 +4714,35 @@ export class Simulation {
     }
   }
 
-  private minimumTradeReserve(type: ResourceType): number {
+  private minimumTradeReserve(tribe: TribeState, type: ResourceType): number {
+    const population = this.populationOf(tribe.id);
     switch (type) {
       case ResourceType.Rations:
-        return 90;
+        return Math.max(72, Math.floor(population * 5));
       case ResourceType.Grain:
       case ResourceType.Berries:
       case ResourceType.Fish:
       case ResourceType.Meat:
-        return 35;
+        return Math.max(24, Math.floor(population * 1.5));
       case ResourceType.Wood:
       case ResourceType.Stone:
-        return 80;
+        return Math.max(48, Math.floor(population * 2.5));
       case ResourceType.Ore:
-        return 45;
+        return tribe.age >= AgeType.Bronze ? Math.max(22, Math.floor(population * 1.2)) : 0;
       case ResourceType.Planks:
       case ResourceType.Bricks:
       case ResourceType.Charcoal:
-        return 18;
+        return tribe.age >= AgeType.Bronze ? 14 : 6;
       case ResourceType.StoneTools:
       case ResourceType.BronzeTools:
       case ResourceType.IronTools:
-        return 10;
+        return Math.max(6, Math.floor(population * 0.25));
       case ResourceType.BasicWeapons:
       case ResourceType.BasicArmor:
-        return 12;
+        return Math.max(6, Math.floor(population * 0.25));
       case ResourceType.MetalWeapons:
       case ResourceType.MetalArmor:
-        return 10;
+        return tribe.age >= AgeType.Iron ? Math.max(8, Math.floor(population * 0.18)) : 0;
       case ResourceType.Horses:
       case ResourceType.Livestock:
         return 4;
@@ -4734,23 +4765,55 @@ export class Simulation {
     return bestResource;
   }
 
+  private tradePreferenceBonus(tribe: TribeState, type: ResourceType): number {
+    const order = this.tradePreferenceForRace(tribe.race.type);
+    const index = order.indexOf(type);
+    return index >= 0 ? Math.max(0, order.length - index) * 3 : 0;
+  }
+
+  private tradeNeedScore(tribe: TribeState, type: ResourceType): number {
+    const reserve = this.minimumTradeReserve(tribe, type);
+    return Math.max(0, reserve - tribe.resources[type]) + this.tradePreferenceBonus(tribe, type);
+  }
+
   private chooseTradeCargo(tribe: TribeState, partner?: TribeState): ResourceType {
-    const preferred = this.tradePreferenceForRace(tribe.race.type);
-    const ordered = partner
-      ? preferred.slice().sort((a, b) => (partner.resources[a] - this.minimumTradeReserve(a)) - (partner.resources[b] - this.minimumTradeReserve(b)))
-      : preferred;
-    for (const resource of ordered) {
-      if (tribe.resources[resource] > this.minimumTradeReserve(resource) + 10) {
-        return resource;
+    const candidates = new Set<ResourceType>([
+      ...this.tradePreferenceForRace(tribe.race.type),
+      ResourceType.Rations,
+      ResourceType.Grain,
+      ResourceType.Wood,
+      ResourceType.Stone,
+      ResourceType.Ore,
+      ResourceType.Planks,
+      ResourceType.Bricks,
+      ResourceType.Charcoal,
+      ResourceType.Horses,
+      ResourceType.Livestock,
+      ResourceType.BasicWeapons,
+      ResourceType.MetalWeapons,
+    ]);
+
+    let bestResource = ResourceType.Rations;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const resource of candidates) {
+      const surplus = tribe.resources[resource] - this.minimumTradeReserve(tribe, resource);
+      if (surplus <= 0) continue;
+      const partnerNeed = partner ? this.tradeNeedScore(partner, resource) : 0;
+      const score = surplus * 0.7 + partnerNeed * 1.2 + this.tradePreferenceBonus(tribe, resource);
+      if (score > bestScore) {
+        bestScore = score;
+        bestResource = resource;
       }
     }
-    if (tribe.resources[ResourceType.Planks] > 30) return ResourceType.Planks;
-    if (tribe.resources[ResourceType.Wood] > 90) return ResourceType.Wood;
-    if (tribe.resources[ResourceType.Stone] > 90) return ResourceType.Stone;
-    if (tribe.resources[ResourceType.Ore] > 60) return ResourceType.Ore;
-    if (tribe.resources[ResourceType.Fish] > 24) return ResourceType.Fish;
-    if (tribe.resources[ResourceType.Grain] > 28) return ResourceType.Grain;
-    return ResourceType.Rations;
+    return bestResource;
+  }
+
+  private chooseTradeCargoAmount(exporter: TribeState, importer: TribeState, resource: ResourceType): number {
+    const reserve = this.minimumTradeReserve(exporter, resource);
+    const surplus = Math.max(0, exporter.resources[resource] - reserve);
+    const need = Math.max(0, this.minimumTradeReserve(importer, resource) - importer.resources[resource]);
+    const desired = Math.max(4, Math.floor(need * 0.6) + 4);
+    return clamp(Math.min(surplus, desired), 4, 18);
   }
 
   private ensureCaravansForTribe(tribe: TribeState): void {
@@ -4782,7 +4845,7 @@ export class Simulation {
     if (!stock) return;
 
     const cargoType = this.chooseTradeCargo(tribe, partner);
-    const cargoAmount = randInt(this.random, 6, 16);
+    const cargoAmount = this.chooseTradeCargoAmount(tribe, partner, cargoType);
     if (tribe.resources[cargoType] < cargoAmount) {
       return;
     }
