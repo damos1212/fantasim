@@ -1416,7 +1416,7 @@ export class Simulation {
         }
         tribe.relations[partner.id] = clamp(tribe.relations[partner.id]! + 2, -100, 100);
         partner.relations[tribe.id] = clamp(partner.relations[tribe.id]! + 2, -100, 100);
-        const returnCargoType = this.chooseTradeCargo(partner);
+        const returnCargoType = this.chooseTradeCargo(partner, tribe);
         const returnCargoAmount = randInt(this.random, 6, 16);
         if (partner.resources[returnCargoType] < returnCargoAmount) {
           caravan.cargoType = ResourceType.Rations;
@@ -1451,7 +1451,7 @@ export class Simulation {
         caravan.targetY = partner.capitalY;
         caravan.path = findPath(this.world, caravan.x, caravan.y, caravan.targetX, caravan.targetY);
         caravan.pathIndex = 0;
-        const outboundCargoType = this.chooseTradeCargo(tribe);
+        const outboundCargoType = this.chooseTradeCargo(tribe, partner);
         const outboundCargoAmount = randInt(this.random, 6, 16);
         if (tribe.resources[outboundCargoType] >= outboundCargoAmount) {
           tribe.resources[outboundCargoType] -= outboundCargoAmount;
@@ -2565,8 +2565,41 @@ export class Simulation {
     if (agent.condition === AgentConditionType.Sick) rate -= 0.22;
     if (agent.condition === AgentConditionType.Feverish) rate -= 0.38;
     if (agent.hero) rate += 0.08;
+    if (agent.role === AgentRole.Builder || agent.role === AgentRole.Miner || agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Crafter || agent.role === AgentRole.Farmer) {
+      rate += this.toolWorkBonusForTribe(tribe);
+    }
     rate += tribe.race.buildBias * 0.04;
     return clamp(rate, 0.45, 1.5);
+  }
+
+  private toolWorkBonusForTribe(tribe: TribeState): number {
+    if (tribe.resources[ResourceType.IronTools] > 0) return 0.22;
+    if (tribe.resources[ResourceType.BronzeTools] > 0) return 0.14;
+    if (tribe.resources[ResourceType.StoneTools] > 0) return 0.07;
+    return -0.18;
+  }
+
+  private consumeToolDurability(tribe: TribeState, kind: AgentTask["kind"]): void {
+    const chance =
+      kind === "build" || kind === "earthwork" || kind === "craft" ? 0.38
+      : kind === "mine" || kind === "quarry" ? 0.34
+      : kind === "cut_tree" ? 0.28
+      : kind === "gather" || kind === "hunt" || kind === "fish" || kind === "replant_tree" ? 0.18
+      : 0;
+    if (chance <= 0 || this.random() > chance) {
+      return;
+    }
+    if (tribe.resources[ResourceType.IronTools] > 0) {
+      tribe.resources[ResourceType.IronTools] -= 1;
+      return;
+    }
+    if (tribe.resources[ResourceType.BronzeTools] > 0) {
+      tribe.resources[ResourceType.BronzeTools] -= 1;
+      return;
+    }
+    if (tribe.resources[ResourceType.StoneTools] > 0) {
+      tribe.resources[ResourceType.StoneTools] -= 1;
+    }
   }
 
   private conditionCountsForTribe(tribeId: number): { sick: number; exhausted: number; inspired: number } {
@@ -2835,6 +2868,7 @@ export class Simulation {
       if (agent.carrying === ResourceType.Fish || agent.carrying === ResourceType.Berries || agent.carrying === ResourceType.Meat || agent.carrying === ResourceType.Grain) {
         tribe.resources[ResourceType.Rations] += Math.ceil(agent.carryingAmount * 0.45);
       }
+      this.consumeToolDurability(tribe, task.kind);
       agent.carrying = ResourceType.None;
       agent.carryingAmount = 0;
       this.finishTask(agent);
@@ -2879,6 +2913,7 @@ export class Simulation {
       task.workLeft -= workRate + tribe.race.buildBias * 0.3;
       if (task.workLeft <= 0) {
         this.completeBuildingTask(tribe, task.payload, task.targetX, task.targetY);
+        this.consumeToolDurability(tribe, task.kind);
         this.finishTask(agent);
       }
       return;
@@ -2891,6 +2926,7 @@ export class Simulation {
       task.workLeft -= workRate + tribe.race.buildBias * 0.25;
       if (task.workLeft <= 0) {
         this.completeEarthworkTask(tribe, task.payload, task.targetX, task.targetY);
+        this.consumeToolDurability(tribe, task.kind);
         this.finishTask(agent);
       }
       return;
@@ -2903,6 +2939,7 @@ export class Simulation {
       task.workLeft -= workRate;
       if (task.workLeft <= 0) {
         this.completeCraftTask(tribe, task.payload);
+        this.consumeToolDurability(tribe, task.kind);
         this.finishTask(agent);
       }
       return;
@@ -3715,17 +3752,27 @@ export class Simulation {
       case AgeType.Bronze:
         return (
           population >= 26
-          && this.hasBuilt(tribe.id, BuildingType.Workshop)
-          && this.hasBuilt(tribe.id, BuildingType.Mine)
-          && this.hasBuilt(tribe.id, BuildingType.Warehouse)
-          && this.hasBuilt(tribe.id, BuildingType.School)
           && this.buildingCount(tribe.id, BuildingType.Farm) >= 2
-          && tribe.resources[ResourceType.Ore] >= 24
-          && tribe.resources[ResourceType.Planks] >= 10
+          && this.hasBuilt(tribe.id, BuildingType.LumberCamp)
+          && this.hasBuilt(tribe.id, BuildingType.Cistern)
+          && tribe.resources[ResourceType.StoneTools] >= 10
+          && tribe.resources[ResourceType.Planks] >= 8
+          && tribe.resources[ResourceType.Wood] >= 60
+          && tribe.resources[ResourceType.Stone] >= 48
         );
       case AgeType.Iron:
         return (
           population >= 36
+          && this.hasBuilt(tribe.id, BuildingType.Workshop)
+          && this.hasBuilt(tribe.id, BuildingType.Mine)
+          && this.hasBuilt(tribe.id, BuildingType.Warehouse)
+          && this.hasBuilt(tribe.id, BuildingType.School)
+          && tribe.resources[ResourceType.Ore] >= 24
+          && tribe.resources[ResourceType.Planks] >= 10
+        );
+      case AgeType.Medieval:
+        return (
+          population >= 50
           && this.hasBuilt(tribe.id, BuildingType.Smithy)
           && this.hasBuilt(tribe.id, BuildingType.Armory)
           && this.hasBuilt(tribe.id, BuildingType.Barracks)
@@ -3733,41 +3780,34 @@ export class Simulation {
           && tribe.resources[ResourceType.MetalWeapons] >= 14
           && tribe.resources[ResourceType.MetalArmor] >= 10
         );
-      case AgeType.Medieval:
+      case AgeType.Gunpowder:
         return (
-          population >= 50
+          population >= 68
           && this.hasBuilt(tribe.id, BuildingType.Castle)
           && this.hasBuilt(tribe.id, BuildingType.Stable)
           && (this.hasBuilt(tribe.id, BuildingType.Tavern) || this.hasBuilt(tribe.id, BuildingType.Shrine))
           && this.buildingCount(tribe.id, BuildingType.House) + this.buildingCount(tribe.id, BuildingType.MountainHall) >= 10
           && this.computeHousing(tribe.id) >= population
         );
-      case AgeType.Gunpowder:
-        return (
-          population >= 68
-          && this.hasBuilt(tribe.id, BuildingType.Foundry)
-          && this.hasBuilt(tribe.id, BuildingType.School)
-          && this.hasBuilt(tribe.id, BuildingType.Warehouse)
-          && tribe.resources[ResourceType.Charcoal] >= 22
-          && tribe.resources[ResourceType.MetalWeapons] >= 22
-        );
       case AgeType.Industrial:
         return (
           population >= 84
-          && this.hasBuilt(tribe.id, BuildingType.Factory)
-          && this.hasBuilt(tribe.id, BuildingType.RailDepot)
           && this.hasBuilt(tribe.id, BuildingType.Foundry)
-          && this.buildingCount(tribe.id, BuildingType.Warehouse) >= 2
+          && this.hasBuilt(tribe.id, BuildingType.School)
+          && this.hasBuilt(tribe.id, BuildingType.Warehouse)
           && tribe.resources[ResourceType.Bricks] >= 30
+          && tribe.resources[ResourceType.Charcoal] >= 22
+          && tribe.resources[ResourceType.MetalWeapons] >= 22
         );
       case AgeType.Modern:
         return (
           population >= 104
-          && this.hasBuilt(tribe.id, BuildingType.PowerPlant)
-          && this.hasBuilt(tribe.id, BuildingType.Airfield)
           && this.hasBuilt(tribe.id, BuildingType.Factory)
-          && this.buildingCount(tribe.id, BuildingType.Factory) >= 2
+          && this.hasBuilt(tribe.id, BuildingType.RailDepot)
+          && this.hasBuilt(tribe.id, BuildingType.Foundry)
+          && this.buildingCount(tribe.id, BuildingType.Warehouse) >= 2
           && tribe.resources[ResourceType.MetalArmor] >= 32
+          && tribe.resources[ResourceType.Bricks] >= 40
         );
       default:
         return true;
@@ -4329,8 +4369,18 @@ export class Simulation {
   }
 
   private generateCraftingPlans(tribe: TribeState): void {
-    if (tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Wood] > 20 && tribe.resources[ResourceType.Stone] > 10) {
-      this.enqueueCraftJob(tribe, ResourceType.StoneTools, 4, { [ResourceType.Wood]: 4, [ResourceType.Stone]: 4 }, BuildingType.Workshop);
+    const population = this.populationOf(tribe.id);
+    const desiredStoneTools = Math.max(6, Math.floor(population * 0.45));
+    const desiredBronzeTools = Math.max(4, Math.floor(population * 0.3));
+    const desiredIronTools = Math.max(5, Math.floor(population * 0.35));
+    if (tribe.resources[ResourceType.StoneTools] < desiredStoneTools && tribe.resources[ResourceType.Wood] > 12 && tribe.resources[ResourceType.Stone] > 8) {
+      this.enqueueCraftJob(tribe, ResourceType.StoneTools, 4, { [ResourceType.Wood]: 4, [ResourceType.Stone]: 4 }, BuildingType.Workshop, 5);
+    }
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.BronzeTools] < desiredBronzeTools && tribe.resources[ResourceType.Ore] > 8 && tribe.resources[ResourceType.Wood] > 6) {
+      this.enqueueCraftJob(tribe, ResourceType.BronzeTools, 3, { [ResourceType.Ore]: 4, [ResourceType.Wood]: 2 }, BuildingType.Workshop, 4);
+    }
+    if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.IronTools] < desiredIronTools && tribe.resources[ResourceType.Ore] > 10 && tribe.resources[ResourceType.Wood] > 4) {
+      this.enqueueCraftJob(tribe, ResourceType.IronTools, 3, { [ResourceType.Ore]: 6, [ResourceType.Wood]: 2 }, BuildingType.Smithy, 5);
     }
     if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Wood] > 22) {
       this.enqueueCraftJob(tribe, ResourceType.Charcoal, 4, { [ResourceType.Wood]: 10 }, BuildingType.Workshop, 5);
@@ -4352,7 +4402,6 @@ export class Simulation {
       const militaryShop = this.hasBuilt(tribe.id, BuildingType.Armory) ? BuildingType.Armory : BuildingType.Smithy;
       this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
       this.enqueueCraftJob(tribe, ResourceType.MetalArmor, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
-      this.enqueueCraftJob(tribe, ResourceType.IronTools, 3, { [ResourceType.Ore]: 6, [ResourceType.Wood]: 2 }, BuildingType.Smithy, 5);
     }
     if (tribe.age >= AgeType.Medieval && tribe.resources[ResourceType.Wood] > 20) {
       this.enqueueCraftJob(tribe, ResourceType.Planks, 6, { [ResourceType.Wood]: 8 }, BuildingType.Workshop, 4);
@@ -4483,13 +4532,81 @@ export class Simulation {
     });
   }
 
-  private chooseTradeCargo(tribe: TribeState): ResourceType {
+  private tradePreferenceForRace(race: RaceType): ResourceType[] {
+    switch (race) {
+      case RaceType.Humans:
+        return [ResourceType.Grain, ResourceType.Rations, ResourceType.Planks, ResourceType.BasicWeapons];
+      case RaceType.Elves:
+        return [ResourceType.Berries, ResourceType.Grain, ResourceType.Planks, ResourceType.IronTools];
+      case RaceType.Dwarves:
+        return [ResourceType.Stone, ResourceType.Ore, ResourceType.Bricks, ResourceType.MetalWeapons];
+      case RaceType.Orcs:
+        return [ResourceType.Meat, ResourceType.Wood, ResourceType.BasicWeapons, ResourceType.BasicArmor];
+      case RaceType.Goblins:
+        return [ResourceType.Ore, ResourceType.Charcoal, ResourceType.BasicWeapons, ResourceType.BronzeTools];
+      case RaceType.Halflings:
+        return [ResourceType.Grain, ResourceType.Berries, ResourceType.Rations, ResourceType.Planks];
+      case RaceType.Nomads:
+        return [ResourceType.Horses, ResourceType.Livestock, ResourceType.Meat, ResourceType.Grain];
+      case RaceType.Darkfolk:
+        return [ResourceType.Ore, ResourceType.Bricks, ResourceType.Charcoal, ResourceType.MetalArmor];
+      default:
+        return [ResourceType.Rations];
+    }
+  }
+
+  private minimumTradeReserve(type: ResourceType): number {
+    switch (type) {
+      case ResourceType.Rations:
+        return 90;
+      case ResourceType.Grain:
+      case ResourceType.Berries:
+      case ResourceType.Fish:
+      case ResourceType.Meat:
+        return 35;
+      case ResourceType.Wood:
+      case ResourceType.Stone:
+        return 80;
+      case ResourceType.Ore:
+        return 45;
+      case ResourceType.Planks:
+      case ResourceType.Bricks:
+      case ResourceType.Charcoal:
+        return 18;
+      case ResourceType.StoneTools:
+      case ResourceType.BronzeTools:
+      case ResourceType.IronTools:
+        return 10;
+      case ResourceType.BasicWeapons:
+      case ResourceType.BasicArmor:
+        return 12;
+      case ResourceType.MetalWeapons:
+      case ResourceType.MetalArmor:
+        return 10;
+      case ResourceType.Horses:
+      case ResourceType.Livestock:
+        return 4;
+      default:
+        return 8;
+    }
+  }
+
+  private chooseTradeCargo(tribe: TribeState, partner?: TribeState): ResourceType {
+    const preferred = this.tradePreferenceForRace(tribe.race.type);
+    const ordered = partner
+      ? preferred.slice().sort((a, b) => (partner.resources[a] - this.minimumTradeReserve(a)) - (partner.resources[b] - this.minimumTradeReserve(b)))
+      : preferred;
+    for (const resource of ordered) {
+      if (tribe.resources[resource] > this.minimumTradeReserve(resource) + 10) {
+        return resource;
+      }
+    }
     if (tribe.resources[ResourceType.Planks] > 30) return ResourceType.Planks;
-    if (tribe.resources[ResourceType.Wood] > 80) return ResourceType.Wood;
-    if (tribe.resources[ResourceType.Stone] > 70) return ResourceType.Stone;
-    if (tribe.resources[ResourceType.Ore] > 50) return ResourceType.Ore;
-    if (tribe.resources[ResourceType.Fish] > 20) return ResourceType.Fish;
-    if (tribe.resources[ResourceType.Grain] > 20) return ResourceType.Grain;
+    if (tribe.resources[ResourceType.Wood] > 90) return ResourceType.Wood;
+    if (tribe.resources[ResourceType.Stone] > 90) return ResourceType.Stone;
+    if (tribe.resources[ResourceType.Ore] > 60) return ResourceType.Ore;
+    if (tribe.resources[ResourceType.Fish] > 24) return ResourceType.Fish;
+    if (tribe.resources[ResourceType.Grain] > 28) return ResourceType.Grain;
     return ResourceType.Rations;
   }
 
@@ -4521,7 +4638,7 @@ export class Simulation {
       ?? tribeBuildings.find((building) => building.type === BuildingType.CapitalHall);
     if (!stock) return;
 
-    const cargoType = this.chooseTradeCargo(tribe);
+    const cargoType = this.chooseTradeCargo(tribe, partner);
     const cargoAmount = randInt(this.random, 6, 16);
     if (tribe.resources[cargoType] < cargoAmount) {
       return;
