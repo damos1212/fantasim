@@ -4800,9 +4800,7 @@ export class Simulation {
       "Shelter Craft",
       "Foraging Lore",
       "Hunting Bands",
-      "Food Drying",
       "Pack Hauling",
-      "Clan Roads",
     ];
     if (tribe.age >= AgeType.Stone) {
       techs.push(

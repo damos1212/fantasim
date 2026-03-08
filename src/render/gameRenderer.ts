@@ -230,12 +230,16 @@ export class GameRenderer {
   readonly hud = document.createElement("div");
   readonly topbar = document.createElement("div");
   readonly sidebar = document.createElement("div");
+  readonly sidebarTabs = document.createElement("div");
+  readonly sidebarBody = document.createElement("div");
   readonly minimap = document.createElement("canvas");
+  readonly loadingOverlay = document.createElement("div");
 
   readonly worldContainer = new Container();
   readonly terrainGraphics = new Graphics();
   readonly overlayGraphics = new Graphics();
   readonly buildingGraphics = new Graphics();
+  readonly atmosphereGraphics = new Graphics();
   readonly unitGraphics = new Graphics();
   readonly selectionGraphics = new Graphics();
   readonly labelLayer = new Container();
@@ -299,7 +303,8 @@ export class GameRenderer {
   lastHudRenderAt = 0;
   hudDirty = true;
   lastTopbarMarkup = "";
-  lastSidebarMarkup = "";
+  lastSidebarTabsMarkup = "";
+  lastSidebarBodyMarkup = "";
   sidebarScrollTopByTab: Record<SidebarTab, number> = {
     inspect: 0,
     tribes: 0,
@@ -311,6 +316,9 @@ export class GameRenderer {
   lastMinimapCameraX = Number.NaN;
   lastMinimapCameraY = Number.NaN;
   lastMinimapZoom = Number.NaN;
+  staticSceneDirty = true;
+  lastStaticViewportSignature = "";
+  lastStaticRenderAt = 0;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -318,9 +326,19 @@ export class GameRenderer {
     this.hud.className = "hud";
     this.topbar.className = "topbar";
     this.sidebar.className = "sidebar";
+    this.sidebarTabs.className = "sidebar__tabs";
+    this.sidebarBody.className = "sidebar__body";
     this.minimap.width = 360;
     this.minimap.height = 360;
     this.minimap.className = "minimap";
+    this.loadingOverlay.className = "loading-overlay";
+    this.loadingOverlay.innerHTML = `
+      <div class="loading-overlay__panel">
+        <div class="loading-overlay__title">Generating World</div>
+        <div class="loading-overlay__bar"><span class="loading-overlay__fill"></span></div>
+        <div class="loading-overlay__status">Preparing terrain, tribes, and simulation...</div>
+      </div>
+    `;
   }
 
   async init(): Promise<void> {
@@ -333,6 +351,7 @@ export class GameRenderer {
     this.worldContainer.addChild(this.terrainGraphics);
     this.worldContainer.addChild(this.overlayGraphics);
     this.worldContainer.addChild(this.buildingGraphics);
+    this.worldContainer.addChild(this.atmosphereGraphics);
     this.worldContainer.addChild(this.unitGraphics);
     this.worldContainer.addChild(this.selectionGraphics);
     this.worldContainer.addChild(this.labelLayer);
@@ -340,8 +359,11 @@ export class GameRenderer {
 
     this.shell.appendChild(this.app.canvas);
     this.hud.appendChild(this.topbar);
+    this.sidebar.appendChild(this.sidebarTabs);
+    this.sidebar.appendChild(this.sidebarBody);
     this.hud.appendChild(this.sidebar);
     this.hud.appendChild(this.minimap);
+    this.hud.appendChild(this.loadingOverlay);
     this.shell.appendChild(this.hud);
     this.root.appendChild(this.shell);
 
@@ -408,6 +430,29 @@ export class GameRenderer {
     });
   }
 
+  setLoadingStatus(message: string): void {
+    const status = this.loadingOverlay.querySelector<HTMLElement>(".loading-overlay__status");
+    const fill = this.loadingOverlay.querySelector<HTMLElement>(".loading-overlay__fill");
+    if (status) {
+      status.textContent = message;
+    }
+    if (fill) {
+      const next = Math.min(92, (parseFloat(fill.dataset.progress ?? "12") || 12) + 18);
+      fill.dataset.progress = `${next}`;
+      fill.style.width = `${next}%`;
+    }
+    this.loadingOverlay.classList.remove("is-hidden");
+  }
+
+  hideLoading(): void {
+    const fill = this.loadingOverlay.querySelector<HTMLElement>(".loading-overlay__fill");
+    if (fill) {
+      fill.dataset.progress = "100";
+      fill.style.width = "100%";
+    }
+    this.loadingOverlay.classList.add("is-hidden");
+  }
+
   setWorld(world: StaticWorldData, tribes: TribeSummary[]): void {
     this.state.world = world;
     this.state.terrain = world.terrain.slice();
@@ -429,6 +474,8 @@ export class GameRenderer {
     this.state.tribes = tribes;
     this.cameraX = world.width * TILE_SIZE * 0.42;
     this.cameraY = world.height * TILE_SIZE * 0.42;
+    this.staticSceneDirty = true;
+    this.minimapDirty = true;
     this.updateHud();
     this.drawMinimap();
   }
@@ -482,6 +529,7 @@ export class GameRenderer {
     }
 
     this.hudDirty = true;
+    this.staticSceneDirty = this.staticSceneDirty || snapshot.tileUpdates.length > 0;
     if (snapshot.tileUpdates.length > 0 || this.state.tick % 8 === 0) {
       this.minimapDirty = true;
     }
@@ -621,58 +669,83 @@ export class GameRenderer {
     const maxTileX = Math.min(world.width - 1, Math.ceil((this.cameraX + viewportWidth / this.zoom) / TILE_SIZE) + 1);
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
     const lodStep = this.zoom < 0.35 ? 4 : this.zoom < 0.58 ? 2 : 1;
+    const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
+    const now = performance.now();
+    const redrawStaticScene =
+      this.staticSceneDirty ||
+      this.lastStaticViewportSignature !== staticViewportSignature ||
+      now - this.lastStaticRenderAt > 180;
 
     this.worldContainer.scale.set(this.zoom);
     this.worldContainer.position.set(-this.cameraX * this.zoom, -this.cameraY * this.zoom);
 
-    this.terrainGraphics.clear();
-    this.overlayGraphics.clear();
-    this.buildingGraphics.clear();
+    if (redrawStaticScene) {
+      this.terrainGraphics.clear();
+      this.overlayGraphics.clear();
+      this.buildingGraphics.clear();
+    }
+    this.atmosphereGraphics.clear();
     this.unitGraphics.clear();
     this.selectionGraphics.clear();
     for (const label of this.labelSprites.values()) {
       label.visible = false;
     }
 
-    for (let y = minTileY; y <= maxTileY; y += lodStep) {
-      for (let x = minTileX; x <= maxTileX; x += lodStep) {
-        const index = indexOf(x, y, world.width);
-        const terrain = this.state.terrain[index] as TerrainType;
-        const biome = this.state.biome[index] as BiomeType;
-        const elevation = this.state.elevation[index] ?? 128;
-        const eastElevation = x < world.width - 1 ? this.state.elevation[index + 1] ?? elevation : elevation;
-        const southElevation = y < world.height - 1 ? this.state.elevation[index + world.width] ?? elevation : elevation;
-        const px = x * TILE_SIZE;
-        const py = y * TILE_SIZE;
-        if (this.viewMode === "surface") {
-          this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep);
-        } else {
-          this.drawUndergroundTile(
-            px,
-            py,
-            this.state.undergroundTerrain[index] as UndergroundTerrainType,
-            this.state.undergroundFeature[index] as UndergroundFeatureType,
-            this.state.undergroundResourceAmount[index] ?? 0,
-            lodStep,
-          );
-        }
+    if (redrawStaticScene) {
+      for (let y = minTileY; y <= maxTileY; y += lodStep) {
+        for (let x = minTileX; x <= maxTileX; x += lodStep) {
+          const index = indexOf(x, y, world.width);
+          const terrain = this.state.terrain[index] as TerrainType;
+          const biome = this.state.biome[index] as BiomeType;
+          const elevation = this.state.elevation[index] ?? 128;
+          const eastElevation = x < world.width - 1 ? this.state.elevation[index + 1] ?? elevation : elevation;
+          const southElevation = y < world.height - 1 ? this.state.elevation[index + world.width] ?? elevation : elevation;
+          const px = x * TILE_SIZE;
+          const py = y * TILE_SIZE;
+          if (this.viewMode === "surface") {
+            this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep);
+          } else {
+            this.drawUndergroundTile(
+              px,
+              py,
+              this.state.undergroundTerrain[index] as UndergroundTerrainType,
+              this.state.undergroundFeature[index] as UndergroundFeatureType,
+              this.state.undergroundResourceAmount[index] ?? 0,
+              lodStep,
+            );
+          }
 
-        const owner = this.state.owner[index];
-        if (owner >= 0 && this.viewMode === "surface") {
-          const tribe = this.state.tribes.find((entry) => entry.id === owner);
-          if (tribe) {
-            drawPixelRect(this.overlayGraphics, px, py, TILE_SIZE * lodStep, TILE_SIZE * lodStep, tribe.color, lodStep > 1 ? 0.06 : 0.08);
+          const owner = this.state.owner[index];
+          if (owner >= 0 && this.viewMode === "surface") {
+            const tribe = this.state.tribes.find((entry) => entry.id === owner);
+            if (tribe) {
+              drawPixelRect(this.overlayGraphics, px, py, TILE_SIZE * lodStep, TILE_SIZE * lodStep, tribe.color, lodStep > 1 ? 0.06 : 0.08);
+            }
+          }
+
+          if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface") {
+            this.drawRoadTile(px, py);
+          }
+
+          if (lodStep === 1 && this.viewMode === "surface") {
+            this.drawFeature(this.state.feature[index] as FeatureType, px, py, terrain);
           }
         }
-
-        if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface") {
-          this.drawRoadTile(px, py);
-        }
-
-        if (lodStep === 1 && this.viewMode === "surface") {
-          this.drawFeature(this.state.feature[index] as FeatureType, px, py, terrain);
-        }
       }
+
+      for (const building of this.state.buildings) {
+        if (this.viewMode === "underground" && building.type !== BuildingType.MountainHall && building.type !== BuildingType.TunnelEntrance && building.type !== BuildingType.DeepMine) {
+          continue;
+        }
+        if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
+          continue;
+        }
+        const tribe = this.state.tribes.find((entry) => entry.id === building.tribeId);
+        this.drawBuilding(building, tribe);
+      }
+      this.staticSceneDirty = false;
+      this.lastStaticViewportSignature = staticViewportSignature;
+      this.lastStaticRenderAt = now;
     }
 
     if (this.viewMode === "surface" && lodStep <= 2) {
@@ -681,17 +754,6 @@ export class GameRenderer {
 
     if (this.viewMode === "surface" && lodStep === 1) {
       this.drawWeatherOverlay(minTileX, minTileY, maxTileX, maxTileY);
-    }
-
-    for (const building of this.state.buildings) {
-      if (this.viewMode === "underground" && building.type !== BuildingType.MountainHall && building.type !== BuildingType.TunnelEntrance && building.type !== BuildingType.DeepMine) {
-        continue;
-      }
-      if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
-        continue;
-      }
-      const tribe = this.state.tribes.find((entry) => entry.id === building.tribeId);
-      this.drawBuilding(building, tribe);
     }
 
     for (const animal of this.state.animals) {
@@ -998,12 +1060,12 @@ export class GameRenderer {
       const rx = 90 + i * 28;
       const ry = 44 + i * 15;
       const alpha = 0.02 + i * 0.004;
-      this.overlayGraphics.beginFill(0x000000, alpha);
-      this.overlayGraphics.drawEllipse(cx - rx * 0.32, cy + 4, rx * 0.62, ry * 0.7);
-      this.overlayGraphics.drawEllipse(cx, cy - 4, rx * 0.74, ry * 0.86);
-      this.overlayGraphics.drawEllipse(cx + rx * 0.34, cy + 3, rx * 0.58, ry * 0.68);
-      this.overlayGraphics.drawEllipse(cx, cy + ry * 0.18, rx * 0.94, ry * 0.52);
-      this.overlayGraphics.endFill();
+      this.atmosphereGraphics.beginFill(0x000000, alpha);
+      this.atmosphereGraphics.drawEllipse(cx - rx * 0.32, cy + 4, rx * 0.62, ry * 0.7);
+      this.atmosphereGraphics.drawEllipse(cx, cy - 4, rx * 0.74, ry * 0.86);
+      this.atmosphereGraphics.drawEllipse(cx + rx * 0.34, cy + 3, rx * 0.58, ry * 0.68);
+      this.atmosphereGraphics.drawEllipse(cx, cy + ry * 0.18, rx * 0.94, ry * 0.52);
+      this.atmosphereGraphics.endFill();
     }
   }
 
@@ -1025,13 +1087,13 @@ export class GameRenderer {
       if (cell.kind === WeatherKind.AshStorm) color = 0x7a6c66;
       if (cell.kind === WeatherKind.Fog) color = 0xd8e2ea;
       alpha = 0.02 + cell.intensity / 4000;
-      this.overlayGraphics.beginFill(color, alpha);
-      this.overlayGraphics.drawCircle(px, py, radius);
-      this.overlayGraphics.endFill();
+      this.atmosphereGraphics.beginFill(color, alpha);
+      this.atmosphereGraphics.drawCircle(px, py, radius);
+      this.atmosphereGraphics.endFill();
       if (cell.kind === WeatherKind.Storm) {
-        this.overlayGraphics.beginFill(0xeaf5ff, 0.01 + ((Math.sin(this.state.tick * 0.35 + weatherIndex * 1.7) + 1) * 0.5) * 0.04);
-        this.overlayGraphics.drawCircle(px + radius * 0.12, py - radius * 0.1, radius * 0.66);
-        this.overlayGraphics.endFill();
+        this.atmosphereGraphics.beginFill(0xeaf5ff, 0.01 + ((Math.sin(this.state.tick * 0.35 + weatherIndex * 1.7) + 1) * 0.5) * 0.04);
+        this.atmosphereGraphics.drawCircle(px + radius * 0.12, py - radius * 0.1, radius * 0.66);
+        this.atmosphereGraphics.endFill();
       }
 
       const particleCount = this.zoom > 1 ? 18 : 10;
@@ -1044,15 +1106,15 @@ export class GameRenderer {
         const particleY = py + offsetY;
 
         if (cell.kind === WeatherKind.Rain || cell.kind === WeatherKind.Storm) {
-          drawPixelRect(this.overlayGraphics, particleX, particleY, 1, cell.kind === WeatherKind.Storm ? 6 : 4, lighten(color, 40), 0.42);
+          drawPixelRect(this.atmosphereGraphics, particleX, particleY, 1, cell.kind === WeatherKind.Storm ? 6 : 4, lighten(color, 40), 0.42);
         } else if (cell.kind === WeatherKind.Blizzard) {
-          drawPixelRect(this.overlayGraphics, particleX, particleY, 2, 2, 0xffffff, 0.48);
+          drawPixelRect(this.atmosphereGraphics, particleX, particleY, 2, 2, 0xffffff, 0.48);
         } else if (cell.kind === WeatherKind.AshStorm) {
-          drawPixelRect(this.overlayGraphics, particleX, particleY, 2, 1, 0x5c504a, 0.5);
+          drawPixelRect(this.atmosphereGraphics, particleX, particleY, 2, 1, 0x5c504a, 0.5);
         } else if (cell.kind === WeatherKind.Fog) {
-          drawPixelRect(this.overlayGraphics, particleX, particleY, 3, 2, 0xe8edf0, 0.14);
+          drawPixelRect(this.atmosphereGraphics, particleX, particleY, 3, 2, 0xe8edf0, 0.14);
         } else if (cell.kind === WeatherKind.Heatwave) {
-          drawPixelRect(this.overlayGraphics, particleX, particleY, 2, 1, 0xffc177, 0.22);
+          drawPixelRect(this.atmosphereGraphics, particleX, particleY, 2, 1, 0xffc177, 0.22);
         }
       }
     }
@@ -2206,26 +2268,21 @@ export class GameRenderer {
         : this.sidebarTab === "events"
           ? `${eventsPanel}${worldPanel}`
           : `${worldPanel}${tribesPanel}`;
-    const currentBody = this.sidebar.querySelector<HTMLElement>(".sidebar__body");
-    if (currentBody) {
-      this.sidebarScrollTopByTab[this.renderedSidebarTab] = currentBody.scrollTop;
-    }
-    const sidebarMarkup = `
-      <div class="sidebar__tabs">
-        <button class="sidebar__tab ${this.sidebarTab === "inspect" ? "is-active" : ""}" data-tab="inspect">Inspect</button>
-        <button class="sidebar__tab ${this.sidebarTab === "tribes" ? "is-active" : ""}" data-tab="tribes">Tribes</button>
-        <button class="sidebar__tab ${this.sidebarTab === "events" ? "is-active" : ""}" data-tab="events">Events</button>
-        <button class="sidebar__tab ${this.sidebarTab === "world" ? "is-active" : ""}" data-tab="world">World</button>
-      </div>
-      <div class="sidebar__body">${bodyMarkup}</div>
+    this.sidebarScrollTopByTab[this.renderedSidebarTab] = this.sidebarBody.scrollTop;
+    const sidebarTabsMarkup = `
+      <button class="sidebar__tab ${this.sidebarTab === "inspect" ? "is-active" : ""}" data-tab="inspect">Inspect</button>
+      <button class="sidebar__tab ${this.sidebarTab === "tribes" ? "is-active" : ""}" data-tab="tribes">Tribes</button>
+      <button class="sidebar__tab ${this.sidebarTab === "events" ? "is-active" : ""}" data-tab="events">Events</button>
+      <button class="sidebar__tab ${this.sidebarTab === "world" ? "is-active" : ""}" data-tab="world">World</button>
     `;
-    if (sidebarMarkup !== this.lastSidebarMarkup) {
-      this.sidebar.innerHTML = sidebarMarkup;
-      this.lastSidebarMarkup = sidebarMarkup;
-      const nextBody = this.sidebar.querySelector<HTMLElement>(".sidebar__body");
-      if (nextBody) {
-        nextBody.scrollTop = this.sidebarScrollTopByTab[this.sidebarTab] ?? 0;
-      }
+    if (sidebarTabsMarkup !== this.lastSidebarTabsMarkup) {
+      this.sidebarTabs.innerHTML = sidebarTabsMarkup;
+      this.lastSidebarTabsMarkup = sidebarTabsMarkup;
+    }
+    if (bodyMarkup !== this.lastSidebarBodyMarkup) {
+      this.sidebarBody.innerHTML = bodyMarkup;
+      this.lastSidebarBodyMarkup = bodyMarkup;
+      this.sidebarBody.scrollTop = this.sidebarScrollTopByTab[this.sidebarTab] ?? 0;
       this.renderedSidebarTab = this.sidebarTab;
     }
   }

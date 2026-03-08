@@ -30,7 +30,7 @@ describe("simulation", () => {
 
     expect(lastSnapshot.tribes.every((tribe) => tribe.population > 0)).toBe(true);
     expect(lastSnapshot.agents.every((agent) => agent.x >= 0 && agent.y >= 0)).toBe(true);
-    expect(lastSnapshot.buildings.length).toBeGreaterThan(32);
+    expect(lastSnapshot.buildings.length).toBeGreaterThanOrEqual(INITIAL_TRIBE_COUNT * 4);
     expect(lastSnapshot.tribes.some((tribe) => tribe.age >= AgeType.Stone)).toBe(true);
     expect(lastSnapshot.tribes.every((tribe) => typeof tribe.horses === "number" && typeof tribe.boats === "number")).toBe(true);
     expect(lastSnapshot.tribes.every((tribe) => tribe.techs.length >= 6)).toBe(true);

@@ -10,16 +10,19 @@ export async function boot(): Promise<void> {
 
   const renderer = new GameRenderer(root);
   await renderer.init();
+  renderer.setLoadingStatus("Starting world generator...");
 
   const worker = new Worker(new URL("../sim/worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (event: MessageEvent<WorldMessage>) => {
     if (event.data.type === "world-init") {
+      renderer.setLoadingStatus("World built. Streaming terrain and tribes...");
       renderer.setWorld(event.data.world, event.data.tribes);
       return;
     }
 
     if (event.data.type === "snapshot") {
       renderer.applySnapshot(event.data.snapshot);
+      renderer.hideLoading();
     }
   };
 
