@@ -244,6 +244,7 @@ type EarthworkPayload = {
 type HaulPayload = {
   sourceX: number;
   sourceY: number;
+  sourceBuildingId?: number | null;
   dropX: number;
   dropY: number;
   resourceType: ResourceType;
@@ -2900,8 +2901,12 @@ export class Simulation {
         return;
       }
       if (task.stage === "toSource") {
+        const sourceBuilding = task.payload.sourceBuildingId != null
+          ? this.buildings.find((entry) => entry.id === task.payload.sourceBuildingId) ?? null
+          : this.findStockedSourceBuilding(tribe.id, task.payload.sourceX, task.payload.sourceY, task.payload.resourceType);
+        const withdrawn = this.withdrawBuildingStock(sourceBuilding, task.payload.resourceType, task.payload.amount);
         agent.carrying = task.payload.resourceType;
-        agent.carryingAmount = task.payload.amount;
+        agent.carryingAmount = withdrawn > 0 ? withdrawn : task.payload.amount;
         task.stage = "toDrop";
         task.targetX = task.payload.dropX;
         task.targetY = task.payload.dropY;
@@ -3166,20 +3171,7 @@ export class Simulation {
   }
 
   private findResourceDropBuilding(tribeId: number, originX: number, originY: number, resourceType: ResourceType): BuildingState | null {
-    const preferredTypes =
-      resourceType === ResourceType.Wood
-        ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
-        : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay
-          ? [BuildingType.Quarry, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
-          : resourceType === ResourceType.Ore
-            ? [BuildingType.DeepMine, BuildingType.Mine, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
-            : resourceType === ResourceType.Fish
-              ? [BuildingType.Fishery, BuildingType.FishingHut, BuildingType.Dock, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
-              : resourceType === ResourceType.Berries || resourceType === ResourceType.Grain || resourceType === ResourceType.Meat || resourceType === ResourceType.Rations
-                ? [BuildingType.Farm, BuildingType.Orchard, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
-                : resourceType === ResourceType.Horses || resourceType === ResourceType.Livestock || resourceType === ResourceType.Hides
-                  ? [BuildingType.Stable, BuildingType.Farm, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
-                  : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
+    const preferredTypes = this.sourceBuildingTypesForResource(resourceType);
     const candidates = this.buildingsForTribe(tribeId)
       .filter((building) => preferredTypes.includes(building.type))
       .sort((a, b) => {
@@ -3213,6 +3205,53 @@ export class Simulation {
       }
     }
     return { resourceType: bestType, amount: bestAmount };
+  }
+
+  private sourceBuildingTypesForResource(resourceType: ResourceType): BuildingType[] {
+    return resourceType === ResourceType.Wood || resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal
+      ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+      : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay || resourceType === ResourceType.Bricks
+        ? [BuildingType.Quarry, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+        : resourceType === ResourceType.Ore
+          ? [BuildingType.DeepMine, BuildingType.Mine, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+          : resourceType === ResourceType.Fish
+            ? [BuildingType.Fishery, BuildingType.FishingHut, BuildingType.Dock, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+            : resourceType === ResourceType.Berries || resourceType === ResourceType.Grain || resourceType === ResourceType.Meat || resourceType === ResourceType.Rations
+              ? [BuildingType.Farm, BuildingType.Orchard, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+              : resourceType === ResourceType.Horses || resourceType === ResourceType.Livestock || resourceType === ResourceType.Hides
+                ? [BuildingType.Stable, BuildingType.Farm, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+                : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
+  }
+
+  private findStockedSourceBuilding(tribeId: number, originX: number, originY: number, resourceType: ResourceType): BuildingState | null {
+    const preferredTypes = this.sourceBuildingTypesForResource(resourceType);
+    const candidates = this.buildingsForTribe(tribeId)
+      .filter((building) => preferredTypes.includes(building.type))
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        const stockA = a.stock[resourceType] ?? 0;
+        const stockB = b.stock[resourceType] ?? 0;
+        const typeBiasA = Math.max(0, 10 - preferredTypes.indexOf(a.type) * 2);
+        const typeBiasB = Math.max(0, 10 - preferredTypes.indexOf(b.type) * 2);
+        return (
+          (stockB * 0.45 + typeBiasB * 6 - manhattan(originX, originY, centerB.x, centerB.y) * 1.2)
+          - (stockA * 0.45 + typeBiasA * 6 - manhattan(originX, originY, centerA.x, centerA.y) * 1.2)
+        );
+      });
+    return candidates[0] ?? null;
+  }
+
+  private withdrawBuildingStock(building: BuildingState | null, resourceType: ResourceType, amount: number): number {
+    if (!building || resourceType === ResourceType.None || amount <= 0) {
+      return 0;
+    }
+    const available = building.stock[resourceType] ?? 0;
+    const withdrawn = Math.min(available, amount);
+    if (withdrawn > 0) {
+      building.stock[resourceType] = available - withdrawn;
+    }
+    return withdrawn;
   }
 
   private performResourceTask(
@@ -4625,7 +4664,6 @@ export class Simulation {
     if (!this.canAfford(tribe, def.cost)) return;
     const site = this.findBuildingSiteAround(tribe, def, originX, originY, radius);
     if (!site) return;
-    const stock = this.findConstructionSource(tribe.id, type);
     const haulSpecs = this.constructionHaulPlan(def.cost);
 
     for (const [resource, amount] of Object.entries(def.cost)) {
@@ -4646,23 +4684,26 @@ export class Simulation {
         height: def.size[1],
         supplied: 0,
         supplyNeeded: Math.max(1, haulSpecs.length),
-        stockX: stock.x,
-        stockY: stock.y,
+        stockX: site.x + Math.floor(def.size[0] / 2),
+        stockY: site.y + Math.floor(def.size[1] / 2),
       },
     };
     this.jobs.push(buildJob);
     for (const haul of haulSpecs) {
+      const sourceBuilding = this.findStockedSourceBuilding(tribe.id, site.x, site.y, haul.resourceType);
+      const sourceSite = sourceBuilding ? buildingCenter(sourceBuilding) : this.findConstructionSource(tribe.id, type);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind: "haul",
-        x: stock.x,
-        y: stock.y,
+        x: sourceSite.x,
+        y: sourceSite.y,
         priority: Math.max(4, priority - 1),
         claimedBy: null,
         payload: {
-          sourceX: stock.x,
-          sourceY: stock.y,
+          sourceX: sourceSite.x,
+          sourceY: sourceSite.y,
+          sourceBuildingId: sourceBuilding?.id ?? null,
           dropX: site.x + Math.floor(def.size[0] / 2),
           dropY: site.y + Math.floor(def.size[1] / 2),
           resourceType: haul.resourceType,
@@ -5986,17 +6027,20 @@ export class Simulation {
       },
     });
     for (const haul of haulSpecs) {
+      const sourceBuilding = this.findStockedSourceBuilding(tribe.id, center.x, center.y, haul.resourceType);
+      const sourceSite = sourceBuilding ? buildingCenter(sourceBuilding) : this.findNearestStorageSite(tribe.id, center.x, center.y, haul.resourceType);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind: "haul",
-        x: stock.x,
-        y: stock.y,
+        x: sourceSite.x,
+        y: sourceSite.y,
         priority: 4,
         claimedBy: null,
         payload: {
-          sourceX: stock.x,
-          sourceY: stock.y,
+          sourceX: sourceSite.x,
+          sourceY: sourceSite.y,
+          sourceBuildingId: sourceBuilding?.id ?? null,
           dropX: center.x,
           dropY: center.y,
           resourceType: haul.resourceType,
@@ -6028,7 +6072,6 @@ export class Simulation {
     if (!this.canAfford(tribe, def.cost)) return;
     const site = this.findBuildingSite(tribe, def);
     if (!site) return;
-    const stock = this.findConstructionSource(tribe.id, type);
     const haulSpecs = this.constructionHaulPlan(def.cost);
 
     for (const [resource, amount] of Object.entries(def.cost)) {
@@ -6049,23 +6092,26 @@ export class Simulation {
         height: def.size[1],
         supplied: 0,
         supplyNeeded: Math.max(1, haulSpecs.length),
-        stockX: stock.x,
-        stockY: stock.y,
+        stockX: site.x + Math.floor(def.size[0] / 2),
+        stockY: site.y + Math.floor(def.size[1] / 2),
       },
     };
     this.jobs.push(buildJob);
     for (const haul of haulSpecs) {
+      const sourceBuilding = this.findStockedSourceBuilding(tribe.id, site.x, site.y, haul.resourceType);
+      const sourceSite = sourceBuilding ? buildingCenter(sourceBuilding) : this.findConstructionSource(tribe.id, type);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind: "haul",
-        x: stock.x,
-        y: stock.y,
+        x: sourceSite.x,
+        y: sourceSite.y,
         priority: Math.max(4, priority - 1),
         claimedBy: null,
         payload: {
-          sourceX: stock.x,
-          sourceY: stock.y,
+          sourceX: sourceSite.x,
+          sourceY: sourceSite.y,
+          sourceBuildingId: sourceBuilding?.id ?? null,
           dropX: site.x + Math.floor(def.size[0] / 2),
           dropY: site.y + Math.floor(def.size[1] / 2),
           resourceType: haul.resourceType,
