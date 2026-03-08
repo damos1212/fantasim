@@ -140,6 +140,34 @@ function raiseIslandChains(world: WorldData, random: () => number): void {
   }
 }
 
+function igniteVolcanicBelts(world: WorldData, random: () => number): void {
+  const count = Math.max(2, Math.floor((world.width * world.height) / 1_900_000));
+  const minDim = Math.min(world.width, world.height);
+  const minRadius = Math.max(16, Math.floor(minDim * 0.035));
+  const maxRadius = Math.max(minRadius + 8, Math.floor(minDim * 0.075));
+  for (let i = 0; i < count; i += 1) {
+    const cx = randInt(random, Math.floor(world.width * 0.08), Math.floor(world.width * 0.92));
+    const cy = randInt(random, Math.floor(world.height * 0.08), Math.floor(world.height * 0.92));
+    const rx = randInt(random, minRadius, maxRadius);
+    const ry = randInt(random, Math.max(12, Math.floor(minRadius * 0.75)), Math.max(18, Math.floor(maxRadius * 0.82)));
+    for (let y = Math.max(0, cy - ry - 2); y < Math.min(world.height, cy + ry + 3); y += 1) {
+      for (let x = Math.max(0, cx - rx - 2); x < Math.min(world.width, cx + rx + 3); x += 1) {
+        const nx = (x - cx) / rx;
+        const ny = (y - cy) / ry;
+        const distance = Math.hypot(nx, ny);
+        if (distance > 1.1) continue;
+        const falloff = Math.max(0, 1 - distance);
+        const index = indexOf(x, y, world.width);
+        world.volcanic[index] = clampByte(world.volcanic[index]! + 90 * falloff);
+        world.elevation[index] = clampByte(world.elevation[index]! + 22 * falloff);
+        world.temperature[index] = clampByte(world.temperature[index]! + 14 * falloff);
+        world.moisture[index] = clampByte(world.moisture[index]! - 28 * falloff);
+        world.fertility[index] = clampByte(world.fertility[index]! - 18 * falloff);
+      }
+    }
+  }
+}
+
 function applyCoastalHumidity(world: WorldData): void {
   const horizontal = new Uint16Array(world.width * world.height);
   const vertical = new Uint16Array(world.width * world.height);
@@ -229,21 +257,21 @@ function classifyTerrain(world: WorldData, index: number): void {
     world.terrain[index] = TerrainType.WaterShallow;
   } else if (elev < 104) {
     world.terrain[index] = TerrainType.Beach;
-  } else if (volc > 232 && elev > 150) {
+  } else if (volc > 214 && elev > 136) {
     world.terrain[index] = TerrainType.Lava;
-  } else if (volc > 198 && elev > 142) {
+  } else if (volc > 182 && elev > 128) {
     world.terrain[index] = TerrainType.Ashland;
-  } else if (elev > 212) {
+  } else if (elev > 210) {
     world.terrain[index] = TerrainType.Mountain;
-  } else if (elev > 178) {
-    world.terrain[index] = temp < 92 ? TerrainType.Snow : TerrainType.Rocky;
-  } else if (temp < 68) {
+  } else if (elev > 174) {
+    world.terrain[index] = temp < 112 ? TerrainType.Snow : TerrainType.Rocky;
+  } else if (temp < 54) {
     world.terrain[index] = TerrainType.Snow;
-  } else if (moist > 195 && elev < 156) {
+  } else if (moist > 210 && elev < 150 && temp > 80) {
     world.terrain[index] = TerrainType.Marsh;
-  } else if (temp > 168 && moist < 98) {
+  } else if (temp > 150 && moist < 116) {
     world.terrain[index] = TerrainType.Desert;
-  } else if (moist > 142) {
+  } else if (moist > 166) {
     world.terrain[index] = TerrainType.ForestFloor;
   } else {
     world.terrain[index] = TerrainType.Grass;
@@ -383,7 +411,7 @@ function assignBiome(world: WorldData, index: number): void {
   const elevation = world.elevation[index];
 
   if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow) {
-    world.biome[index] = moisture > 160 ? BiomeType.Archipelago : BiomeType.Coastline;
+    world.biome[index] = terrain === TerrainType.WaterShallow || elevation > 94 || moisture > 150 ? BiomeType.Archipelago : BiomeType.Coastline;
     return;
   }
   if (terrain === TerrainType.River || terrain === TerrainType.Beach) {
@@ -399,18 +427,18 @@ function assignBiome(world: WorldData, index: number): void {
     return;
   }
   if (terrain === TerrainType.Mountain || elevation > 210) {
-    world.biome[index] = temp < 90 ? BiomeType.Tundra : BiomeType.Alpine;
+    world.biome[index] = temp < 102 ? BiomeType.Tundra : BiomeType.Alpine;
     return;
   }
-  if (terrain === TerrainType.Snow || (temp < 70 && elevation > 120)) {
-    world.biome[index] = moisture > 110 ? BiomeType.SnowyForest : BiomeType.Tundra;
+  if (terrain === TerrainType.Snow || (temp < 78 && elevation > 120)) {
+    world.biome[index] = moisture > 96 ? BiomeType.SnowyForest : BiomeType.Tundra;
     return;
   }
-  if (terrain === TerrainType.Marsh || moisture > 210) {
+  if (terrain === TerrainType.Marsh || (moisture > 205 && temp > 84 && elevation < 154)) {
     world.biome[index] = BiomeType.Marshland;
     return;
   }
-  if (terrain === TerrainType.Desert || (temp > 175 && moisture < 80)) {
+  if (terrain === TerrainType.Desert || (temp > 142 && moisture < 122)) {
     world.biome[index] = BiomeType.Desert;
     return;
   }
@@ -418,7 +446,7 @@ function assignBiome(world: WorldData, index: number): void {
     world.biome[index] = temp < 95 ? BiomeType.SnowyForest : BiomeType.DeepForest;
     return;
   }
-  world.biome[index] = moisture < 100 ? BiomeType.Scrubland : BiomeType.TemperatePlains;
+  world.biome[index] = moisture < 92 && temp > 106 ? BiomeType.Scrubland : BiomeType.TemperatePlains;
 }
 
 function seedFeatures(world: WorldData, random: () => number): void {
@@ -719,9 +747,9 @@ export function generateWorld(seed: string, width: number, height: number): Worl
       const coastBias = Math.max(0, Math.abs(nx) * 0.8 + Math.abs(ny) * 0.78 - 0.29);
 
       const elev = continent * 108 + ridges * 55 - coastBias * 96 + 132;
-      const temp = (1 - latitude) * 190 + tempValue * 40 - (elev - 128) * 0.25 + Math.max(0, aridRegion) * 20 - Math.max(0, wetRegion) * 12;
-      const moist = moistureValue * 85 + 128 - coastBias * 16 - Math.max(0, aridRegion) * 42 + Math.max(0, wetRegion) * 46;
-      const volc = volcanoValue * 120 + ridges * 35 + 110;
+      const temp = (1 - latitude) * 202 + tempValue * 46 - (elev - 128) * 0.32 + Math.max(0, aridRegion) * 28 - Math.max(0, wetRegion) * 10 + coastBias * 6;
+      const moist = moistureValue * 92 + 112 - coastBias * 28 - Math.max(0, aridRegion) * 72 + Math.max(0, wetRegion) * 54 - Math.max(0, elev - 150) * 0.08;
+      const volc = volcanoValue * 138 + ridges * 46 + 104;
 
       elevation[index] = clampByte(elev);
       temperature[index] = clampByte(temp);
@@ -733,6 +761,7 @@ export function generateWorld(seed: string, width: number, height: number): Worl
 
   sculptOceanBasins(world, random);
   raiseIslandChains(world, random);
+  igniteVolcanicBelts(world, random);
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {

@@ -48,6 +48,7 @@ describe("simulation", () => {
       typeof agent.level === "number" &&
       typeof agent.wounds === "number" &&
       typeof agent.blessed === "boolean" &&
+      typeof agent.underground === "boolean" &&
       typeof agent.condition === "number" &&
       typeof agent.fatigue === "number" &&
       typeof agent.sickness === "number" &&
@@ -76,5 +77,16 @@ describe("simulation", () => {
       typeof tribe.successionCount === "number",
     )).toBe(true);
     expect(lastSnapshot.tribes.some((tribe) => tribe.siege >= 0)).toBe(true);
+  });
+
+  test("small-world simulation perf stays within a reasonable budget", () => {
+    const sim = createSimulation("perf-smoke", { width: 384, height: 384 });
+    const start = Date.now();
+    for (let i = 0; i < 24; i += 1) {
+      sim.tick();
+    }
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(4500);
   });
 });

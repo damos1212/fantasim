@@ -341,6 +341,7 @@ type AgentState = {
   sickness: number;
   inspiration: number;
   morale: number;
+  underground: boolean;
   carrying: ResourceType;
   carryingAmount: number;
   moveCooldown: number;
@@ -610,6 +611,12 @@ export class Simulation {
   readonly jobs: JobState[] = [];
   readonly dirtyTiles = new Set<number>();
   readonly activeWetTiles = new Set<number>();
+  cachedBuildingsByTribe: BuildingState[][] = [];
+  cachedAgentsByTribe: AgentState[][] = [];
+  cachedBuildingCountsByTribe: Uint16Array[] = [];
+  cachedPopulationByTribe = new Uint16Array(0);
+  summaryRevision = 0;
+  summaryCacheRevision = -1;
 
   tickCount = 0;
   currentYear = 0;
@@ -787,6 +794,7 @@ export class Simulation {
           sickness: 0,
           inspiration: randInt(this.random, 0, 12),
           morale: 80 + randInt(this.random, -8, 8),
+          underground: false,
           carrying: ResourceType.None,
           carryingAmount: 0,
           moveCooldown: 0,
@@ -920,7 +928,7 @@ export class Simulation {
   }
 
   private assignRolesForTribe(tribe: TribeState): void {
-    const tribeAgents = this.agents.filter((agent) => agent.tribeId === tribe.id);
+    const tribeAgents = [...this.agentsForTribe(tribe.id)];
     const hostility = this.meanHostility(tribe);
     const desiredSoldiers = clamp(Math.floor(tribeAgents.length * (0.12 + tribe.race.militaryBias * 0.08 + hostility * 0.002)), 2, 18);
     const desiredFarmers = clamp(Math.floor(tribeAgents.length * 0.18 * tribe.race.foodBias), 3, 18);
@@ -981,7 +989,7 @@ export class Simulation {
 
   private tribeStrategicPower(tribe: TribeState): number {
     const population = this.populationOf(tribe.id);
-    const soldiers = this.agents.filter((agent) => agent.tribeId === tribe.id && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage)).length;
+    const soldiers = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
     const siege = this.siegeEngines.filter((engine) => engine.tribeId === tribe.id).length;
     return population + soldiers * 2.5 + siege * 4 + tribe.age * 10 + tribe.resources[ResourceType.MetalWeapons] * 0.2 + tribe.resources[ResourceType.MetalArmor] * 0.18;
   }
@@ -1642,8 +1650,9 @@ export class Simulation {
     for (const tribe of this.tribes) {
       const population = this.populationOf(tribe.id);
       const capacity = this.waterCapacityForTribe(tribe.id, population);
-      const cisterns = this.buildings.filter((building) => building.tribeId === tribe.id && building.type === BuildingType.Cistern);
-      const farms = this.buildings.filter((building) => building.tribeId === tribe.id && (building.type === BuildingType.Farm || building.type === BuildingType.Orchard));
+      const tribeBuildings = this.buildingsForTribe(tribe.id);
+      const cisterns = tribeBuildings.filter((building) => building.type === BuildingType.Cistern);
+      const farms = tribeBuildings.filter((building) => building.type === BuildingType.Farm || building.type === BuildingType.Orchard);
       if (cisterns.length === 0 && farms.length === 0) {
         continue;
       }
@@ -1859,8 +1868,7 @@ export class Simulation {
 
   private excavatedUndergroundTilesForTribe(tribeId: number): number {
     const seen = new Set<number>();
-    const sites = this.buildings.filter((building) =>
-      building.tribeId === tribeId &&
+    const sites = this.buildingsForTribe(tribeId).filter((building) =>
       (building.type === BuildingType.MountainHall || building.type === BuildingType.TunnelEntrance || building.type === BuildingType.DeepMine),
     );
     for (const site of sites) {
@@ -2201,6 +2209,7 @@ export class Simulation {
       if (!agent.task) {
         agent.task = this.claimTask(agent, tribe);
       }
+      agent.underground = Boolean(agent.task && agent.task.kind === "delve");
       agent.status = this.describeAgentStatus(agent, localWeather);
       if (agent.task) {
         this.processTask(agent, tribe);
@@ -2211,6 +2220,7 @@ export class Simulation {
   }
 
   private removeDeadAgents(): void {
+    let removedAny = false;
     for (let i = this.agents.length - 1; i >= 0; i -= 1) {
       if (this.agents[i]!.health > 0) {
         continue;
@@ -2223,6 +2233,7 @@ export class Simulation {
         }
       });
       this.agents.splice(i, 1);
+      removedAny = true;
       if (tribe?.rulerAgentId === agent.id) {
         tribe.rulerAgentId = null;
         tribe.morale = Math.max(20, tribe.morale - 8);
@@ -2236,6 +2247,9 @@ export class Simulation {
         });
         this.ensureRuler(tribe);
       }
+    }
+    if (removedAny) {
+      this.invalidateSummaryCaches();
     }
   }
 
@@ -2271,7 +2285,7 @@ export class Simulation {
 
   private maybePromoteHero(tribe: TribeState): void {
     if (tribe.age < AgeType.Iron) return;
-    const heroes = this.agents.filter((agent) => agent.tribeId === tribe.id && agent.hero);
+    const heroes = this.agentsForTribe(tribe.id).filter((agent) => agent.hero);
     const maxHeroes = tribe.age >= AgeType.Medieval ? 2 : 1;
     if (heroes.length >= maxHeroes) return;
 
@@ -2302,8 +2316,7 @@ export class Simulation {
     if (current) {
       return;
     }
-    const candidate = this.agents
-      .filter((agent) => agent.tribeId === tribe.id)
+    const candidate = [...this.agentsForTribe(tribe.id)]
       .sort((a, b) =>
         Number(b.hero || b.blessed) - Number(a.hero || a.blessed) ||
         b.level - a.level ||
@@ -2376,8 +2389,7 @@ export class Simulation {
     let sick = 0;
     let exhausted = 0;
     let inspired = 0;
-    for (const agent of this.agents) {
-      if (agent.tribeId !== tribeId) continue;
+    for (const agent of this.agentsForTribe(tribeId)) {
       if (agent.condition === AgentConditionType.Sick || agent.condition === AgentConditionType.Feverish) sick += 1;
       if (agent.condition === AgentConditionType.Exhausted) exhausted += 1;
       if (agent.condition === AgentConditionType.Inspired) inspired += 1;
@@ -2637,8 +2649,7 @@ export class Simulation {
       if (!atTarget) {
         return;
       }
-      const atInfirmary = this.buildings.some((building) =>
-        building.tribeId === tribe.id &&
+      const atInfirmary = this.buildingsForTribe(tribe.id).some((building) =>
         (building.type === BuildingType.Infirmary || building.type === BuildingType.Castle || building.type === BuildingType.CapitalHall) &&
         task.targetX >= building.x &&
         task.targetX < building.x + building.width &&
@@ -2692,15 +2703,15 @@ export class Simulation {
     agent.task = null;
     agent.path = [];
     agent.pathIndex = 0;
+    agent.underground = false;
   }
 
   private findRecoverySite(tribe: TribeState, agent: AgentState): { x: number; y: number } | null {
     if (!this.needsRecovery(agent)) {
       return null;
     }
-    const candidates = this.buildings
+    const candidates = this.buildingsForTribe(tribe.id)
       .filter((building) =>
-        building.tribeId === tribe.id &&
         (
           building.type === BuildingType.Infirmary ||
           building.type === BuildingType.Castle ||
@@ -2715,9 +2726,8 @@ export class Simulation {
   }
 
   private findNearestStorageSite(tribeId: number, originX: number, originY: number): { x: number; y: number } {
-    const candidates = this.buildings
+    const candidates = this.buildingsForTribe(tribeId)
       .filter((building) =>
-        building.tribeId === tribeId &&
         (building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile || building.type === BuildingType.CapitalHall),
       )
       .sort((a, b) => manhattan(originX, originY, a.x, a.y) - manhattan(originX, originY, b.x, b.y));
@@ -2811,8 +2821,7 @@ export class Simulation {
     }
 
     if (task.kind === "delve") {
-      const site = this.buildings.find((building) =>
-        building.tribeId === tribe.id &&
+      const site = this.buildingsForTribe(tribe.id).find((building) =>
         (building.type === BuildingType.TunnelEntrance || building.type === BuildingType.DeepMine) &&
         task.targetX >= building.x &&
         task.targetX < building.x + building.width &&
@@ -3176,6 +3185,7 @@ export class Simulation {
       }
     }
     this.buildings.splice(this.buildings.indexOf(building), 1);
+    this.invalidateSummaryCaches();
   }
 
   private earthworkDefenseBonus(x: number, y: number): number {
@@ -3197,7 +3207,8 @@ export class Simulation {
 
   private consumeAndGrow(): void {
     for (const tribe of this.tribes) {
-      const population = this.agents.filter((agent) => agent.tribeId === tribe.id).length;
+      const tribeAgents = this.agentsForTribe(tribe.id);
+      const population = tribeAgents.length;
       const housing = this.computeHousing(tribe.id);
       const weather = this.weatherAt(tribe.capitalX, tribe.capitalY);
       const floodedBuildings = this.floodedBuildingCountForTribe(tribe.id);
@@ -3328,8 +3339,8 @@ export class Simulation {
           this.buildingCount(tribe.id, BuildingType.Tavern) * 3 +
           this.buildingCount(tribe.id, BuildingType.Shrine) * 2 +
           this.buildingCount(tribe.id, BuildingType.Infirmary) * 2 +
-          this.agents.filter((agent) => agent.tribeId === tribe.id && agent.hero).length * 2 -
-          this.agents.filter((agent) => agent.tribeId === tribe.id && agent.wounds > 0).length * 0.4 +
+          tribeAgents.filter((agent) => agent.hero).length * 2 -
+          tribeAgents.filter((agent) => agent.wounds > 0).length * 0.4 +
           floodedBuildings * -0.8 +
           conditionCounts.inspired * 0.25 -
           conditionCounts.sick * 0.5 -
@@ -3394,7 +3405,8 @@ export class Simulation {
 
   private progressResearch(): void {
     for (const tribe of this.tribes) {
-      const pop = this.agents.filter((agent) => agent.tribeId === tribe.id).length;
+      const tribeAgents = this.agentsForTribe(tribe.id);
+      const pop = tribeAgents.length;
       const workshops = this.buildingCount(tribe.id, BuildingType.Workshop);
       const schools = this.buildingCount(tribe.id, BuildingType.School);
       const smithies = this.buildingCount(tribe.id, BuildingType.Smithy);
@@ -3408,9 +3420,9 @@ export class Simulation {
       const mageTowers = this.buildingCount(tribe.id, BuildingType.MageTower);
       const sanctums = this.buildingCount(tribe.id, BuildingType.ArcaneSanctum);
       const infirmaries = this.buildingCount(tribe.id, BuildingType.Infirmary);
-      const mageBonus = this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Mage).length * 0.6;
-      const scholarBonus = this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Scholar).length * 0.9;
-      const heroBonus = this.agents.filter((agent) => agent.tribeId === tribe.id && agent.hero).length * 0.35;
+      const mageBonus = tribeAgents.filter((agent) => agent.role === AgentRole.Mage).length * 0.6;
+      const scholarBonus = tribeAgents.filter((agent) => agent.role === AgentRole.Scholar).length * 0.9;
+      const heroBonus = tribeAgents.filter((agent) => agent.hero).length * 0.35;
       const tunnelEntrances = this.buildingCount(tribe.id, BuildingType.TunnelEntrance);
       const gain = pop * 0.04 + workshops * 0.8 + schools * 1.1 + smithies * 0.9 + armories * 0.4 + castles * 1.2 + mageTowers * 1.8 + sanctums * 2.4 + infirmaries * 0.4 + foundries * 1.4 + factories * 2.2 + railDepots * 1.1 + powerPlants * 2.5 + airfields * 1.6 + tunnelEntrances * 0.6 + mageBonus + scholarBonus + heroBonus + tribe.race.buildBias * 0.08;
       tribe.research += gain;
@@ -3643,7 +3655,7 @@ export class Simulation {
     }
     if (
       tribe.age >= AgeType.Iron
-      && this.agents.filter((agent) => agent.tribeId === tribe.id && agent.wounds > 0).length >= 3
+      && this.agentsForTribe(tribe.id).filter((agent) => agent.wounds > 0).length >= 3
       && !this.hasBuilt(tribe.id, BuildingType.Infirmary)
     ) {
       this.tryPlanBuilding(tribe, BuildingType.Infirmary, 7);
@@ -3734,7 +3746,7 @@ export class Simulation {
   }
 
   private planFarmCanals(tribe: TribeState, limit: number): void {
-    const farms = this.buildings.filter((building) => building.tribeId === tribe.id && (building.type === BuildingType.Farm || building.type === BuildingType.Orchard));
+    const farms = this.buildingsForTribe(tribe.id).filter((building) => building.type === BuildingType.Farm || building.type === BuildingType.Orchard);
     let planned = 0;
     for (const farm of farms) {
       if (planned >= limit) break;
@@ -3848,7 +3860,7 @@ export class Simulation {
       return;
     }
 
-    const docks = this.buildings.filter((building) => building.tribeId === tribe.id && building.type === BuildingType.Dock);
+    const docks = this.buildingsForTribe(tribe.id).filter((building) => building.type === BuildingType.Dock);
     if (docks.length === 0) {
       return;
     }
@@ -3898,8 +3910,7 @@ export class Simulation {
     if (tribe.resources[ResourceType.Horses] <= 0) {
       return;
     }
-    const depots = this.buildings.filter((building) =>
-      building.tribeId === tribe.id &&
+    const depots = this.buildingsForTribe(tribe.id).filter((building) =>
       (building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile || building.type === BuildingType.CapitalHall),
     );
     if (depots.length === 0) {
@@ -3978,9 +3989,10 @@ export class Simulation {
     const partner = partners.find((other) => !this.caravans.some((caravan) => caravan.tribeId === tribe.id && caravan.partnerTribeId === other.id)) ?? partners[0];
     if (!partner) return;
 
-    const stock = this.buildings.find((building) => building.tribeId === tribe.id && building.type === BuildingType.Warehouse)
-      ?? this.buildings.find((building) => building.tribeId === tribe.id && building.type === BuildingType.Stockpile)
-      ?? this.buildings.find((building) => building.tribeId === tribe.id && building.type === BuildingType.CapitalHall);
+    const tribeBuildings = this.buildingsForTribe(tribe.id);
+    const stock = tribeBuildings.find((building) => building.type === BuildingType.Warehouse)
+      ?? tribeBuildings.find((building) => building.type === BuildingType.Stockpile)
+      ?? tribeBuildings.find((building) => building.type === BuildingType.CapitalHall);
     if (!stock) return;
 
     const cargoType = this.chooseTradeCargo(tribe);
@@ -4579,7 +4591,7 @@ export class Simulation {
               ? [BuildingType.Castle, BuildingType.Workshop, BuildingType.CapitalHall]
           : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.Workshop, BuildingType.CapitalHall];
     for (const type of preferred) {
-      const building = this.buildings.find((entry) => entry.tribeId === tribeId && entry.type === type);
+      const building = this.buildingsForTribe(tribeId).find((entry) => entry.type === type);
       if (building) {
         return { x: building.x + Math.floor(building.width / 2), y: building.y + Math.floor(building.height / 2) };
       }
@@ -4593,13 +4605,13 @@ export class Simulation {
   }
 
   private nearbyBuildingCount(tribeId: number, type: BuildingType, x: number, y: number, radius: number): number {
-    return this.buildings.filter((entry) => entry.tribeId === tribeId && entry.type === type && manhattan(entry.x, entry.y, x, y) <= radius).length;
+    return this.buildingsForTribe(tribeId).filter((entry) => entry.type === type && manhattan(entry.x, entry.y, x, y) <= radius).length;
   }
 
   private nearestBuildingDistance(tribeId: number, type: BuildingType, x: number, y: number): number {
     let best = Number.POSITIVE_INFINITY;
-    for (const building of this.buildings) {
-      if (building.tribeId !== tribeId || building.type !== type) continue;
+    for (const building of this.buildingsForTribe(tribeId)) {
+      if (building.type !== type) continue;
       best = Math.min(best, manhattan(building.x, building.y, x, y));
     }
     return best;
@@ -4749,20 +4761,21 @@ export class Simulation {
 
   private tribeActivity(tribe: TribeState): string {
     const population = this.populationOf(tribe.id);
+    const tribeAgents = this.agentsForTribe(tribe.id);
     if (tribe.resources[ResourceType.Rations] < population * 3) return "Securing food";
     if (tribe.water < Math.max(10, population * 0.45)) return "Securing water";
     if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "haul")) return "Hauling supplies";
     if (tribe.faith >= 40 && this.hasBuilt(tribe.id, BuildingType.Shrine)) return "Raising blessings";
     if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "delve")) return "Running deep delves";
     if (this.hasBuilt(tribe.id, BuildingType.TunnelEntrance) || this.hasBuilt(tribe.id, BuildingType.DeepMine)) return "Delving underground";
-    if (this.agents.filter((agent) => agent.tribeId === tribe.id && agent.wounds > 0).length > 4) return "Recovering from war";
+    if (tribeAgents.filter((agent) => agent.wounds > 0).length > 4) return "Recovering from war";
     if (this.meanHostility(tribe) > 25) return "Preparing for war";
     if (tribe.age >= AgeType.Modern && this.hasBuilt(tribe.id, BuildingType.Airfield)) return "Launching air patrols";
     if (tribe.age >= AgeType.Modern && this.hasBuilt(tribe.id, BuildingType.PowerPlant)) return "Electrifying industry";
     if (tribe.age >= AgeType.Industrial && this.hasBuilt(tribe.id, BuildingType.Factory)) return "Driving industry";
-    if (this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum) && this.agents.some((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Mage)) return "Unleashing archmagic";
-    if (this.hasBuilt(tribe.id, BuildingType.MageTower) && this.agents.some((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Mage)) return "Channeling high magic";
-    if (this.agents.some((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Mage)) return "Training mages";
+    if (this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum) && tribeAgents.some((agent) => agent.role === AgentRole.Mage)) return "Unleashing archmagic";
+    if (this.hasBuilt(tribe.id, BuildingType.MageTower) && tribeAgents.some((agent) => agent.role === AgentRole.Mage)) return "Channeling high magic";
+    if (tribeAgents.some((agent) => agent.role === AgentRole.Mage)) return "Training mages";
     if (this.computeHousing(tribe.id) < population + 2) return "Expanding housing";
     if (tribe.age >= AgeType.Gunpowder && this.hasBuilt(tribe.id, BuildingType.Foundry)) return "Forging powder wargear";
     if (tribe.age < AgeType.Iron) return "Researching and building";
@@ -5119,6 +5132,7 @@ export class Simulation {
       hp: 60 + buildingColorStrength(type) * 40,
     };
     this.buildings.push(building);
+    this.invalidateSummaryCaches();
 
     for (let dy = 0; dy < building.height; dy += 1) {
       for (let dx = 0; dx < building.width; dx += 1) {
@@ -5199,8 +5213,8 @@ export class Simulation {
     let bestDistance = Number.POSITIVE_INFINITY;
     const center = buildingCenter(building);
     for (const type of preferred) {
-      for (const entry of this.buildings) {
-        if (entry.id === building.id || entry.tribeId !== building.tribeId || entry.type !== type) continue;
+      for (const entry of this.buildingsForTribe(building.tribeId)) {
+        if (entry.id === building.id || entry.type !== type) continue;
         const target = buildingCenter(entry);
         const distance = manhattan(center.x, center.y, target.x, target.y);
         if (distance < bestDistance) {
@@ -5262,6 +5276,7 @@ export class Simulation {
       sickness: 0,
       inspiration: randInt(this.random, 0, 10),
       morale: 82,
+      underground: false,
       carrying: ResourceType.None,
       carryingAmount: 0,
       moveCooldown: 0,
@@ -5269,11 +5284,13 @@ export class Simulation {
       ageTicks: 0,
       gear: gearForRole(AgentRole.Worker, this.tribes[tribeId]!.age, this.tribes[tribeId]!.race.type),
     });
+    this.invalidateSummaryCaches();
     this.assignRolesForTribe(this.tribes[tribeId]!);
   }
 
   private buildingCount(tribeId: number, type: BuildingType): number {
-    return this.buildings.filter((entry) => entry.tribeId === tribeId && entry.type === type).length;
+    this.ensureSummaryCaches();
+    return this.cachedBuildingCountsByTribe[tribeId]?.[type] ?? 0;
   }
 
   private hasBuilt(tribeId: number, type: BuildingType): boolean {
@@ -5281,17 +5298,58 @@ export class Simulation {
   }
 
   private populationOf(tribeId: number): number {
-    return this.agents.filter((agent) => agent.tribeId === tribeId).length;
+    this.ensureSummaryCaches();
+    return this.cachedPopulationByTribe[tribeId] ?? 0;
+  }
+
+  private buildingsForTribe(tribeId: number): readonly BuildingState[] {
+    this.ensureSummaryCaches();
+    return this.cachedBuildingsByTribe[tribeId] ?? [];
+  }
+
+  private agentsForTribe(tribeId: number): readonly AgentState[] {
+    this.ensureSummaryCaches();
+    return this.cachedAgentsByTribe[tribeId] ?? [];
+  }
+
+  private invalidateSummaryCaches(): void {
+    this.summaryRevision += 1;
+  }
+
+  private ensureSummaryCaches(): void {
+    if (this.summaryCacheRevision === this.summaryRevision) {
+      return;
+    }
+    const tribeCount = this.tribes.length;
+    this.cachedBuildingsByTribe = Array.from({ length: tribeCount }, () => []);
+    this.cachedAgentsByTribe = Array.from({ length: tribeCount }, () => []);
+    this.cachedBuildingCountsByTribe = Array.from({ length: tribeCount }, () => new Uint16Array(BUILDING_DEFS.length));
+    this.cachedPopulationByTribe = new Uint16Array(tribeCount);
+
+    for (const building of this.buildings) {
+      const list = this.cachedBuildingsByTribe[building.tribeId];
+      if (!list) continue;
+      list.push(building);
+      this.cachedBuildingCountsByTribe[building.tribeId]![building.type] += 1;
+    }
+
+    for (const agent of this.agents) {
+      const list = this.cachedAgentsByTribe[agent.tribeId];
+      if (!list) continue;
+      list.push(agent);
+      this.cachedPopulationByTribe[agent.tribeId] += 1;
+    }
+
+    this.summaryCacheRevision = this.summaryRevision;
   }
 
   private computeHousing(tribeId: number): number {
-    return this.buildings
-      .filter((building) => building.tribeId === tribeId)
+    return this.buildingsForTribe(tribeId)
       .reduce((sum, building) => sum + buildingProvidesHousing(building.type), 0);
   }
 
   private irrigationBonusForTribe(tribeId: number): number {
-    const farms = this.buildings.filter((building) => building.tribeId === tribeId && (building.type === BuildingType.Farm || building.type === BuildingType.Orchard));
+    const farms = this.buildingsForTribe(tribeId).filter((building) => building.type === BuildingType.Farm || building.type === BuildingType.Orchard);
     let canals = 0;
     for (const farm of farms) {
       for (let dy = -1; dy <= farm.height; dy += 1) {
@@ -5310,8 +5368,8 @@ export class Simulation {
 
   private surfaceWaterFarmSupportForTribe(tribeId: number): number {
     let supported = 0;
-    for (const building of this.buildings) {
-      if (building.tribeId !== tribeId || (building.type !== BuildingType.Farm && building.type !== BuildingType.Orchard)) continue;
+    for (const building of this.buildingsForTribe(tribeId)) {
+      if (building.type !== BuildingType.Farm && building.type !== BuildingType.Orchard) continue;
       let wetTiles = 0;
       let floodedTiles = 0;
       for (let dy = 0; dy < building.height; dy += 1) {
@@ -5329,8 +5387,8 @@ export class Simulation {
 
   private floodedFarmCountForTribe(tribeId: number): number {
     let flooded = 0;
-    for (const building of this.buildings) {
-      if (building.tribeId !== tribeId || (building.type !== BuildingType.Farm && building.type !== BuildingType.Orchard)) continue;
+    for (const building of this.buildingsForTribe(tribeId)) {
+      if (building.type !== BuildingType.Farm && building.type !== BuildingType.Orchard) continue;
       for (let dy = 0; dy < building.height; dy += 1) {
         for (let dx = 0; dx < building.width; dx += 1) {
           const index = indexOf(building.x + dx, building.y + dy, this.world.width);
@@ -5347,8 +5405,7 @@ export class Simulation {
 
   private floodedBuildingCountForTribe(tribeId: number): number {
     let flooded = 0;
-    for (const building of this.buildings) {
-      if (building.tribeId !== tribeId) continue;
+    for (const building of this.buildingsForTribe(tribeId)) {
       if (building.type === BuildingType.Dock || building.type === BuildingType.FishingHut || building.type === BuildingType.Fishery) continue;
       for (let dy = 0; dy < building.height; dy += 1) {
         for (let dx = 0; dx < building.width; dx += 1) {
@@ -5365,7 +5422,7 @@ export class Simulation {
   }
 
   private cisternBonusForTribe(tribeId: number): number {
-    const cisterns = this.buildings.filter((building) => building.tribeId === tribeId && building.type === BuildingType.Cistern);
+    const cisterns = this.buildingsForTribe(tribeId).filter((building) => building.type === BuildingType.Cistern);
     let waterScore = cisterns.length * 0.5;
     for (const cistern of cisterns) {
       const center = buildingCenter(cistern);
@@ -5380,8 +5437,8 @@ export class Simulation {
 
   private waterworksScoreForTribe(tribeId: number): number {
     let score = 0;
-    for (const building of this.buildings) {
-      if (building.tribeId !== tribeId || (building.type !== BuildingType.Farm && building.type !== BuildingType.Orchard && building.type !== BuildingType.Cistern)) continue;
+    for (const building of this.buildingsForTribe(tribeId)) {
+      if (building.type !== BuildingType.Farm && building.type !== BuildingType.Orchard && building.type !== BuildingType.Cistern) continue;
       for (let dy = -1; dy <= building.height; dy += 1) {
         for (let dx = -1; dx <= building.width; dx += 1) {
           const x = building.x + dx;
@@ -5443,9 +5500,20 @@ export class Simulation {
 
   private serializeTribes(): TribeSummary[] {
     return this.tribes.map((tribe) => {
-      const ruler = tribe.rulerAgentId !== null ? this.agents.find((agent) => agent.id === tribe.rulerAgentId) : null;
+      const tribeAgents = this.agentsForTribe(tribe.id);
+      const ruler = tribe.rulerAgentId !== null ? tribeAgents.find((agent) => agent.id === tribe.rulerAgentId) : null;
       const conditions = this.conditionCountsForTribe(tribe.id);
       const flooded = this.floodedBuildingCountForTribe(tribe.id);
+      const soldierCount = tribeAgents.filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider).length;
+      const heroes = tribeAgents.filter((agent) => agent.hero).length;
+      const wounded = tribeAgents.filter((agent) => agent.wounds > 0).length;
+      const builders = tribeAgents.filter((agent) => agent.role === AgentRole.Builder).length;
+      const farmers = tribeAgents.filter((agent) => agent.role === AgentRole.Farmer).length;
+      const fishers = tribeAgents.filter((agent) => agent.role === AgentRole.Fisher).length;
+      const miners = tribeAgents.filter((agent) => agent.role === AgentRole.Miner).length;
+      const crafters = tribeAgents.filter((agent) => agent.role === AgentRole.Crafter).length;
+      const scholars = tribeAgents.filter((agent) => agent.role === AgentRole.Scholar).length;
+      const armyAgents = tribeAgents.filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage);
       return {
         rulerName: ruler?.name ?? "Vacant",
         rulerTitle: ruler ? this.rulerTitleForTribe(tribe) : "Interregnum",
@@ -5483,11 +5551,10 @@ export class Simulation {
         magic: (tribe.race.type === RaceType.Elves || tribe.race.type === RaceType.Darkfolk) ? Math.max(0, tribe.age - AgeType.Stone + 1 + this.buildingCount(tribe.id, BuildingType.MageTower) + this.buildingCount(tribe.id, BuildingType.ArcaneSanctum) * 3) : 0,
         activity: this.tribeActivity(tribe),
         doctrine: this.tribeDoctrine(tribe),
-        soldiers: this.agents.filter((agent) => agent.tribeId === tribe.id && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider)).length,
-        heroes: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.hero).length,
-        wounded: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.wounds > 0).length,
-        armyPower: Math.floor(this.agents
-          .filter((agent) => agent.tribeId === tribe.id && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage))
+        soldiers: soldierCount,
+        heroes,
+        wounded,
+        armyPower: Math.floor(armyAgents
           .reduce((sum, agent) => sum + agent.gear.power + agent.level * 2 + (agent.hero ? 8 : 0), 0)
           + this.siegeEngines.filter((engine) => engine.tribeId === tribe.id).reduce((sum, engine) =>
             sum + (
@@ -5500,12 +5567,12 @@ export class Simulation {
               : engine.type === SiegeEngineType.SiegeTower ? 15
               : 14
             ), 0)),
-        builders: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Builder).length,
-        farmers: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Farmer).length,
-        fishers: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Fisher).length,
-        miners: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Miner).length,
-        crafters: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Crafter).length,
-        scholars: this.agents.filter((agent) => agent.tribeId === tribe.id && agent.role === AgentRole.Scholar).length,
+        builders,
+        farmers,
+        fishers,
+        miners,
+        crafters,
+        scholars,
         sick: conditions.sick,
         exhausted: conditions.exhausted,
         inspired: conditions.inspired,
@@ -5562,6 +5629,7 @@ export class Simulation {
       sickness: Math.floor(agent.sickness),
       inspiration: Math.floor(agent.inspiration),
       task: agent.task?.kind ?? "idle",
+      underground: agent.underground,
       carrying: agent.carrying,
       carryingAmount: agent.carryingAmount,
       gear: { ...agent.gear },

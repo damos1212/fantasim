@@ -769,3 +769,18 @@ The goal is not only more systems, but more visible systems:
 - if a tribe learns a tech, the observer should see it
 - if a unit has better gear, wounds, or heroic status, the observer should see it
 - if a region is dangerous or special, the observer should know why
+
+## 20. Expansion Backlog
+
+The main future expansion track from the current prototype state is:
+
+- deeper late-era progression: more real modern content, then true sci-fi instead of only enum/path placeholders
+- better military simulation: formations, ranged spacing, clearer battlefronts, retreat/rout logic, and siege target selection that feels intentional
+- deeper economy chains: more distinct manufactured goods, bottlenecks, specialization, and trade-value differences between cultures
+- better social simulation: families, dynasties, succession politics, rival heroes, religion splits, rebellions, and longer-form historical memory
+- stronger world danger: more dungeon/event variety, more creature behaviors, lair ecosystems, and expedition outcomes that reshape kingdoms
+- better pathing/logistics at scale: hierarchical pathfinding, route caching, and stronger district/warehouse/port/rail planning
+- more authored visual identity: true sprite sheets, race-specific architecture sets, richer unit animation states, and stronger large-scale LOD rendering
+- better observer tooling: charts/history views, kingdom comparison, legends browser, filters, time controls, and event jump/focus tools
+- save/load and replayable seeds with exportable world state
+- more balancing and long-run tuning so growth, collapse, diplomacy, war, and recovery stay interesting for hours rather than flattening

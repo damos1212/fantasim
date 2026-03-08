@@ -8,7 +8,7 @@ export const INITIAL_AGENTS_PER_TRIBE = 20;
 export const INITIAL_ANIMAL_HERDS = 300;
 
 export const SIM_TICKS_PER_SECOND = 10;
-export const SNAPSHOT_TICKS = 1;
+export const SNAPSHOT_TICKS = 2;
 export const STRATEGY_TICKS = 20;
 export const YEAR_TICKS = 1200;
 export const SEASON_TICKS = 300;

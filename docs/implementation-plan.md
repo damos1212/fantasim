@@ -649,3 +649,18 @@ The following major systems are still not fully implemented and should remain vi
 - more explicit diplomacy through formal trade pacts, tribute pressure, and clearer kingdom-level relationship state in the observer UI
 - diplomacy effects that materially change survival pressure through alliance aid convoys, tribute strain, and tributary morale/rebellion pressure
 - stronger render polish through underground/surface view toggles, animated water and lava shimmer, drifting cloud shadows, and subtler building shadowing
+
+## Expansion Roadmap
+
+The following backlog is intentionally kept explicit so the next major system pushes stay visible:
+
+- deeper late-era progression: more real modern content, then true sci-fi instead of only enum/path placeholders
+- better military simulation: formations, ranged spacing, clearer battlefronts, retreat/rout logic, and siege target selection that feels intentional
+- deeper economy chains: more distinct manufactured goods, bottlenecks, specialization, and trade-value differences between cultures
+- better social simulation: families, dynasties, succession politics, rival heroes, religion splits, rebellions, and longer-form historical memory
+- stronger world danger: more dungeon/event variety, more creature behaviors, lair ecosystems, and expedition outcomes that reshape kingdoms
+- better pathing/logistics at scale: hierarchical pathfinding, route caching, and stronger district/warehouse/port/rail planning
+- more authored visual identity: true sprite sheets, race-specific architecture sets, richer unit animation states, and stronger large-scale LOD rendering
+- better observer tooling: charts/history views, kingdom comparison, legends browser, filters, time controls, and event jump/focus tools
+- save/load and replayable seeds with exportable world state
+- more balancing and long-run tuning so growth, collapse, diplomacy, war, and recovery stay interesting for hours rather than flattening

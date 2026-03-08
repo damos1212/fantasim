@@ -42,6 +42,12 @@ describe("world generation", () => {
     const marshTiles = world.biome.reduce((sum, biome) => {
       return sum + (biome === BiomeType.Marshland ? 1 : 0);
     }, 0);
+    const volcanicTiles = world.biome.reduce((sum, biome) => {
+      return sum + (biome === BiomeType.VolcanicHighland ? 1 : 0);
+    }, 0);
+    const ashTiles = world.biome.reduce((sum, biome) => {
+      return sum + (biome === BiomeType.AshWaste ? 1 : 0);
+    }, 0);
     const archipelagoTiles = world.biome.reduce((sum, biome) => {
       return sum + (biome === BiomeType.Archipelago ? 1 : 0);
     }, 0);
@@ -55,6 +61,8 @@ describe("world generation", () => {
     expect(riverTiles).toBeGreaterThan(64);
     expect(desertTiles).toBeGreaterThan(160);
     expect(marshTiles).toBeGreaterThan(120);
+    expect(volcanicTiles).toBeGreaterThan(120);
+    expect(ashTiles).toBeGreaterThan(120);
     expect(archipelagoTiles).toBeGreaterThan(400);
     expect(cavernishTiles).toBeGreaterThan(180);
     expect(world.candidateStarts.length).toBeGreaterThan(8);

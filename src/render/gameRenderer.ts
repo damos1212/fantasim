@@ -1,6 +1,6 @@
-import { Application, Container, Graphics, Text } from "pixi.js";
+import { Application, Container, Graphics, Text, TextStyle, type TextStyleOptions } from "pixi.js";
 
-import { SIM_TICKS_PER_SECOND, TILE_SIZE } from "../shared/config";
+import { SIM_TICKS_PER_SECOND, SNAPSHOT_TICKS, TILE_SIZE } from "../shared/config";
 import { indexOf } from "../shared/grid";
 import {
   AgentConditionType,
@@ -239,6 +239,7 @@ export class GameRenderer {
   readonly unitGraphics = new Graphics();
   readonly selectionGraphics = new Graphics();
   readonly labelLayer = new Container();
+  readonly labelSprites = new Map<number, Text>();
 
   readonly state: RenderState = {
     world: null,
@@ -292,8 +293,24 @@ export class GameRenderer {
   selectedUnitId: number | null = null;
   followSelectedUnit = false;
   sidebarTab: SidebarTab = "inspect";
+  renderedSidebarTab: SidebarTab = "inspect";
   viewMode: ViewMode = "surface";
   lastSnapshotAt = performance.now();
+  lastHudRenderAt = 0;
+  hudDirty = true;
+  lastTopbarMarkup = "";
+  lastSidebarMarkup = "";
+  sidebarScrollTopByTab: Record<SidebarTab, number> = {
+    inspect: 0,
+    tribes: 0,
+    events: 0,
+    world: 0,
+  };
+  minimapDirty = true;
+  lastMinimapDrawAt = 0;
+  lastMinimapCameraX = Number.NaN;
+  lastMinimapCameraY = Number.NaN;
+  lastMinimapZoom = Number.NaN;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -301,8 +318,8 @@ export class GameRenderer {
     this.hud.className = "hud";
     this.topbar.className = "topbar";
     this.sidebar.className = "sidebar";
-    this.minimap.width = 180;
-    this.minimap.height = 180;
+    this.minimap.width = 360;
+    this.minimap.height = 360;
     this.minimap.className = "minimap";
   }
 
@@ -386,6 +403,8 @@ export class GameRenderer {
     });
     this.app.ticker.add(() => {
       this.renderScene();
+      this.updateHud(false);
+      this.drawMinimap(false);
     });
   }
 
@@ -438,6 +457,14 @@ export class GameRenderer {
     this.state.creatures = snapshot.creatures;
     this.state.dungeons = snapshot.dungeons;
 
+    const liveAgentIds = new Set(snapshot.agents.map((agent) => agent.id));
+    for (const [id, label] of this.labelSprites.entries()) {
+      if (liveAgentIds.has(id)) continue;
+      this.labelLayer.removeChild(label);
+      label.destroy();
+      this.labelSprites.delete(id);
+    }
+
     if (this.state.world && this.state.terrain && this.state.feature && this.state.surfaceWater && this.state.undergroundTerrain && this.state.undergroundFeature && this.state.undergroundResourceType && this.state.undergroundResourceAmount && this.state.road && this.state.owner && this.state.resourceType && this.state.resourceAmount) {
       for (const update of snapshot.tileUpdates) {
         this.state.terrain[update.index] = update.terrain;
@@ -454,8 +481,12 @@ export class GameRenderer {
       }
     }
 
-    this.updateHud();
-    this.drawMinimap();
+    this.hudDirty = true;
+    if (snapshot.tileUpdates.length > 0 || this.state.tick % 8 === 0) {
+      this.minimapDirty = true;
+    }
+    this.updateHud(false);
+    this.drawMinimap(false);
   }
 
   private captureMotion<T extends { id: number; x: number; y: number }>(store: Map<number, MotionState>, previous: T[], next: T[]): void {
@@ -495,6 +526,7 @@ export class GameRenderer {
       this.cameraX -= dx / this.zoom;
       this.cameraY -= dy / this.zoom;
       this.lastPointer = { x: event.clientX, y: event.clientY };
+      this.minimapDirty = true;
     });
 
     window.addEventListener("pointerup", (event) => {
@@ -522,6 +554,7 @@ export class GameRenderer {
         this.zoom = nextZoom;
         this.cameraX = worldX - mouseX / this.zoom;
         this.cameraY = worldY - mouseY / this.zoom;
+        this.minimapDirty = true;
       },
       { passive: false },
     );
@@ -544,7 +577,11 @@ export class GameRenderer {
     this.selection = { x: tileX, y: tileY };
     const owner = this.state.owner?.[indexOf(tileX, tileY, this.state.world.width)] ?? -1;
     this.selectedTribeId = owner >= 0 ? owner : this.selectedTribeId;
-    const unit = this.state.agents.find((entry) => Math.round(entry.x) === tileX && Math.round(entry.y) === tileY);
+    const unit = this.state.agents.find((entry) =>
+      Math.round(entry.x) === tileX &&
+      Math.round(entry.y) === tileY &&
+      (this.viewMode === "surface" || entry.underground),
+    );
     this.selectedUnitId = unit?.id ?? null;
     this.followSelectedUnit = Boolean(unit);
     this.sidebarTab = "inspect";
@@ -557,6 +594,7 @@ export class GameRenderer {
     const viewportHeight = this.app.renderer.height;
     this.cameraX = tileX * TILE_SIZE - viewportWidth / this.zoom / 2;
     this.cameraY = tileY * TILE_SIZE - viewportHeight / this.zoom / 2;
+    this.minimapDirty = true;
   }
 
   private renderScene(): void {
@@ -565,13 +603,13 @@ export class GameRenderer {
       return;
     }
 
-    const alpha = clamp((performance.now() - this.lastSnapshotAt) / (1000 / SIM_TICKS_PER_SECOND), 0, 1);
+    const alpha = clamp((performance.now() - this.lastSnapshotAt) / ((1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS), 0, 1);
     if (this.followSelectedUnit && this.selectedUnitId !== null) {
       const followed = this.state.agents.find((agent) => agent.id === this.selectedUnitId);
-      if (followed) {
+      if (followed && (this.viewMode === "surface" || followed.underground)) {
         const position = entityPosition(this.agentMotion, followed.id, followed.x, followed.y, alpha);
         this.focusWorld(position.x, position.y);
-      } else {
+      } else if (!followed) {
         this.followSelectedUnit = false;
         this.selectedUnitId = null;
       }
@@ -592,7 +630,9 @@ export class GameRenderer {
     this.buildingGraphics.clear();
     this.unitGraphics.clear();
     this.selectionGraphics.clear();
-    this.labelLayer.removeChildren();
+    for (const label of this.labelSprites.values()) {
+      label.visible = false;
+    }
 
     for (let y = minTileY; y <= maxTileY; y += lodStep) {
       for (let x = minTileX; x <= maxTileX; x += lodStep) {
@@ -739,7 +779,7 @@ export class GameRenderer {
     }
 
     for (const agent of this.state.agents) {
-      if (this.viewMode === "underground" && agent.task !== "delve" && agent.id !== this.selectedUnitId) {
+      if (this.viewMode === "underground" && !agent.underground) {
         continue;
       }
       const position = entityPosition(this.agentMotion, agent.id, agent.x, agent.y, alpha);
@@ -758,6 +798,14 @@ export class GameRenderer {
     if (this.selection) {
       this.selectionGraphics.lineStyle(2, 0xffffff, 0.95);
       this.selectionGraphics.drawRect(this.selection.x * TILE_SIZE, this.selection.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+
+    const viewportMoved =
+      Math.abs(this.cameraX - this.lastMinimapCameraX) > TILE_SIZE * 4 ||
+      Math.abs(this.cameraY - this.lastMinimapCameraY) > TILE_SIZE * 4 ||
+      Math.abs(this.zoom - this.lastMinimapZoom) > 0.025;
+    if (viewportMoved) {
+      this.minimapDirty = true;
     }
   }
 
@@ -947,10 +995,14 @@ export class GameRenderer {
       const drift = this.state.tick * (0.22 + i * 0.04);
       const cx = (viewportCenterX * TILE_SIZE) + Math.sin(drift * 0.011 + i * 1.7) * radiusX * 0.44;
       const cy = (viewportCenterY * TILE_SIZE) + Math.cos(drift * 0.008 + i * 2.1) * radiusY * 0.38;
-      const rx = 110 + i * 30;
-      const ry = 60 + i * 18;
-      this.overlayGraphics.beginFill(0x000000, 0.035 + i * 0.004);
-      this.overlayGraphics.drawEllipse(cx, cy, rx, ry);
+      const rx = 90 + i * 28;
+      const ry = 44 + i * 15;
+      const alpha = 0.02 + i * 0.004;
+      this.overlayGraphics.beginFill(0x000000, alpha);
+      this.overlayGraphics.drawEllipse(cx - rx * 0.32, cy + 4, rx * 0.62, ry * 0.7);
+      this.overlayGraphics.drawEllipse(cx, cy - 4, rx * 0.74, ry * 0.86);
+      this.overlayGraphics.drawEllipse(cx + rx * 0.34, cy + 3, rx * 0.58, ry * 0.68);
+      this.overlayGraphics.drawEllipse(cx, cy + ry * 0.18, rx * 0.94, ry * 0.52);
       this.overlayGraphics.endFill();
     }
   }
@@ -1497,14 +1549,22 @@ export class GameRenderer {
     }
   }
 
-  private drawMinimap(): void {
+  private drawMinimap(force = true): void {
     const world = this.state.world;
     const terrain = this.viewMode === "surface" ? this.state.terrain : this.state.undergroundTerrain;
     if (!world || !terrain) return;
+    const now = performance.now();
+    if (!force && !this.minimapDirty) {
+      return;
+    }
+    if (!force && now - this.lastMinimapDrawAt < 120) {
+      return;
+    }
     const ctx = this.minimap.getContext("2d");
     if (!ctx) return;
     const scaleX = this.minimap.width / world.width;
     const scaleY = this.minimap.height / world.height;
+    ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, this.minimap.width, this.minimap.height);
     for (let y = 0; y < this.minimap.height; y += 1) {
       for (let x = 0; x < this.minimap.width; x += 1) {
@@ -1526,6 +1586,11 @@ export class GameRenderer {
     const viewportHeight = this.app.renderer.height / this.zoom / TILE_SIZE;
     ctx.strokeStyle = "#ffffff";
     ctx.strokeRect(this.cameraX / TILE_SIZE * scaleX, this.cameraY / TILE_SIZE * scaleY, viewportWidth * scaleX, viewportHeight * scaleY);
+    this.minimapDirty = false;
+    this.lastMinimapDrawAt = now;
+    this.lastMinimapCameraX = this.cameraX;
+    this.lastMinimapCameraY = this.cameraY;
+    this.lastMinimapZoom = this.zoom;
   }
 
   private drawAgent(agent: AgentSnapshot, tileX: number, tileY: number, tribe?: TribeSummary): void {
@@ -1806,26 +1871,79 @@ export class GameRenderer {
     drawPixelRect(this.unitGraphics, px + 6, py, 4, 2, color, 0.9);
   }
 
+  private labelStyleForAgent(agent: AgentSnapshot): TextStyleOptions {
+    return {
+      fontFamily: "\"Trebuchet MS\", \"Segoe UI\", sans-serif",
+      fontSize: this.selectedUnitId === agent.id ? 11 : 10,
+      fontWeight: this.selectedUnitId === agent.id || agent.hero ? "700" : "600",
+      fill: agent.hero ? 0xf2df9c : agent.role === AgentRole.Mage ? 0xc4d5ff : 0xf4f8fb,
+      stroke: { color: 0x081018, width: 1 },
+    };
+  }
+
+  private labelSpriteForAgent(agent: AgentSnapshot): Text {
+    let sprite = this.labelSprites.get(agent.id);
+    if (!sprite) {
+      sprite = new Text({
+        text: "",
+        style: new TextStyle(this.labelStyleForAgent(agent)),
+      });
+      sprite.resolution = 2;
+      sprite.eventMode = "none";
+      this.labelSprites.set(agent.id, sprite);
+      this.labelLayer.addChild(sprite);
+    }
+    return sprite;
+  }
+
   private drawAgentLabel(agent: AgentSnapshot, tileX: number, tileY: number): void {
-    if (!(this.zoom > 1.35 || this.selectedUnitId === agent.id || agent.hero || agent.blessed || agent.gear.rarity === "Epic" || agent.gear.rarity === "Legendary")) {
+    if (!(this.zoom > 1.6 || this.selectedUnitId === agent.id || agent.hero || agent.blessed || agent.gear.rarity === "Epic" || agent.gear.rarity === "Legendary")) {
       return;
     }
     const label = agent.title ? `${agent.name} ${agent.title}` : agent.name;
-    const text = new Text({
-      text: label,
-      style: {
-        fontFamily: "Verdana",
-        fontSize: 8,
-        fill: agent.hero ? 0xf2df9c : agent.role === AgentRole.Mage ? 0xc4d5ff : 0xf4f8fb,
-        stroke: { color: 0x091018, width: 2 },
-      },
-    });
-    text.x = tileX * TILE_SIZE - 2;
-    text.y = tileY * TILE_SIZE - 12;
-    this.labelLayer.addChild(text);
+    const text = this.labelSpriteForAgent(agent);
+    text.text = label;
+    text.style = new TextStyle(this.labelStyleForAgent(agent));
+    text.x = tileX * TILE_SIZE - 1;
+    text.y = tileY * TILE_SIZE - 14;
+    text.visible = true;
   }
 
-  private updateHud(): void {
+  private gearRarityClass(rarity: string): string {
+    return `gear-slot--${rarity.toLowerCase()}`;
+  }
+
+  private gearSlotMarkup(label: string, icon: string, item: string, power: number, rarity: string): string {
+    return `
+      <div class="gear-slot ${this.gearRarityClass(rarity)}" title="${item} | Power ${power} | ${rarity}">
+        <span class="gear-slot__icon">${icon}</span>
+        <span class="gear-slot__label">${label}</span>
+        <span class="gear-slot__name">${item}</span>
+      </div>
+    `;
+  }
+
+  private selectedUnitGearMarkup(agent: AgentSnapshot): string {
+    return `
+      <div class="gear-panel">
+        ${this.gearSlotMarkup("Weapon", "W", agent.gear.weapon, agent.gear.power, agent.gear.rarity)}
+        ${this.gearSlotMarkup("Armor", "A", agent.gear.armor, agent.gear.power, agent.gear.rarity)}
+        ${this.gearSlotMarkup("Trinket", "T", agent.gear.trinket, agent.gear.power, agent.gear.rarity)}
+      </div>
+    `;
+  }
+
+  private updateHud(force = true): void {
+    const now = performance.now();
+    if (!force && !this.hudDirty) {
+      return;
+    }
+    if (!force && now - this.lastHudRenderAt < 90) {
+      this.hudDirty = true;
+      return;
+    }
+    this.hudDirty = false;
+    this.lastHudRenderAt = now;
     const totalPopulation = this.state.tribes.reduce((sum, tribe) => sum + tribe.population, 0);
     const totalBoats = this.state.tribes.reduce((sum, tribe) => sum + (tribe.boats ?? 0), 0);
     const totalWagons = this.state.tribes.reduce((sum, tribe) => sum + (tribe.wagons ?? 0), 0);
@@ -1892,13 +2010,17 @@ export class GameRenderer {
       this.statMarkup("Wars/Hostility", `${activeWars}`),
       this.statMarkup("Tick", `${this.state.tick}`),
     ].join("");
-    this.topbar.innerHTML = `
+    const topbarMarkup = `
       <div class="topbar__controls">
         <button class="topbar__toggle ${this.viewMode === "surface" ? "is-active" : ""}" data-view-mode="surface">Surface</button>
         <button class="topbar__toggle ${this.viewMode === "underground" ? "is-active" : ""}" data-view-mode="underground">Underground</button>
       </div>
       <div class="topbar__stats">${statsMarkup}</div>
     `;
+    if (topbarMarkup !== this.lastTopbarMarkup) {
+      this.topbar.innerHTML = topbarMarkup;
+      this.lastTopbarMarkup = topbarMarkup;
+    }
 
     const selectedTileHtml = this.selection && this.state.world && this.state.terrain && this.state.elevation && this.state.biome && this.state.feature && this.state.surfaceWater && this.state.undergroundTerrain && this.state.undergroundFeature && this.state.undergroundResourceType && this.state.undergroundResourceAmount && this.state.owner && this.state.resourceAmount
       ? this.selectedTileMarkup()
@@ -1958,6 +2080,7 @@ export class GameRenderer {
       </section>
       ${selectedUnit ? `<section class="panel">
         <h2>Selected Unit</h2>
+          ${this.selectedUnitGearMarkup(selectedUnit)}
           <div class="kv">
             <strong>Name</strong><span>${selectedUnit.name}</span>
             <strong>Title</strong><span>${selectedUnit.title || "None"}</span>
@@ -1975,10 +2098,8 @@ export class GameRenderer {
             <strong>Level</strong><span>${selectedUnit.level}</span>
             <strong>Kills</strong><span>${selectedUnit.kills}</span>
             <strong>Wounds</strong><span>${selectedUnit.wounds}</span>
+            <strong>Layer</strong><span>${selectedUnit.underground ? "Underground" : "Surface"}</span>
             <strong>Carrying</strong><span>${selectedUnit.carrying === ResourceType.None ? "Nothing" : `${ResourceType[selectedUnit.carrying]} x${selectedUnit.carryingAmount}`}</span>
-            <strong>Weapon</strong><span>${selectedUnit.gear.weapon}</span>
-            <strong>Armor</strong><span>${selectedUnit.gear.armor}</span>
-            <strong>Trinket</strong><span>${selectedUnit.gear.trinket}</span>
             <strong>Power</strong><span>${selectedUnit.gear.power}</span>
             <strong>Rarity</strong><span>${selectedUnit.gear.rarity}</span>
           </div>
@@ -2085,7 +2206,11 @@ export class GameRenderer {
         : this.sidebarTab === "events"
           ? `${eventsPanel}${worldPanel}`
           : `${worldPanel}${tribesPanel}`;
-    this.sidebar.innerHTML = `
+    const currentBody = this.sidebar.querySelector<HTMLElement>(".sidebar__body");
+    if (currentBody) {
+      this.sidebarScrollTopByTab[this.renderedSidebarTab] = currentBody.scrollTop;
+    }
+    const sidebarMarkup = `
       <div class="sidebar__tabs">
         <button class="sidebar__tab ${this.sidebarTab === "inspect" ? "is-active" : ""}" data-tab="inspect">Inspect</button>
         <button class="sidebar__tab ${this.sidebarTab === "tribes" ? "is-active" : ""}" data-tab="tribes">Tribes</button>
@@ -2094,6 +2219,15 @@ export class GameRenderer {
       </div>
       <div class="sidebar__body">${bodyMarkup}</div>
     `;
+    if (sidebarMarkup !== this.lastSidebarMarkup) {
+      this.sidebar.innerHTML = sidebarMarkup;
+      this.lastSidebarMarkup = sidebarMarkup;
+      const nextBody = this.sidebar.querySelector<HTMLElement>(".sidebar__body");
+      if (nextBody) {
+        nextBody.scrollTop = this.sidebarScrollTopByTab[this.sidebarTab] ?? 0;
+      }
+      this.renderedSidebarTab = this.sidebarTab;
+    }
   }
 
   private statMarkup(label: string, value: string): string {

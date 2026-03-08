@@ -407,6 +407,7 @@ export type AgentSnapshot = {
   sickness: number;
   inspiration: number;
   task: string;
+  underground: boolean;
   carrying: ResourceType;
   carryingAmount: number;
   gear: GearSnapshot;
