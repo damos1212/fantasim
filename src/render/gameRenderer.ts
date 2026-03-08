@@ -571,7 +571,7 @@ export class GameRenderer {
     const defaultTribe = tribes.find((tribe) => tribe.race === RaceType.Humans) ?? tribes[0];
     this.selectedTribeId = defaultTribe?.id ?? null;
     if (defaultTribe) {
-      this.zoom = 1.3;
+      this.zoom = 0.96;
       this.cameraX = defaultTribe.capitalX * TILE_SIZE - this.app.renderer.width / this.zoom / 2;
       this.cameraY = defaultTribe.capitalY * TILE_SIZE - this.app.renderer.height / this.zoom / 2;
     } else {
@@ -865,7 +865,7 @@ export class GameRenderer {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.12);
+        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.55);
       }
     }
 
@@ -1310,7 +1310,7 @@ export class GameRenderer {
         const buildingList = chunkedBuildings.get(chunk.key) ?? [];
         for (const building of buildingList) {
           const tribe = tribeById.get(building.tribeId);
-          this.drawBuilding(terrainCtx, building, tribe, this.zoom > 1.12, chunk.sprite.x, chunk.sprite.y);
+          this.drawBuilding(terrainCtx, building, tribe, this.zoom > 1.55, chunk.sprite.x, chunk.sprite.y);
         }
 
         chunk.texture.update();
