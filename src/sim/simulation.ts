@@ -2971,7 +2971,17 @@ export class Simulation {
     }
 
     if (task.kind === "attack" || task.kind === "patrol") {
+      if ((task.kind === "attack" && (agent.health < 52 || agent.wounds > 2 || tribe.morale < 40)) || (task.kind === "patrol" && agent.health < 40)) {
+        this.finishTask(agent);
+        return;
+      }
       if (!atTarget) {
+        return;
+      }
+      const friendlyStrength = this.agents.filter((entry) => entry.tribeId === tribe.id && manhattan(entry.x, entry.y, task.targetX, task.targetY) <= 3).length;
+      const enemyStrength = this.agents.filter((entry) => entry.tribeId === task.payload.targetTribeId && manhattan(entry.x, entry.y, task.targetX, task.targetY) <= 3).length;
+      if (task.kind === "attack" && enemyStrength > friendlyStrength * 1.5 && agent.health < 72) {
+        this.finishTask(agent);
         return;
       }
       task.workLeft -= workRate;
@@ -4669,6 +4679,63 @@ export class Simulation {
     });
   }
 
+  private militaryObjectivePriority(type: BuildingType): number {
+    switch (type) {
+      case BuildingType.Warehouse:
+      case BuildingType.Stockpile:
+        return 18;
+      case BuildingType.Farm:
+      case BuildingType.Orchard:
+      case BuildingType.FishingHut:
+      case BuildingType.Fishery:
+        return 16;
+      case BuildingType.LumberCamp:
+      case BuildingType.Quarry:
+      case BuildingType.Mine:
+      case BuildingType.DeepMine:
+        return 15;
+      case BuildingType.Barracks:
+      case BuildingType.Armory:
+      case BuildingType.Watchtower:
+      case BuildingType.Castle:
+        return 17;
+      case BuildingType.CapitalHall:
+        return 12;
+      default:
+        return 8;
+    }
+  }
+
+  private chooseMilitaryObjective(tribe: TribeState, enemy: TribeState): { x: number; y: number } {
+    const enemyBuildings = this.buildingsForTribe(enemy.id)
+      .filter((building) => building.type !== BuildingType.House && building.type !== BuildingType.MountainHall)
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        const scoreA = this.militaryObjectivePriority(a.type) - manhattan(tribe.capitalX, tribe.capitalY, centerA.x, centerA.y) * 0.02;
+        const scoreB = this.militaryObjectivePriority(b.type) - manhattan(tribe.capitalX, tribe.capitalY, centerB.x, centerB.y) * 0.02;
+        return scoreB - scoreA;
+      });
+    const target = enemyBuildings[0];
+    if (target) {
+      return buildingCenter(target);
+    }
+    return {
+      x: Math.floor((tribe.capitalX + enemy.capitalX) / 2),
+      y: Math.floor((tribe.capitalY + enemy.capitalY) / 2),
+    };
+  }
+
+  private canSustainCampaign(tribe: TribeState, enemy: TribeState): boolean {
+    const population = this.populationOf(tribe.id);
+    const fighters = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
+    const foodSecure = tribe.resources[ResourceType.Rations] > population * 4.2;
+    const waterSecure = tribe.water > Math.max(16, population * 0.55);
+    const ownPower = this.tribeStrategicPower(tribe);
+    const enemyPower = this.tribeStrategicPower(enemy);
+    return fighters >= 4 && foodSecure && waterSecure && ownPower >= enemyPower * 0.78;
+  }
+
   private ensureSiegeForTribe(tribe: TribeState): void {
     if (tribe.age < AgeType.Medieval) {
       return;
@@ -4847,17 +4914,25 @@ export class Simulation {
 
     const enemy = enemies[0]!;
     const state = diplomacyStateFromScore(tribe.relations[enemy.id]!);
-    const kind: JobKind = state === DiplomacyState.War ? "attack" : "patrol";
-    for (let i = 0; i < 4; i += 1) {
+    const objective = this.chooseMilitaryObjective(tribe, enemy);
+    const canAttack = state === DiplomacyState.War && this.canSustainCampaign(tribe, enemy);
+    if (!canAttack && state !== DiplomacyState.Hostile) {
+      return;
+    }
+    const kind: JobKind = canAttack ? "attack" : "patrol";
+    const rallyX = canAttack ? objective.x : Math.floor((tribe.capitalX + enemy.capitalX) / 2);
+    const rallyY = canAttack ? objective.y : Math.floor((tribe.capitalY + enemy.capitalY) / 2);
+    const desiredJobs = canAttack ? 5 : 3;
+    for (let i = 0; i < desiredJobs; i += 1) {
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind,
-        x: enemy.capitalX + randInt(this.random, -2, 2),
-        y: enemy.capitalY + randInt(this.random, -2, 2),
-        priority: kind === "attack" ? 10 : 5,
+        x: clamp(rallyX + randInt(this.random, -2, 2), 1, this.world.width - 2),
+        y: clamp(rallyY + randInt(this.random, -2, 2), 1, this.world.height - 2),
+        priority: kind === "attack" ? 10 : 6,
         claimedBy: null,
-        payload: { targetTribeId: enemy.id, targetX: enemy.capitalX, targetY: enemy.capitalY },
+        payload: { targetTribeId: enemy.id, targetX: objective.x, targetY: objective.y },
       });
     }
   }
