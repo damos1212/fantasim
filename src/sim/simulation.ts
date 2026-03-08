@@ -247,9 +247,10 @@ type HaulPayload = {
   sourceBuildingId?: number | null;
   dropX: number;
   dropY: number;
+  destBuildingId?: number | null;
   resourceType: ResourceType;
   amount: number;
-  targetJobId: number;
+  targetJobId: number | null;
 };
 
 type CraftPayload = {
@@ -1326,11 +1327,14 @@ export class Simulation {
       }
 
       const payload = haulJob.payload as HaulPayload;
-      const buildJob = this.jobs.find((job) => job.id === payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
+      const buildJob = payload.targetJobId === null ? null : this.jobs.find((job) => job.id === payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
       if (buildJob?.kind === "build") {
         (buildJob.payload as BuildPayload).supplied += 1;
       } else if (buildJob?.kind === "craft") {
         (buildJob.payload as CraftPayload).supplied += 1;
+      } else if (payload.destBuildingId != null) {
+        const destBuilding = this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null;
+        this.addBuildingStock(destBuilding, payload.resourceType, wagon.cargoAmount);
       }
       this.jobs.splice(this.jobs.indexOf(haulJob), 1);
       wagon.task = WagonTaskType.Idle;
@@ -2794,11 +2798,17 @@ export class Simulation {
     }
     if (job.kind === "haul") {
       const payload = job.payload as HaulPayload;
-      const targetJob = this.jobs.find((entry) => entry.id === payload.targetJobId);
+      const targetJob = payload.targetJobId === null ? null : this.jobs.find((entry) => entry.id === payload.targetJobId);
       if (targetJob) {
         score += this.jobUrgencyScore(agent, tribe, targetJob) * 0.7;
       } else {
-        score += 8;
+        const sourceBuilding = payload.sourceBuildingId === null || payload.sourceBuildingId === undefined
+          ? null
+          : this.buildings.find((building) => building.id === payload.sourceBuildingId);
+        const sourceStock = sourceBuilding ? (sourceBuilding.stock[payload.resourceType] ?? 0) : 0;
+        const sourceTarget = sourceBuilding ? this.localStockTarget(sourceBuilding.type, payload.resourceType) : 0;
+        const surplus = Math.max(0, sourceStock - sourceTarget);
+        score += 10 + surplus * 0.18;
       }
     }
 
@@ -2917,13 +2927,18 @@ export class Simulation {
       if (!atTarget) {
         return;
       }
-      const buildJob = this.jobs.find((job) => job.id === task.payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
+      const buildJob = task.payload.targetJobId === null
+        ? null
+        : this.jobs.find((job) => job.id === task.payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
       if (buildJob?.kind === "build") {
         const payload = buildJob.payload as BuildPayload;
         payload.supplied += 1;
       } else if (buildJob?.kind === "craft") {
         const payload = buildJob.payload as CraftPayload;
         payload.supplied += 1;
+      } else if (task.payload.destBuildingId != null) {
+        const destBuilding = this.buildings.find((entry) => entry.id === task.payload.destBuildingId) ?? null;
+        this.addBuildingStock(destBuilding, task.payload.resourceType, agent.carryingAmount);
       }
       agent.carrying = ResourceType.None;
       agent.carryingAmount = 0;
@@ -3207,6 +3222,61 @@ export class Simulation {
     return { resourceType: bestType, amount: bestAmount };
   }
 
+  private localStockTarget(buildingType: BuildingType, resourceType: ResourceType): number {
+    if (resourceType === ResourceType.Grain || resourceType === ResourceType.Berries || resourceType === ResourceType.Fish || resourceType === ResourceType.Meat) {
+      if (buildingType === BuildingType.Farm || buildingType === BuildingType.Orchard || buildingType === BuildingType.FishingHut || buildingType === BuildingType.Fishery) {
+        return 96;
+      }
+      if (buildingType === BuildingType.Warehouse || buildingType === BuildingType.Stockpile || buildingType === BuildingType.CapitalHall) {
+        return 180;
+      }
+    }
+    if (resourceType === ResourceType.Wood) {
+      if (buildingType === BuildingType.LumberCamp) {
+        return 128;
+      }
+      if (buildingType === BuildingType.Workshop) {
+        return 96;
+      }
+      return 180;
+    }
+    if (resourceType === ResourceType.Stone || resourceType === ResourceType.Clay) {
+      if (buildingType === BuildingType.Quarry) {
+        return 120;
+      }
+      if (buildingType === BuildingType.Workshop) {
+        return 96;
+      }
+      return 168;
+    }
+    if (resourceType === ResourceType.Ore) {
+      if (buildingType === BuildingType.Mine || buildingType === BuildingType.DeepMine) {
+        return 96;
+      }
+      if (buildingType === BuildingType.Smithy || buildingType === BuildingType.Foundry || buildingType === BuildingType.Factory) {
+        return 88;
+      }
+      return 144;
+    }
+    if (resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal || resourceType === ResourceType.Bricks) {
+      return buildingType === BuildingType.Workshop || buildingType === BuildingType.Foundry || buildingType === BuildingType.Factory ? 88 : 132;
+    }
+    return 120;
+  }
+
+  private siteHasExtractionCapacity(
+    building: BuildingState,
+    resourceType: ResourceType,
+    emergency = false,
+  ): boolean {
+    const stock = building.stock[resourceType] ?? 0;
+    const target = this.localStockTarget(building.type, resourceType);
+    if (emergency) {
+      return stock < target * 1.75;
+    }
+    return stock < target;
+  }
+
   private sourceBuildingTypesForResource(resourceType: ResourceType): BuildingType[] {
     return resourceType === ResourceType.Wood || resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal
       ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
@@ -3252,6 +3322,49 @@ export class Simulation {
       building.stock[resourceType] = available - withdrawn;
     }
     return withdrawn;
+  }
+
+  private findRedistributionDestinationBuilding(tribeId: number, sourceBuilding: BuildingState, resourceType: ResourceType): BuildingState | null {
+    const preferredTypes =
+      resourceType === ResourceType.Wood
+        ? [BuildingType.Workshop, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+        : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay
+          ? [BuildingType.Workshop, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+          : resourceType === ResourceType.Ore
+            ? [BuildingType.Smithy, BuildingType.Foundry, BuildingType.Factory, BuildingType.Warehouse, BuildingType.Stockpile]
+            : resourceType === ResourceType.Grain || resourceType === ResourceType.Berries || resourceType === ResourceType.Fish || resourceType === ResourceType.Meat
+              ? [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+              : resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal || resourceType === ResourceType.Bricks
+                ? [BuildingType.Workshop, BuildingType.Foundry, BuildingType.Factory, BuildingType.Warehouse]
+                : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
+    const sourceCenter = buildingCenter(sourceBuilding);
+    const candidates = this.buildingsForTribe(tribeId)
+      .filter((building) => building.id !== sourceBuilding.id && preferredTypes.includes(building.type))
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        const typeBiasA = Math.max(0, 10 - preferredTypes.indexOf(a.type) * 2);
+        const typeBiasB = Math.max(0, 10 - preferredTypes.indexOf(b.type) * 2);
+        const stockA = a.stock[resourceType] ?? 0;
+        const stockB = b.stock[resourceType] ?? 0;
+        const capacityA = this.localStockTarget(a.type, resourceType);
+        const capacityB = this.localStockTarget(b.type, resourceType);
+        const spareA = Math.max(0, capacityA - stockA);
+        const spareB = Math.max(0, capacityB - stockB);
+        return (
+          (typeBiasB * 6 + spareB * 0.25 - manhattan(sourceCenter.x, sourceCenter.y, centerB.x, centerB.y) * 1.1)
+          - (typeBiasA * 6 + spareA * 0.25 - manhattan(sourceCenter.x, sourceCenter.y, centerA.x, centerA.y) * 1.1)
+        );
+      });
+    return candidates[0] ?? null;
+  }
+
+  private hasRedistributionHaul(tribeId: number, sourceBuildingId: number, destBuildingId: number, resourceType: ResourceType): boolean {
+    return this.jobs.some((job) => {
+      if (job.tribeId !== tribeId || job.kind !== "haul") return false;
+      const payload = job.payload as HaulPayload;
+      return payload.targetJobId === null && payload.sourceBuildingId === sourceBuildingId && payload.destBuildingId === destBuildingId && payload.resourceType === resourceType;
+    });
   }
 
   private performResourceTask(
@@ -4225,6 +4338,7 @@ export class Simulation {
         this.generateExplorationPlans(tribe);
         this.generateEarthworkPlans(tribe);
         this.generateCraftingPlans(tribe);
+        this.generateRedistributionHauls(tribe);
         this.generateMilitaryPlans(tribe);
         this.generateAdventurePlans(tribe);
         this.generateDelvePlans(tribe);
@@ -4439,6 +4553,8 @@ export class Simulation {
       let activeFarmJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "farm").length;
       for (const farm of farms) {
         if (activeFarmJobs >= Math.min(3, farms.length)) break;
+        const farmResource = farm.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain;
+        if (!this.siteHasExtractionCapacity(farm, farmResource, lowFood)) continue;
         const center = buildingCenter(farm);
         if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "farm" && job.x === center.x && job.y === center.y)) continue;
         this.jobs.push({
@@ -4449,7 +4565,7 @@ export class Simulation {
           y: center.y,
           priority: lowFood ? 6 : 4,
           claimedBy: null,
-          payload: { resourceType: farm.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain },
+          payload: { resourceType: farmResource },
         });
         activeFarmJobs += 1;
       }
@@ -4459,6 +4575,7 @@ export class Simulation {
       let activeFishJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "fish").length;
       for (const dock of docks) {
         if (activeFishJobs >= Math.min(3, docks.length + 1)) break;
+        if (!this.siteHasExtractionCapacity(dock, ResourceType.Fish, lowFood)) continue;
         const center = buildingCenter(dock);
         activeFishJobs += this.enqueueWaterJobsAround(tribe, center.x, center.y, "fish", 10, lowFood ? 2 : 1);
       }
@@ -4466,6 +4583,7 @@ export class Simulation {
 
     if (lumberCamps.length > 0) {
       for (const camp of lumberCamps) {
+        if (!this.siteHasExtractionCapacity(camp, ResourceType.Wood, lowWood)) continue;
         const center = buildingCenter(camp);
         this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.Trees, "cut_tree", 9, lowWood ? 2 : 1);
       }
@@ -4474,13 +4592,18 @@ export class Simulation {
     if (quarries.length > 0) {
       for (const quarry of quarries) {
         const center = buildingCenter(quarry);
-        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 9, lowStone ? 2 : 1);
-        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, missingCistern || lowClay ? 2 : 1);
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Stone, lowStone || bootstrap || missingQuarry || missingCistern)) {
+          this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 9, lowStone ? 2 : 1);
+        }
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Clay, missingCistern || lowClay || bootstrap)) {
+          this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, missingCistern || lowClay ? 2 : 1);
+        }
       }
     }
 
     if (mines.length > 0) {
       for (const mine of mines) {
+        if (!this.siteHasExtractionCapacity(mine, ResourceType.Ore, lowOre)) continue;
         const center = buildingCenter(mine);
         this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.OreVein, "mine", 10, lowOre ? 2 : 1);
       }
@@ -4512,6 +4635,7 @@ export class Simulation {
       let queuedWood = 0;
       for (const camp of lumberCamps) {
         if (queuedWood >= (bootstrap ? 8 : 5)) break;
+        if (!this.siteHasExtractionCapacity(camp, ResourceType.Wood, true)) continue;
         const center = buildingCenter(camp);
         queuedWood += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.Trees, "cut_tree", 9, bootstrap ? 4 : 3);
         queuedWood += this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Wood], "cut_tree", 8, bootstrap ? 2 : 1);
@@ -4527,8 +4651,12 @@ export class Simulation {
       for (const quarry of quarries) {
         if (queuedStone >= (bootstrap ? 5 : 3)) break;
         const center = buildingCenter(quarry);
-        queuedStone += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 9, bootstrap ? 3 : 2);
-        queuedStone += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, 1);
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Stone, true)) {
+          queuedStone += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 9, bootstrap ? 3 : 2);
+        }
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Clay, true)) {
+          queuedStone += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, 1);
+        }
         queuedStone += this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Stone, ResourceType.Clay], "quarry", 8, 1);
       }
       if (queuedStone < (bootstrap ? 6 : 4)) {
@@ -4541,8 +4669,10 @@ export class Simulation {
     if ((missingCistern || tribe.water < Math.max(18, this.populationOf(tribe.id) * 0.6)) && (lowClay || bootstrap)) {
       for (const quarry of quarries) {
         const center = buildingCenter(quarry);
-        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, 2);
-        this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Clay], "quarry", 7, 1);
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Clay, true)) {
+          this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, 2);
+          this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Clay], "quarry", 7, 1);
+        }
       }
       this.enqueueNearbyFeatureJobs(tribe, FeatureType.ClayDeposit, "quarry", economyRadius, bootstrap ? 8 : 5);
       this.enqueueNearbyResourceJobs(tribe, [ResourceType.Clay], "quarry", economyRadius, bootstrap ? 5 : 2);
@@ -4552,6 +4682,7 @@ export class Simulation {
       let queuedOre = 0;
       for (const mine of mines) {
         if (queuedOre >= 4) break;
+        if (!this.siteHasExtractionCapacity(mine, ResourceType.Ore, true)) continue;
         const center = buildingCenter(mine);
         queuedOre += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.OreVein, "mine", 10, 2);
       }
@@ -4865,17 +4996,21 @@ export class Simulation {
     if (tribe.age >= AgeType.Stone && infrastructureStable && population > 20 && !this.hasBuilt(tribe.id, BuildingType.Shrine)) {
       this.tryPlanBuilding(tribe, BuildingType.Shrine, 5);
     }
-    if (tribe.age >= AgeType.Stone && infrastructureStable && population >= 22 && !this.hasBuilt(tribe.id, BuildingType.Workshop)) {
-      this.tryPlanBuilding(tribe, BuildingType.Workshop, 7);
+    const protoIndustryReady =
+      tribe.age >= AgeType.Stone
+      && this.hasBuilt(tribe.id, BuildingType.Farm)
+      && this.hasBuilt(tribe.id, BuildingType.LumberCamp)
+      && this.hasBuilt(tribe.id, BuildingType.Cistern)
+      && population >= 20;
+    if (protoIndustryReady && !this.hasBuilt(tribe.id, BuildingType.Workshop)) {
+      this.tryPlanBuilding(tribe, BuildingType.Workshop, infrastructureStable ? 7 : 6);
     }
     if (
-      tribe.age >= AgeType.Stone &&
-      infrastructureStable &&
-      population >= 22 &&
+      protoIndustryReady &&
       !this.hasBuilt(tribe.id, BuildingType.Mine) &&
       distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.OreVein, 18) <= 12
     ) {
-      this.tryPlanBuilding(tribe, BuildingType.Mine, 7);
+      this.tryPlanBuilding(tribe, BuildingType.Mine, infrastructureStable ? 7 : 6);
     }
     if (tribe.age >= AgeType.Bronze && infrastructureStable && !this.hasBuilt(tribe.id, BuildingType.School)) {
       this.tryPlanBuilding(tribe, BuildingType.School, 6);
@@ -5160,6 +5295,63 @@ export class Simulation {
       this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, 9, { [ResourceType.Ore]: 16, [ResourceType.Charcoal]: 6, [ResourceType.Bricks]: 3 }, productionHub, 9);
       this.enqueueCraftJob(tribe, ResourceType.MetalArmor, 8, { [ResourceType.Ore]: 15, [ResourceType.Charcoal]: 5, [ResourceType.Bricks]: 3 }, productionHub, 9);
       this.enqueueCraftJob(tribe, ResourceType.IronTools, 8, { [ResourceType.Ore]: 10, [ResourceType.Charcoal]: 4, [ResourceType.Bricks]: 2 }, logisticsHub, 7);
+    }
+  }
+
+  private generateRedistributionHauls(tribe: TribeState): void {
+    const activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
+    if (activeHauls > 28) {
+      return;
+    }
+    const candidates = this.buildingsForTribe(tribe.id)
+      .filter((building) =>
+        building.type === BuildingType.Farm ||
+        building.type === BuildingType.Orchard ||
+        building.type === BuildingType.LumberCamp ||
+        building.type === BuildingType.Quarry ||
+        building.type === BuildingType.Mine ||
+        building.type === BuildingType.DeepMine ||
+        building.type === BuildingType.FishingHut ||
+        building.type === BuildingType.Fishery ||
+        building.type === BuildingType.Stockpile,
+      );
+
+    let planned = 0;
+    for (const source of candidates) {
+      if (planned >= 8) break;
+      const top = this.topStoredResource(source);
+      if (top.resourceType === ResourceType.None) continue;
+      const threshold = this.localStockTarget(source.type, top.resourceType);
+      if (top.amount <= threshold) continue;
+      const destination = this.findRedistributionDestinationBuilding(tribe.id, source, top.resourceType);
+      if (!destination) continue;
+      if (this.hasRedistributionHaul(tribe.id, source.id, destination.id, top.resourceType)) continue;
+
+      const sourceCenter = buildingCenter(source);
+      const destCenter = buildingCenter(destination);
+      if (manhattan(sourceCenter.x, sourceCenter.y, destCenter.x, destCenter.y) < 4) continue;
+
+      this.jobs.push({
+        id: this.nextJobId++,
+        tribeId: tribe.id,
+        kind: "haul",
+        x: sourceCenter.x,
+        y: sourceCenter.y,
+        priority: 5.4,
+        claimedBy: null,
+        payload: {
+          sourceX: sourceCenter.x,
+          sourceY: sourceCenter.y,
+          sourceBuildingId: source.id,
+          dropX: destCenter.x,
+          dropY: destCenter.y,
+          destBuildingId: destination.id,
+          resourceType: top.resourceType,
+          amount: clamp(Math.floor((top.amount - threshold) * 0.45), 8, 30),
+          targetJobId: null,
+        },
+      });
+      planned += 1;
     }
   }
 

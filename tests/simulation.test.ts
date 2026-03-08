@@ -265,6 +265,47 @@ describe("simulation", () => {
     expect(lastSnapshot.buildings.some((building) => building.stockResource !== ResourceType.None && building.stockAmount > 0)).toBe(true);
   });
 
+  test("surplus extraction gets redistributed beyond raw source sites", { timeout: 30000 }, () => {
+    const sim = createSimulation("stock-redistribution", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1500; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const extractorTypes = new Set([
+      BuildingType.Farm,
+      BuildingType.Orchard,
+      BuildingType.LumberCamp,
+      BuildingType.Quarry,
+      BuildingType.Mine,
+      BuildingType.DeepMine,
+      BuildingType.FishingHut,
+      BuildingType.Fishery,
+    ]);
+    const logisticsTypes = new Set([
+      BuildingType.Stockpile,
+      BuildingType.Warehouse,
+      BuildingType.CapitalHall,
+      BuildingType.Workshop,
+      BuildingType.Smithy,
+      BuildingType.Foundry,
+      BuildingType.Factory,
+    ]);
+
+    expect(lastSnapshot.tribes.some((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const logisticsFilled = tribeBuildings.some((building) => logisticsTypes.has(building.type) && building.stockAmount > 0);
+      const extractorPeak = tribeBuildings
+        .filter((building) => extractorTypes.has(building.type))
+        .reduce((peak, building) => Math.max(peak, building.stockAmount), 0);
+      return logisticsFilled && extractorPeak <= 240;
+    })).toBe(true);
+  });
+
   test("stable stone-age tribes begin primitive industry before bronze", { timeout: 30000 }, () => {
     const sim = createSimulation("stone-industry", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
