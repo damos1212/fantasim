@@ -664,3 +664,200 @@ The following backlog is intentionally kept explicit so the next major system pu
 - better observer tooling: charts/history views, kingdom comparison, legends browser, filters, time controls, and event jump/focus tools
 - save/load and replayable seeds with exportable world state
 - more balancing and long-run tuning so growth, collapse, diplomacy, war, and recovery stay interesting for hours rather than flattening
+
+## Detailed Next-Phase Plan
+
+The next major work should happen in this order so the sim becomes easier to watch, easier to tune, and deeper without collapsing under unreadable complexity.
+
+### Phase A. Observer Tooling and Presentation
+
+Goal:
+Make the simulation enjoyable to watch and easy to inspect before adding more complexity.
+
+Deliverables:
+
+- pause plus `1x / 2x / 4x / 8x` simulation speed controls
+- event jump/focus from UI
+- event filters by type
+- tribe comparison panel
+- larger history / legends browser
+- smoother interpolation for agents, animals, carts, boats, caravans, and clouds
+- better animation readability for build, haul, gather, craft, and battle states
+- clearer building/settlement readability at normal observer zoom
+- cleaner selected-unit follow behavior
+
+Definition of done:
+
+- a user can pause, speed up, slow down, and jump around the world without losing context
+- recent and historical world events are easy to browse and focus
+- motion looks smooth enough that world activity is readable at a glance
+
+### Phase B. Economy Depth
+
+Goal:
+Make tribes feel like they run real production chains instead of shallow stock counters.
+
+Deliverables:
+
+- explicit material chains:
+  - wood -> planks
+  - clay -> bricks
+  - ore + charcoal -> refined metal
+  - grain / livestock / fish -> preserved food
+  - fiber / hides / metal -> distinct gear classes
+- clearer bottlenecks:
+  - fuel shortages
+  - clay shortages
+  - missing transport capacity
+  - missing storage capacity
+- district specialization:
+  - farming belts
+  - industrial quarters
+  - dock districts
+  - mountain extraction districts
+  - warehouse hubs
+- better routing logic:
+  - warehouses as actual hubs
+  - docks as trade/export nodes
+  - rail depots as long-haul logistics nodes
+  - stronger haul prioritization between critical and luxury goods
+- race-specific trade profiles:
+  - dwarves export ore, tools, engineering goods
+  - elves export food, timber, magical goods
+  - humans export balanced finished goods
+  - orcs rely more on raiding and coarse production
+
+Definition of done:
+
+- tribes can visibly stall or thrive due to production bottlenecks
+- settlement layout reflects what the tribe is good at producing
+- trade relationships materially change what kingdoms can afford to build and field
+
+### Phase C. Combat Readability and Warfare
+
+Goal:
+Make wars legible and intentional instead of looking like loose unit noise.
+
+Deliverables:
+
+- battlefield roles:
+  - line infantry
+  - ranged support
+  - cavalry flankers
+  - mage backline
+  - siege support
+- formations and spacing behavior
+- retreat, rout, rally, and morale-break states
+- better siege target selection:
+  - gates
+  - wall breaches
+  - barracks
+  - capitals
+  - waterworks
+- clearer battlefront behavior:
+  - staging near roads
+  - garrisons in towns
+  - patrol rings
+  - raiding parties vs. full invasions
+- visible battle aftermath:
+  - wounded recovery load
+  - ruins / breaches
+  - loot and captured supplies
+
+Definition of done:
+
+- the player can tell where a battle line is, who is winning, and why
+- armies stop behaving like a flat pile of combat stats
+- fortifications and terrain visibly change combat outcomes
+
+### Phase D. Social Simulation
+
+Goal:
+Make tribes feel like societies with memory, not only production machines.
+
+Deliverables:
+
+- family links for units
+- rulers with lineage and heirs
+- succession crises and rival claimants
+- dynastic reputation and long-form house history
+- rival heroes and notable champions
+- religion branches / sect differences
+- rebellions and separatist breakaways
+- better chronicled life events:
+  - births
+  - deaths
+  - marriages / bonds
+  - coronations
+  - betrayals
+  - exiles
+
+Definition of done:
+
+- tribe history generates recognizable storylines over long runs
+- leadership and internal instability matter, not only external war/economy
+
+### Phase E. World Danger and Adventure
+
+Goal:
+Make the world itself push back harder and create more emergent stories.
+
+Deliverables:
+
+- more dungeon types and outcomes
+- expedition parties with survival/failure logic
+- lair ecosystems around legendary creatures
+- creature migration / raiding patterns
+- relic chains and named artifacts
+- region-wide disasters tied to lairs, volcanoes, weather, and deep delves
+
+Definition of done:
+
+- exploration and danger reshape kingdom histories
+- the world creates memorable crises even without tribe-vs-tribe war
+
+### Phase F. Late-Era Expansion
+
+Goal:
+Push the tech arc beyond the current first modern slice without skipping readability.
+
+Deliverables:
+
+- deeper modern:
+  - stronger factories and power grids
+  - modern infantry distinctions
+  - artillery doctrine
+  - proper vehicles and aircraft identity
+- sci-fi foundation:
+  - energy infrastructure
+  - advanced materials
+  - higher-tier automation
+  - race-specific late-age divergence instead of generic future tech
+
+Definition of done:
+
+- later eras feel like real shifts in logistics, warfare, and visuals
+- race identity still matters in modern and post-modern phases
+
+## Polish and Tuning Checklist
+
+The following should be revisited continuously as each phase lands:
+
+- startup tribe viability and opener pacing
+- readable building silhouettes at all zoom levels
+- visible carry/haul/build feedback
+- pathing cost and route sanity
+- combat casualty rates versus recovery rates
+- diplomacy stability versus constant-chaos tuning
+- trade usefulness versus self-sufficiency
+- long-run population growth and collapse curves
+- map readability at far zoom
+- render cost under heavy population and large wars
+
+## Recommended Immediate Execution Order
+
+1. Finish observer tooling polish and time-control usability.
+2. Land the first deeper economy slice around production bottlenecks and district specialization.
+3. Land combat readability improvements before expanding unit counts further.
+4. Add the first social-simulation slice only after economy/combat become easier to read.
+5. Rebalance long-run pacing before pushing harder into late modern and sci-fi.

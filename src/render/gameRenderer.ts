@@ -1654,13 +1654,11 @@ export class GameRenderer {
         : materials.roof;
 
     if (!detail) {
-      drawPixelRect(target, px + 2, py + h - 1, w - 1, 2, 0x000000, this.viewMode === "surface" ? 0.1 : 0.08);
       drawPixelRect(target, px + 1, py + 2, w - 2, h - 3, wall, 0.94);
       drawPixelRect(target, px + 2, py + 1, w - 4, Math.max(2, Math.floor(h * 0.22)), roof, 0.96);
       return;
     }
 
-    drawPixelRect(target, px + 2, py + h - 1, w - 1, 3, 0x000000, this.viewMode === "surface" ? 0.16 : 0.1);
     if (this.viewMode === "surface" && (building.type === BuildingType.MageTower || building.type === BuildingType.ArcaneSanctum || building.type === BuildingType.Foundry || building.type === BuildingType.Factory || building.type === BuildingType.PowerPlant || building.type === BuildingType.Airfield)) {
       const glowColor =
         building.type === BuildingType.MageTower || building.type === BuildingType.ArcaneSanctum ? 0x8da7ff
