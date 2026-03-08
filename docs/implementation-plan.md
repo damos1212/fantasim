@@ -648,6 +648,7 @@ The following major systems are still not fully implemented and should remain vi
 - true inspectable underground layer with generated caverns, ruins, magma seams, underground rivers, excavated tunnel networks, and tribe-visible tunnel depth stats
 - more explicit diplomacy through formal trade pacts, tribute pressure, and clearer kingdom-level relationship state in the observer UI
 - diplomacy effects that materially change survival pressure through alliance aid convoys, tribute strain, and tributary morale/rebellion pressure
+- first-contact/discovery gating so kingdoms explore outward and only broaden diplomacy, trade, and war after establishing contact
 - stronger render polish through underground/surface view toggles, animated water and lava shimmer, drifting cloud shadows, and subtler building shadowing
 
 ## Expansion Roadmap

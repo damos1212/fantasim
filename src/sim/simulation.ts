@@ -79,6 +79,7 @@ type TribeState = {
   successionCount: number;
   relations: number[];
   tradePacts: boolean[];
+  discovered: boolean[];
   tributeTo: number | null;
   stableCount: number;
   lastFoodTick: number;
@@ -769,10 +770,12 @@ export class Simulation {
         successionCount: 0,
         relations: new Array(INITIAL_TRIBE_COUNT).fill(0),
         tradePacts: new Array(INITIAL_TRIBE_COUNT).fill(false),
+        discovered: new Array(INITIAL_TRIBE_COUNT).fill(false),
         tributeTo: null,
         stableCount: 0,
         lastFoodTick: 0,
       };
+      tribe.discovered[tribeId] = true;
 
       tribe.resources[ResourceType.Wood] = 32;
       tribe.resources[ResourceType.Stone] = 22;
@@ -1389,7 +1392,7 @@ export class Simulation {
         this.caravans.splice(index, 1);
         continue;
       }
-      if (!tribe.tradePacts[partner.id] || diplomacyStateFromScore(tribe.relations[partner.id]!) < DiplomacyState.Neutral) {
+      if (!tribe.discovered[partner.id] || !tribe.tradePacts[partner.id] || diplomacyStateFromScore(tribe.relations[partner.id]!) < DiplomacyState.Neutral) {
         this.caravans.splice(index, 1);
         continue;
       }
@@ -2984,6 +2987,10 @@ export class Simulation {
       }
       const friendlyStrength = this.agents.filter((entry) => entry.tribeId === tribe.id && manhattan(entry.x, entry.y, task.targetX, task.targetY) <= 3).length;
       const enemyStrength = this.agents.filter((entry) => entry.tribeId === task.payload.targetTribeId && manhattan(entry.x, entry.y, task.targetX, task.targetY) <= 3).length;
+      const targetTribe = this.tribes[task.payload.targetTribeId];
+      if (task.kind === "patrol" && targetTribe && !tribe.discovered[targetTribe.id] && manhattan(agent.x, agent.y, targetTribe.capitalX, targetTribe.capitalY) <= this.contactRadiusForTribe(tribe) + 10) {
+        this.markDiscovery(tribe, targetTribe);
+      }
       if (task.kind === "attack" && enemyStrength > friendlyStrength * 1.5 && agent.health < 72) {
         this.finishTask(agent);
         return;
@@ -4031,11 +4038,13 @@ export class Simulation {
     this.jobs.push(...carriedJobs);
     for (const tribe of this.tribes) {
       const bootstrap = this.isBootstrapPhase(tribe);
+      this.updateDiscovery(tribe);
       this.updateDiplomacy(tribe);
       this.assignRolesForTribe(tribe);
       this.generateEconomyJobs(tribe, bootstrap);
       this.generateBuildingPlans(tribe);
       if (!bootstrap) {
+        this.generateExplorationPlans(tribe);
         this.generateEarthworkPlans(tribe);
         this.generateCraftingPlans(tribe);
         this.generateMilitaryPlans(tribe);
@@ -4069,9 +4078,84 @@ export class Simulation {
     );
   }
 
+  private contactRadiusForTribe(tribe: TribeState): number {
+    return tribe.age >= AgeType.Modern ? 42 : tribe.age >= AgeType.Industrial ? 36 : tribe.age >= AgeType.Medieval ? 32 : tribe.age >= AgeType.Bronze ? 28 : 24;
+  }
+
+  private hasLineOfContact(tribe: TribeState, other: TribeState): boolean {
+    const radius = this.contactRadiusForTribe(tribe);
+    for (const building of this.buildings) {
+      if (building.tribeId !== tribe.id) continue;
+      const center = buildingCenter(building);
+      if (manhattan(center.x, center.y, other.capitalX, other.capitalY) <= radius) {
+        return true;
+      }
+    }
+    for (const agent of this.agents) {
+      if (agent.tribeId === tribe.id && manhattan(agent.x, agent.y, other.capitalX, other.capitalY) <= radius) {
+        return true;
+      }
+    }
+    for (const wagon of this.wagons) {
+      if (wagon.tribeId === tribe.id && manhattan(wagon.x, wagon.y, other.capitalX, other.capitalY) <= radius) {
+        return true;
+      }
+    }
+    for (const caravan of this.caravans) {
+      if (caravan.tribeId === tribe.id && manhattan(caravan.x, caravan.y, other.capitalX, other.capitalY) <= radius) {
+        return true;
+      }
+    }
+    for (const boat of this.boats) {
+      if (boat.tribeId === tribe.id && manhattan(boat.x, boat.y, other.capitalX, other.capitalY) <= radius) {
+        return true;
+      }
+    }
+    for (const engine of this.siegeEngines) {
+      if (engine.tribeId === tribe.id && manhattan(engine.x, engine.y, other.capitalX, other.capitalY) <= radius) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private markDiscovery(tribe: TribeState, other: TribeState): void {
+    if (tribe.discovered[other.id]) {
+      return;
+    }
+    tribe.discovered[other.id] = true;
+    other.discovered[tribe.id] = true;
+    this.pushEvent({
+      kind: "first-contact",
+      title: `${tribe.name} meets ${other.name}`,
+      description: `${tribe.name} has made first contact with ${other.name}. Trade or war may follow.`,
+      x: Math.floor((tribe.capitalX + other.capitalX) / 2),
+      y: Math.floor((tribe.capitalY + other.capitalY) / 2),
+      tribeId: tribe.id,
+    });
+  }
+
+  private updateDiscovery(tribe: TribeState): void {
+    for (const other of this.tribes) {
+      if (other.id === tribe.id || tribe.discovered[other.id]) continue;
+      const distance = manhattan(tribe.capitalX, tribe.capitalY, other.capitalX, other.capitalY);
+      const frontierAwareness =
+        distance <= 220
+        && this.currentYear >= 1
+        && this.buildingsForTribe(tribe.id).length >= 6
+        && this.buildingsForTribe(other.id).length >= 6
+        && !this.isBootstrapPhase(tribe)
+        && !this.isBootstrapPhase(other);
+      if (frontierAwareness || this.hasLineOfContact(tribe, other) || this.hasLineOfContact(other, tribe)) {
+        this.markDiscovery(tribe, other);
+      }
+    }
+  }
+
   private updateDiplomacy(tribe: TribeState): void {
     for (const other of this.tribes) {
       if (other.id === tribe.id) continue;
+      if (!tribe.discovered[other.id]) continue;
       const distance = manhattan(tribe.capitalX, tribe.capitalY, other.capitalX, other.capitalY);
       const scarcity = (tribe.resources[ResourceType.Rations] < this.populationOf(tribe.id) * 3 ? -6 : 2) + (tribe.water < Math.max(10, this.populationOf(tribe.id) * 0.4) ? -4 : 1);
       const raceAffinity = tribe.race.type === other.race.type ? 12 : tribe.race.personality.diplomacy * 6 - other.race.personality.aggression * 8;
@@ -4083,6 +4167,7 @@ export class Simulation {
 
     for (const other of this.tribes) {
       if (other.id === tribe.id || tribe.id > other.id) continue;
+      if (!tribe.discovered[other.id] || !other.discovered[tribe.id]) continue;
       const relation = Math.min(tribe.relations[other.id]!, other.relations[tribe.id]!);
       const distance = manhattan(tribe.capitalX, tribe.capitalY, other.capitalX, other.capitalY);
       const tradeReady = tribe.age >= AgeType.Stone && other.age >= AgeType.Stone;
@@ -4114,7 +4199,7 @@ export class Simulation {
     }
 
     const rivals = this.tribes
-      .filter((other) => other.id !== tribe.id && manhattan(tribe.capitalX, tribe.capitalY, other.capitalX, other.capitalY) < 260)
+      .filter((other) => other.id !== tribe.id && tribe.discovered[other.id] && manhattan(tribe.capitalX, tribe.capitalY, other.capitalX, other.capitalY) < 260)
       .sort((a, b) => this.tribeStrategicPower(b) - this.tribeStrategicPower(a));
     for (const other of rivals) {
       const tribePower = this.tribeStrategicPower(tribe);
@@ -4200,6 +4285,49 @@ export class Simulation {
 
     if (!bootstrap && tribe.race.personality.ecology > 0.7 && this.tickCount % (STRATEGY_TICKS * 2) === 1) {
       this.enqueueReplantJobs(tribe, 2);
+    }
+  }
+
+  private generateExplorationPlans(tribe: TribeState): void {
+    if (tribe.age < AgeType.Stone) {
+      return;
+    }
+    const undiscovered = this.tribes
+      .filter((other) => other.id !== tribe.id && !tribe.discovered[other.id])
+      .sort((a, b) => manhattan(tribe.capitalX, tribe.capitalY, a.capitalX, a.capitalY) - manhattan(tribe.capitalX, tribe.capitalY, b.capitalX, b.capitalY));
+    if (undiscovered.length === 0) {
+      return;
+    }
+
+    const activePatrols = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "patrol").length;
+    const fighters = this.agentsForTribe(tribe.id)
+      .filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage)
+      .length;
+    if (fighters === 0) {
+      return;
+    }
+
+    const desired = Math.min(3, Math.max(1, Math.floor(fighters / 3)));
+    if (activePatrols >= desired) {
+      return;
+    }
+
+    const target = undiscovered[0]!;
+    const contactOffset = Math.max(6, this.contactRadiusForTribe(tribe) - 6);
+    const frontX = clamp(target.capitalX - Math.sign(target.capitalX - tribe.capitalX) * contactOffset, 2, this.world.width - 3);
+    const frontY = clamp(target.capitalY - Math.sign(target.capitalY - tribe.capitalY) * contactOffset, 2, this.world.height - 3);
+    for (let i = activePatrols; i < desired; i += 1) {
+      const rally = this.militaryFormationPoint(frontX, frontY, target.capitalX, target.capitalY, i, desired, 3);
+      this.jobs.push({
+        id: this.nextJobId++,
+        tribeId: tribe.id,
+        kind: "patrol",
+        x: rally.x,
+        y: rally.y,
+        priority: 5,
+        claimedBy: null,
+        payload: { targetTribeId: target.id, targetX: target.capitalX, targetY: target.capitalY },
+      });
     }
   }
 
@@ -4824,7 +4952,7 @@ export class Simulation {
       return;
     }
     const partners = this.tribes
-      .filter((other) => other.id !== tribe.id && tribe.tradePacts[other.id] && diplomacyStateFromScore(tribe.relations[other.id]!) >= DiplomacyState.Neutral)
+      .filter((other) => other.id !== tribe.id && tribe.discovered[other.id] && tribe.tradePacts[other.id] && diplomacyStateFromScore(tribe.relations[other.id]!) >= DiplomacyState.Neutral)
       .sort((a, b) => manhattan(tribe.capitalX, tribe.capitalY, a.capitalX, a.capitalY) - manhattan(tribe.capitalX, tribe.capitalY, b.capitalX, b.capitalY));
     if (partners.length === 0) {
       return;
@@ -5121,7 +5249,7 @@ export class Simulation {
       return;
     }
     const enemies = this.tribes
-      .filter((other) => other.id !== tribe.id && diplomacyStateFromScore(tribe.relations[other.id]!) >= DiplomacyState.Hostile)
+      .filter((other) => other.id !== tribe.id && tribe.discovered[other.id] && diplomacyStateFromScore(tribe.relations[other.id]!) >= DiplomacyState.Hostile)
       .sort((a, b) => manhattan(tribe.capitalX, tribe.capitalY, a.capitalX, a.capitalY) - manhattan(tribe.capitalX, tribe.capitalY, b.capitalX, b.capitalY));
 
     if (enemies.length === 0) {
@@ -5741,6 +5869,7 @@ export class Simulation {
     const tribeAgents = this.agentsForTribe(tribe.id);
     if (tribe.resources[ResourceType.Rations] < population * 3) return "Securing food";
     if (tribe.water < Math.max(10, population * 0.45)) return "Securing water";
+    if (tribe.discovered.some((known, index) => index !== tribe.id && !known) && this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "patrol")) return "Exploring frontiers";
     if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "haul")) return "Hauling supplies";
     if (tribe.faith >= 40 && this.hasBuilt(tribe.id, BuildingType.Shrine)) return "Raising blessings";
     if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "delve")) return "Running deep delves";
@@ -6560,6 +6689,7 @@ export class Simulation {
         waterworks: this.waterworksScoreForTribe(tribe.id),
         powerPlants: this.buildingCount(tribe.id, BuildingType.PowerPlant),
         airfields: this.buildingCount(tribe.id, BuildingType.Airfield),
+        contacts: tribe.discovered.filter((known, index) => index !== tribe.id && known).length,
         allies: tribe.relations.filter((score, index) => index !== tribe.id && diplomacyStateFromScore(score) === DiplomacyState.Alliance).length,
         tradePartners: this.tradePartnerCount(tribe.id),
         tributeTo: tribe.tributeTo,

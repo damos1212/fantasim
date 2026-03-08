@@ -2745,6 +2745,7 @@ export class GameRenderer {
           <strong>Wagons</strong><span>${selectedTribe.wagons}</span>
           <strong>Livestock</strong><span>${selectedTribe.livestock}</span>
           <strong>Waterworks</strong><span>${selectedTribe.waterworks}</span>
+          <strong>Contacts</strong><span>${selectedTribe.contacts}</span>
           <strong>Allies</strong><span>${selectedTribe.allies}</span>
           <strong>Trade Pacts</strong><span>${selectedTribe.tradePartners}</span>
           <strong>Tributaries</strong><span>${selectedTribe.tributaries}</span>

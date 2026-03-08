@@ -347,6 +347,7 @@ export type TribeSummary = {
   waterworks: number;
   powerPlants: number;
   airfields: number;
+  contacts: number;
   allies: number;
   tradePartners: number;
   tributeTo: number | null;

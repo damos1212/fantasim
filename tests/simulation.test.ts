@@ -136,6 +136,7 @@ describe("simulation", () => {
       typeof tribe.faith === "number" &&
       typeof tribe.water === "number" &&
       typeof tribe.waterworks === "number" &&
+      typeof tribe.contacts === "number" &&
       typeof tribe.allies === "number" &&
       typeof tribe.tradePartners === "number" &&
       (tribe.tributeTo === null || typeof tribe.tributeTo === "number") &&
@@ -195,5 +196,21 @@ describe("simulation", () => {
     expect(withWater).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
     expect(noAdvancedIndustry).toBe(lastSnapshot.tribes.length);
     expect(lastSnapshot.tribes.every((tribe) => tribe.age <= AgeType.Stone)).toBe(true);
+  });
+
+  test("tribes make first contact before wider diplomacy activates", { timeout: 20000 }, () => {
+    const sim = createSimulation("discovery-flow", { width: 512, height: 512 });
+    let lastSnapshot = sim.snapshotNow();
+
+    expect(lastSnapshot.tribes.every((tribe) => tribe.contacts === 0)).toBe(true);
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.tribes.some((tribe) => tribe.contacts > 0)).toBe(true);
   });
 });
