@@ -587,6 +587,8 @@ export class GameRenderer {
   }
 
   applySnapshot(snapshot: DynamicSnapshot): void {
+    const buildingsChanged = snapshot.buildings.length !== this.state.buildings.length;
+    const plannedSitesChanged = snapshot.plannedSites.length !== this.state.plannedSites.length;
     this.captureMotion(this.agentMotion, this.state.agents, snapshot.agents);
     this.captureMotion(this.animalMotion, this.state.animals, snapshot.animals);
     this.captureMotion(this.boatMotion, this.state.boats, snapshot.boats);
@@ -638,11 +640,11 @@ export class GameRenderer {
     }
 
     this.hudDirty = true;
-    if (snapshot.tileUpdates.length > 0) {
+    if (snapshot.tileUpdates.length > 0 || buildingsChanged || plannedSitesChanged) {
       this.markAllStaticChunksDirty();
     }
-    this.staticSceneDirty = this.staticSceneDirty || snapshot.tileUpdates.length > 0;
-    if (snapshot.tileUpdates.length > 0 || this.state.tick % 8 === 0) {
+    this.staticSceneDirty = this.staticSceneDirty || snapshot.tileUpdates.length > 0 || buildingsChanged || plannedSitesChanged;
+    if (snapshot.tileUpdates.length > 0 || buildingsChanged || plannedSitesChanged || this.state.tick % 8 === 0) {
       this.minimapDirty = true;
       this.minimapTerrainDirty = this.minimapTerrainDirty || snapshot.tileUpdates.length > 0;
     }
