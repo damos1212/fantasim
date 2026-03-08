@@ -392,8 +392,8 @@ type JobState = {
 };
 
 const RESOURCE_SLOTS = 32;
-const TECH_THRESHOLDS = [0, 420, 3200, 11000, 32000, 76000, 160000, 320000];
-const AGE_YEAR_REQUIREMENTS = [0, 1, 5, 10, 18, 32, 52, 80];
+const TECH_THRESHOLDS = [0, 320, 1400, 4200, 10500, 25000, 54000, 110000];
+const AGE_YEAR_REQUIREMENTS = [0, 1, 4, 9, 17, 30, 48, 72];
 
 const BUILDING_LOOKUP = new Map(BUILDING_DEFS.map((def) => [def.type, def]));
 
@@ -3885,9 +3885,9 @@ export class Simulation {
           && this.hasBuilt(tribe.id, BuildingType.LumberCamp)
           && this.hasBuilt(tribe.id, BuildingType.Cistern)
           && tribe.resources[ResourceType.StoneTools] >= 10
-          && tribe.resources[ResourceType.Planks] >= 8
           && tribe.resources[ResourceType.Wood] >= 60
           && tribe.resources[ResourceType.Stone] >= 48
+          && tribe.resources[ResourceType.Rations] >= population * 3.4
         );
       case AgeType.Iron:
         return (
@@ -4285,6 +4285,9 @@ export class Simulation {
 
     if (!this.hasBuilt(tribe.id, BuildingType.Farm)) {
       this.tryPlanBuilding(tribe, BuildingType.Farm, 7);
+    }
+    if (tribe.age >= AgeType.Stone && population > 22 && this.buildingCount(tribe.id, BuildingType.Farm) < 2) {
+      this.tryPlanBuilding(tribe, BuildingType.Farm, 6);
     }
     if (!this.hasBuilt(tribe.id, BuildingType.LumberCamp)) {
       this.tryPlanBuilding(tribe, BuildingType.LumberCamp, 7);
