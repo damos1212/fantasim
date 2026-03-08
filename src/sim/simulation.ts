@@ -4922,6 +4922,19 @@ export class Simulation {
     };
   }
 
+  private militaryFormationPoint(originX: number, originY: number, targetX: number, targetY: number, index: number, total: number, spacing = 2): { x: number; y: number } {
+    const dx = Math.sign(targetX - originX);
+    const dy = Math.sign(targetY - originY);
+    const lineX = dy === 0 ? 0 : -dy;
+    const lineY = dx === 0 ? 0 : dx;
+    const centerOffset = index - Math.floor((total - 1) / 2);
+    const rank = Math.floor(index / 3);
+    return {
+      x: clamp(originX + lineX * centerOffset * spacing - dx * rank, 1, this.world.width - 2),
+      y: clamp(originY + lineY * centerOffset * spacing - dy * rank, 1, this.world.height - 2),
+    };
+  }
+
   private canSustainCampaign(tribe: TribeState, enemy: TribeState): boolean {
     const population = this.populationOf(tribe.id);
     const fighters = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
@@ -4929,7 +4942,7 @@ export class Simulation {
     const waterSecure = tribe.water > Math.max(16, population * 0.55);
     const ownPower = this.tribeStrategicPower(tribe);
     const enemyPower = this.tribeStrategicPower(enemy);
-    return fighters >= 4 && foodSecure && waterSecure && ownPower >= enemyPower * 0.78;
+    return fighters >= 4 && foodSecure && waterSecure && tribe.morale > 42 && ownPower >= enemyPower * 0.78;
   }
 
   private ensureSiegeForTribe(tribe: TribeState): void {
@@ -5100,6 +5113,10 @@ export class Simulation {
     if (tribe.age < AgeType.Bronze || this.currentYear < 2) {
       return;
     }
+    const fighters = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
+    if (fighters < 3) {
+      return;
+    }
     const enemies = this.tribes
       .filter((other) => other.id !== tribe.id && diplomacyStateFromScore(tribe.relations[other.id]!) >= DiplomacyState.Hostile)
       .sort((a, b) => manhattan(tribe.capitalX, tribe.capitalY, a.capitalX, a.capitalY) - manhattan(tribe.capitalX, tribe.capitalY, b.capitalX, b.capitalY));
@@ -5116,16 +5133,17 @@ export class Simulation {
       return;
     }
     const kind: JobKind = canAttack ? "attack" : "patrol";
-    const rallyX = canAttack ? objective.x : Math.floor((tribe.capitalX + enemy.capitalX) / 2);
-    const rallyY = canAttack ? objective.y : Math.floor((tribe.capitalY + enemy.capitalY) / 2);
-    const desiredJobs = canAttack ? 5 : 3;
+    const frontX = canAttack ? clamp(objective.x - Math.sign(objective.x - tribe.capitalX) * 2, 1, this.world.width - 2) : Math.floor((tribe.capitalX + enemy.capitalX) / 2);
+    const frontY = canAttack ? clamp(objective.y - Math.sign(objective.y - tribe.capitalY) * 2, 1, this.world.height - 2) : Math.floor((tribe.capitalY + enemy.capitalY) / 2);
+    const desiredJobs = clamp(Math.floor(fighters * (canAttack ? 0.55 : 0.35)), canAttack ? 4 : 3, canAttack ? 8 : 5);
     for (let i = 0; i < desiredJobs; i += 1) {
+      const rally = this.militaryFormationPoint(frontX, frontY, objective.x, objective.y, i, desiredJobs);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind,
-        x: clamp(rallyX + randInt(this.random, -2, 2), 1, this.world.width - 2),
-        y: clamp(rallyY + randInt(this.random, -2, 2), 1, this.world.height - 2),
+        x: rally.x,
+        y: rally.y,
         priority: kind === "attack" ? 10 : 6,
         claimedBy: null,
         payload: { targetTribeId: enemy.id, targetX: objective.x, targetY: objective.y },
