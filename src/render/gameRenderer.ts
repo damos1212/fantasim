@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text, TextStyle, type TextStyleOptions } from "pixi.js";
+import { Application, Container, Graphics, Sprite, Text, TextStyle, Texture, type TextStyleOptions } from "pixi.js";
 
 import { SIM_TICKS_PER_SECOND, SNAPSHOT_TICKS, TILE_SIZE } from "../shared/config";
 import { indexOf } from "../shared/grid";
@@ -118,6 +118,21 @@ type MotionState = {
 };
 
 type PixelTarget = Graphics | CanvasRenderingContext2D;
+
+const STATIC_CHUNK_TILES = 16;
+
+type StaticChunkCache = {
+  key: string;
+  chunkX: number;
+  chunkY: number;
+  lodStep: number;
+  viewMode: ViewMode;
+  canvas: HTMLCanvasElement;
+  context: CanvasRenderingContext2D;
+  texture: Texture;
+  sprite: Sprite;
+  dirty: boolean;
+};
 
 type RenderState = {
   world: StaticWorldData | null;
@@ -251,6 +266,7 @@ export class GameRenderer {
   readonly loadingOverlay = document.createElement("div");
 
   readonly worldContainer = new Container();
+  readonly staticChunkLayer = new Container();
   readonly terrainGraphics = new Graphics();
   readonly overlayGraphics = new Graphics();
   readonly buildingGraphics = new Graphics();
@@ -261,6 +277,7 @@ export class GameRenderer {
   readonly labelSprites = new Map<number, Text>();
   readonly labelStyleCache = new Map<string, TextStyle>();
   readonly labelStyleKeyByAgentId = new Map<number, string>();
+  readonly staticChunks = new Map<string, StaticChunkCache>();
 
   readonly state: RenderState = {
     world: null,
@@ -371,6 +388,7 @@ export class GameRenderer {
 
     this.app.ticker.maxFPS = 60;
 
+    this.worldContainer.addChild(this.staticChunkLayer);
     this.worldContainer.addChild(this.terrainGraphics);
     this.worldContainer.addChild(this.overlayGraphics);
     this.worldContainer.addChild(this.buildingGraphics);
@@ -482,6 +500,7 @@ export class GameRenderer {
   }
 
   setWorld(world: StaticWorldData, tribes: TribeSummary[]): void {
+    this.clearStaticChunks();
     this.state.world = world;
     this.state.terrain = world.terrain.slice();
     this.state.elevation = world.elevation.slice();
@@ -568,6 +587,9 @@ export class GameRenderer {
     }
 
     this.hudDirty = true;
+    if (snapshot.tileUpdates.length > 0) {
+      this.markAllStaticChunksDirty();
+    }
     this.staticSceneDirty = this.staticSceneDirty || snapshot.tileUpdates.length > 0;
     if (snapshot.tileUpdates.length > 0 || this.state.tick % 8 === 0) {
       this.minimapDirty = true;
@@ -588,6 +610,21 @@ export class GameRenderer {
         toX: entry.x,
         toY: entry.y,
       });
+    }
+  }
+
+  private clearStaticChunks(): void {
+    for (const chunk of this.staticChunks.values()) {
+      this.staticChunkLayer.removeChild(chunk.sprite);
+      chunk.sprite.destroy();
+      chunk.texture.destroy(true);
+    }
+    this.staticChunks.clear();
+  }
+
+  private markAllStaticChunksDirty(): void {
+    for (const chunk of this.staticChunks.values()) {
+      chunk.dirty = true;
     }
   }
 
@@ -733,47 +770,7 @@ export class GameRenderer {
     }
 
     if (redrawStaticScene) {
-      for (let y = minTileY; y <= maxTileY; y += lodStep) {
-        for (let x = minTileX; x <= maxTileX; x += lodStep) {
-          const index = indexOf(x, y, world.width);
-          const terrain = this.state.terrain[index] as TerrainType;
-          const biome = this.state.biome[index] as BiomeType;
-          const elevation = this.state.elevation[index] ?? 128;
-          const eastElevation = x < world.width - 1 ? this.state.elevation[index + 1] ?? elevation : elevation;
-          const southElevation = y < world.height - 1 ? this.state.elevation[index + world.width] ?? elevation : elevation;
-          const px = x * TILE_SIZE;
-          const py = y * TILE_SIZE;
-          if (this.viewMode === "surface") {
-            this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep, this.zoom > 1.22);
-          } else {
-            this.drawUndergroundTile(
-              px,
-              py,
-              this.state.undergroundTerrain[index] as UndergroundTerrainType,
-              this.state.undergroundFeature[index] as UndergroundFeatureType,
-              this.state.undergroundResourceAmount[index] ?? 0,
-              lodStep,
-              this.zoom > 1.18,
-            );
-          }
-
-          const owner = this.state.owner[index];
-          if (owner >= 0 && this.viewMode === "surface") {
-            const tribe = tribeById.get(owner);
-            if (tribe) {
-              drawPixelRect(this.overlayGraphics, px, py, TILE_SIZE * lodStep, TILE_SIZE * lodStep, tribe.color, lodStep > 1 ? 0.06 : 0.08);
-            }
-          }
-
-          if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.18) {
-            this.drawRoadTile(px, py);
-          }
-
-          if (lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.28) {
-            this.drawFeature(this.state.feature[index] as FeatureType, px, py, terrain);
-          }
-        }
-      }
+      this.renderVisibleStaticChunks(minTileX, minTileY, maxTileX, maxTileY, lodStep, tribeById);
 
       for (const building of this.state.buildings) {
         if (this.viewMode === "underground" && building.type !== BuildingType.MountainHall && building.type !== BuildingType.TunnelEntrance && building.type !== BuildingType.DeepMine) {
@@ -913,181 +910,275 @@ export class GameRenderer {
     }
   }
 
-  private drawTerrainTile(px: number, py: number, terrain: TerrainType, biome: BiomeType, elevation: number, eastElevation: number, southElevation: number, surfaceWater: number, lodStep = 1, detail = true): void {
+  private drawTerrainTile(target: PixelTarget, px: number, py: number, terrain: TerrainType, biome: BiomeType, elevation: number, eastElevation: number, southElevation: number, surfaceWater: number, lodStep = 1, detail = true): void {
     const color = TERRAIN_COLORS[terrain] ?? 0xff00ff;
     const size = TILE_SIZE * lodStep;
     const elevatedColor = elevation > 170 ? lighten(color, Math.floor((elevation - 170) * 0.12)) : elevation < 96 ? darken(color, Math.floor((96 - elevation) * 0.08)) : color;
-    drawPixelRect(this.terrainGraphics, px, py, size, size, elevatedColor);
+    drawPixelRect(target, px, py, size, size, elevatedColor);
     if (lodStep > 1 || !detail) {
-      if (elevation > 190) {
-        drawPixelRect(this.terrainGraphics, px, py, size, Math.max(1, Math.floor(size * 0.18)), lighten(elevatedColor, 12), 0.35);
-      }
+      if (elevation > 190) drawPixelRect(target, px, py, size, Math.max(1, Math.floor(size * 0.18)), lighten(elevatedColor, 12), 0.35);
       if (!detail && terrain !== TerrainType.WaterDeep && terrain !== TerrainType.WaterShallow && terrain !== TerrainType.River && terrain !== TerrainType.Lava && surfaceWater > 18) {
         const alpha = surfaceWater >= 96 ? 0.42 : surfaceWater >= 48 ? 0.24 : 0.14;
         const fill = surfaceWater >= 96 ? 0x76c2ea : surfaceWater >= 48 ? 0x5ea9d6 : 0x4d93c0;
-        drawPixelRect(this.terrainGraphics, px + 1, py + 1, size - 2, size - 2, fill, alpha);
+        drawPixelRect(target, px + 1, py + 1, size - 2, size - 2, fill, alpha);
       }
       return;
     }
 
     const slopeEast = eastElevation - elevation;
     const slopeSouth = southElevation - elevation;
-    if (slopeEast > 4) {
-      drawPixelRect(this.terrainGraphics, px + 12, py, 4, 16, darken(elevatedColor, 24), 0.18);
-    } else if (slopeEast < -4) {
-      drawPixelRect(this.terrainGraphics, px, py, 3, 16, lighten(elevatedColor, 16), 0.16);
-    }
-    if (slopeSouth > 4) {
-      drawPixelRect(this.terrainGraphics, px, py + 12, 16, 4, darken(elevatedColor, 22), 0.18);
-    } else if (slopeSouth < -4) {
-      drawPixelRect(this.terrainGraphics, px, py, 16, 3, lighten(elevatedColor, 14), 0.15);
-    }
+    if (slopeEast > 4) drawPixelRect(target, px + 12, py, 4, 16, darken(elevatedColor, 24), 0.18);
+    else if (slopeEast < -4) drawPixelRect(target, px, py, 3, 16, lighten(elevatedColor, 16), 0.16);
+    if (slopeSouth > 4) drawPixelRect(target, px, py + 12, 16, 4, darken(elevatedColor, 22), 0.18);
+    else if (slopeSouth < -4) drawPixelRect(target, px, py, 16, 3, lighten(elevatedColor, 14), 0.15);
 
     switch (terrain) {
       case TerrainType.WaterDeep:
       case TerrainType.WaterShallow:
       case TerrainType.River:
-        drawPixelRect(this.terrainGraphics, px + 1, py + 3, 5, 1, lighten(elevatedColor, 20), 0.6);
-        drawPixelRect(this.terrainGraphics, px + 8, py + 8, 6, 1, lighten(elevatedColor, 26), 0.58);
-        drawPixelRect(this.terrainGraphics, px + 4, py + 12, 7, 1, darken(elevatedColor, 10), 0.3);
+        drawPixelRect(target, px + 1, py + 3, 5, 1, lighten(elevatedColor, 20), 0.6);
+        drawPixelRect(target, px + 8, py + 8, 6, 1, lighten(elevatedColor, 26), 0.58);
+        drawPixelRect(target, px + 4, py + 12, 7, 1, darken(elevatedColor, 10), 0.3);
         break;
       case TerrainType.Beach:
-        drawPixelRect(this.terrainGraphics, px + 2, py + 11, 11, 2, darken(color, 14), 0.45);
+        drawPixelRect(target, px + 2, py + 11, 11, 2, darken(color, 14), 0.45);
         break;
       case TerrainType.Grass:
       case TerrainType.ForestFloor:
       case TerrainType.Farmland:
-        drawPixelRect(this.terrainGraphics, px + 2, py + 10, 2, 3, darken(elevatedColor, 18), 0.5);
-        drawPixelRect(this.terrainGraphics, px + 9, py + 5, 2, 3, lighten(elevatedColor, 10), 0.45);
-        drawPixelRect(this.terrainGraphics, px + 5, py + 3, 1, 2, lighten(elevatedColor, 18), 0.28);
-        drawPixelRect(this.terrainGraphics, px + 12, py + 9, 1, 2, darken(elevatedColor, 12), 0.26);
+        drawPixelRect(target, px + 2, py + 10, 2, 3, darken(elevatedColor, 18), 0.5);
+        drawPixelRect(target, px + 9, py + 5, 2, 3, lighten(elevatedColor, 10), 0.45);
+        drawPixelRect(target, px + 5, py + 3, 1, 2, lighten(elevatedColor, 18), 0.28);
+        drawPixelRect(target, px + 12, py + 9, 1, 2, darken(elevatedColor, 12), 0.26);
         if (terrain === TerrainType.Farmland) {
-          drawPixelRect(this.terrainGraphics, px + 1, py + 3, 14, 1, 0x857043, 0.55);
-          drawPixelRect(this.terrainGraphics, px + 2, py + 6, 12, 1, 0x685431, 0.68);
-          drawPixelRect(this.terrainGraphics, px + 2, py + 10, 12, 1, 0x685431, 0.68);
-          drawPixelRect(this.terrainGraphics, px + 2, py + 13, 12, 1, 0x7ca15a, 0.45);
-          if (surfaceWater > 18) {
-            drawPixelRect(this.terrainGraphics, px + 3, py + 8, 10, 1, 0x92d8ef, 0.24);
-          }
+          drawPixelRect(target, px + 1, py + 3, 14, 1, 0x857043, 0.55);
+          drawPixelRect(target, px + 2, py + 6, 12, 1, 0x685431, 0.68);
+          drawPixelRect(target, px + 2, py + 10, 12, 1, 0x685431, 0.68);
+          drawPixelRect(target, px + 2, py + 13, 12, 1, 0x7ca15a, 0.45);
+          if (surfaceWater > 18) drawPixelRect(target, px + 3, py + 8, 10, 1, 0x92d8ef, 0.24);
         }
         break;
       case TerrainType.Desert:
-        drawPixelRect(this.terrainGraphics, px + 3, py + 5, 9, 1, lighten(color, 18), 0.45);
-        drawPixelRect(this.terrainGraphics, px + 4, py + 10, 7, 1, darken(color, 18), 0.4);
-        drawPixelRect(this.terrainGraphics, px + 2, py + 8, 12, 1, 0xe1c780, 0.16);
+        drawPixelRect(target, px + 3, py + 5, 9, 1, lighten(color, 18), 0.45);
+        drawPixelRect(target, px + 4, py + 10, 7, 1, darken(color, 18), 0.4);
+        drawPixelRect(target, px + 2, py + 8, 12, 1, 0xe1c780, 0.16);
         break;
       case TerrainType.Mountain:
       case TerrainType.Rocky:
-        drawPixelRect(this.terrainGraphics, px + 2, py + 10, 10, 4, darken(elevatedColor, 28), 0.55);
-        drawPixelRect(this.terrainGraphics, px + 5, py + 6, 5, 3, lighten(elevatedColor, 22), 0.58);
-        drawPixelRect(this.terrainGraphics, px + 7, py + 2, 2, 4, lighten(elevatedColor, 30), 0.42);
-        drawPixelRect(this.terrainGraphics, px + 3, py + 12, 10, 1, 0x1c2127, 0.22);
+        drawPixelRect(target, px + 2, py + 10, 10, 4, darken(elevatedColor, 28), 0.55);
+        drawPixelRect(target, px + 5, py + 6, 5, 3, lighten(elevatedColor, 22), 0.58);
+        drawPixelRect(target, px + 7, py + 2, 2, 4, lighten(elevatedColor, 30), 0.42);
+        drawPixelRect(target, px + 3, py + 12, 10, 1, 0x1c2127, 0.22);
         break;
       case TerrainType.Snow:
-        drawPixelRect(this.terrainGraphics, px + 2, py + 4, 10, 2, 0xffffff, 0.35);
+        drawPixelRect(target, px + 2, py + 4, 10, 2, 0xffffff, 0.35);
         break;
       case TerrainType.Ashland:
-        drawPixelRect(this.terrainGraphics, px + 3, py + 10, 9, 2, 0x2b2525, 0.5);
+        drawPixelRect(target, px + 3, py + 10, 9, 2, 0x2b2525, 0.5);
         break;
       default:
         break;
     }
 
     if (biome === BiomeType.Coastline || biome === BiomeType.Archipelago) {
-      if (terrain === TerrainType.Beach) {
-        drawPixelRect(this.terrainGraphics, px + 1, py + 2, 14, 1, 0xf2e4b8, 0.22);
-      } else if (terrain === TerrainType.WaterShallow || terrain === TerrainType.River) {
-        drawPixelRect(this.terrainGraphics, px + 2, py + 2, 10, 1, 0xf4fbff, 0.12);
-      }
+      if (terrain === TerrainType.Beach) drawPixelRect(target, px + 1, py + 2, 14, 1, 0xf2e4b8, 0.22);
+      else if (terrain === TerrainType.WaterShallow || terrain === TerrainType.River) drawPixelRect(target, px + 2, py + 2, 10, 1, 0xf4fbff, 0.12);
     }
     if (biome === BiomeType.Marshland && terrain !== TerrainType.WaterDeep && terrain !== TerrainType.WaterShallow && terrain !== TerrainType.River) {
-      drawPixelRect(this.terrainGraphics, px + 2, py + 9, 4, 2, 0x365a3f, 0.26);
-      drawPixelRect(this.terrainGraphics, px + 9, py + 4, 3, 2, 0x5d8f69, 0.22);
+      drawPixelRect(target, px + 2, py + 9, 4, 2, 0x365a3f, 0.26);
+      drawPixelRect(target, px + 9, py + 4, 3, 2, 0x5d8f69, 0.22);
     }
     if (biome === BiomeType.VolcanicHighland || biome === BiomeType.AshWaste) {
-      drawPixelRect(this.terrainGraphics, px + 11, py + 4, 1, 1, 0xff9c56, 0.18);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 11, 1, 1, 0xffc477, 0.14);
+      drawPixelRect(target, px + 11, py + 4, 1, 1, 0xff9c56, 0.18);
+      drawPixelRect(target, px + 4, py + 11, 1, 1, 0xffc477, 0.14);
     }
     if (elevation > 205 && terrain !== TerrainType.WaterDeep && terrain !== TerrainType.WaterShallow && terrain !== TerrainType.River && terrain !== TerrainType.Lava) {
-      drawPixelRect(this.terrainGraphics, px + 2, py + 2, 12, 1, 0xffffff, 0.1);
+      drawPixelRect(target, px + 2, py + 2, 12, 1, 0xffffff, 0.1);
     }
-
     if (biome === BiomeType.SnowyForest || biome === BiomeType.Tundra) {
-      drawPixelRect(this.terrainGraphics, px + 1, py + 1, 4, 2, 0xffffff, 0.12);
+      drawPixelRect(target, px + 1, py + 1, 4, 2, 0xffffff, 0.12);
     }
 
     if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow || terrain === TerrainType.River) {
       const ripple = Math.sin((px + py) * 0.035 + this.state.tick * 0.16);
-      drawPixelRect(this.terrainGraphics, px + 1, py + 5 + ripple, 13, 1, 0xd6f4ff, 0.12);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 11 - ripple * 0.5, 7, 1, 0xb9e6ff, 0.14);
-      drawPixelRect(this.terrainGraphics, px + 2, py + 2 + ripple * 0.3, 5, 1, 0xf4fbff, 0.08);
+      drawPixelRect(target, px + 1, py + 5 + ripple, 13, 1, 0xd6f4ff, 0.12);
+      drawPixelRect(target, px + 4, py + 11 - ripple * 0.5, 7, 1, 0xb9e6ff, 0.14);
+      drawPixelRect(target, px + 2, py + 2 + ripple * 0.3, 5, 1, 0xf4fbff, 0.08);
     } else if (terrain === TerrainType.Lava) {
       const ripple = Math.sin((px + py) * 0.04 + this.state.tick * 0.18);
-      drawPixelRect(this.terrainGraphics, px + 1, py + 5 + ripple, 13, 1, 0xffbf73, 0.18);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 11 - ripple * 0.5, 7, 1, 0xff9648, 0.2);
-      drawPixelRect(this.terrainGraphics, px + 2, py + 2 + ripple * 0.3, 5, 1, 0xffe0ae, 0.12);
+      drawPixelRect(target, px + 1, py + 5 + ripple, 13, 1, 0xffbf73, 0.18);
+      drawPixelRect(target, px + 4, py + 11 - ripple * 0.5, 7, 1, 0xff9648, 0.2);
+      drawPixelRect(target, px + 2, py + 2 + ripple * 0.3, 5, 1, 0xffe0ae, 0.12);
     }
 
     if (terrain !== TerrainType.WaterDeep && terrain !== TerrainType.WaterShallow && terrain !== TerrainType.River && terrain !== TerrainType.Lava && surfaceWater > 6) {
       const alpha = surfaceWater >= 96 ? 0.48 : surfaceWater >= 48 ? 0.3 : 0.18;
       const fill = surfaceWater >= 96 ? 0x76c2ea : surfaceWater >= 48 ? 0x5ea9d6 : 0x4d93c0;
-      drawPixelRect(this.terrainGraphics, px + 1, py + 1, 14, 14, fill, alpha);
-      drawPixelRect(this.terrainGraphics, px + 3, py + 4, 6, 1, lighten(fill, 22), alpha * 0.75);
-      drawPixelRect(this.terrainGraphics, px + 5, py + 11, 7, 1, 0xe4f8ff, alpha * 0.45);
-      if (surfaceWater >= 88) {
-        drawPixelRect(this.terrainGraphics, px + 10, py + 9, 4, 1, lighten(fill, 28), alpha * 0.72);
-      }
+      drawPixelRect(target, px + 1, py + 1, 14, 14, fill, alpha);
+      drawPixelRect(target, px + 3, py + 4, 6, 1, lighten(fill, 22), alpha * 0.75);
+      drawPixelRect(target, px + 5, py + 11, 7, 1, 0xe4f8ff, alpha * 0.45);
+      if (surfaceWater >= 88) drawPixelRect(target, px + 10, py + 9, 4, 1, lighten(fill, 28), alpha * 0.72);
     }
   }
 
-  private drawUndergroundTile(px: number, py: number, terrain: UndergroundTerrainType, feature: UndergroundFeatureType, resourceAmount: number, lodStep = 1, detail = true): void {
+  private drawUndergroundTile(terrainTarget: PixelTarget, overlayTarget: PixelTarget, px: number, py: number, terrain: UndergroundTerrainType, feature: UndergroundFeatureType, resourceAmount: number, lodStep = 1, detail = true): void {
     const color = UNDERGROUND_TERRAIN_COLORS[terrain] ?? 0xff00ff;
     const size = TILE_SIZE * lodStep;
-    drawPixelRect(this.terrainGraphics, px, py, size, size, color, 1);
+    drawPixelRect(terrainTarget, px, py, size, size, color, 1);
     if (lodStep > 1 || !detail) {
       if (terrain === UndergroundTerrainType.Tunnel || terrain === UndergroundTerrainType.Cavern || terrain === UndergroundTerrainType.Ruins) {
-        drawPixelRect(this.terrainGraphics, px + 1, py + 1, size - 2, 2, lighten(color, 10), 0.25);
+        drawPixelRect(terrainTarget, px + 1, py + 1, size - 2, 2, lighten(color, 10), 0.25);
       }
       return;
     }
 
     if (terrain === UndergroundTerrainType.SolidRock) {
-      drawPixelRect(this.terrainGraphics, px + 2, py + 4, 3, 2, 0x3d454e, 0.5);
-      drawPixelRect(this.terrainGraphics, px + 9, py + 10, 4, 2, 0x20262d, 0.35);
+      drawPixelRect(terrainTarget, px + 2, py + 4, 3, 2, 0x3d454e, 0.5);
+      drawPixelRect(terrainTarget, px + 9, py + 10, 4, 2, 0x20262d, 0.35);
     } else if (terrain === UndergroundTerrainType.Tunnel) {
-      drawPixelRect(this.terrainGraphics, px + 2, py + 6, 12, 4, 0x847765, 0.82);
-      drawPixelRect(this.terrainGraphics, px + 3, py + 5, 10, 1, 0xa3927b, 0.45);
+      drawPixelRect(terrainTarget, px + 2, py + 6, 12, 4, 0x847765, 0.82);
+      drawPixelRect(terrainTarget, px + 3, py + 5, 10, 1, 0xa3927b, 0.45);
     } else if (terrain === UndergroundTerrainType.Cavern || terrain === UndergroundTerrainType.Ruins) {
-      drawPixelRect(this.terrainGraphics, px + 2, py + 3, 12, 9, darken(color, 8), 0.6);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 5, 8, 4, lighten(color, 8), 0.24);
+      drawPixelRect(terrainTarget, px + 2, py + 3, 12, 9, darken(color, 8), 0.6);
+      drawPixelRect(terrainTarget, px + 4, py + 5, 8, 4, lighten(color, 8), 0.24);
     } else if (terrain === UndergroundTerrainType.UndergroundRiver) {
       const ripple = Math.sin((px + py) * 0.04 + this.state.tick * 0.18);
-      drawPixelRect(this.terrainGraphics, px + 1, py + 6, 14, 4, 0x2f91be, 0.86);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 7 + ripple * 0.5, 7, 1, 0xc5efff, 0.32);
+      drawPixelRect(terrainTarget, px + 1, py + 6, 14, 4, 0x2f91be, 0.86);
+      drawPixelRect(terrainTarget, px + 4, py + 7 + ripple * 0.5, 7, 1, 0xc5efff, 0.32);
     } else if (terrain === UndergroundTerrainType.Magma) {
       const pulse = (Math.sin((px - py) * 0.05 + this.state.tick * 0.25) + 1) * 0.5;
-      drawPixelRect(this.terrainGraphics, px + 1, py + 5, 14, 5, 0xb24726, 0.92);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 6, 8, 2, lighten(0xff8e48, Math.floor(22 * pulse)), 0.28 + pulse * 0.16);
+      drawPixelRect(terrainTarget, px + 1, py + 5, 14, 5, 0xb24726, 0.92);
+      drawPixelRect(terrainTarget, px + 4, py + 6, 8, 2, lighten(0xff8e48, Math.floor(22 * pulse)), 0.28 + pulse * 0.16);
     }
 
     if (feature === UndergroundFeatureType.OreSeam) {
-      drawPixelRect(this.overlayGraphics, px + 4, py + 7, 8, 4, 0xc99453, 0.86);
-      drawPixelRect(this.overlayGraphics, px + 6, py + 5, 3, 2, 0xf0cd8e, 0.7);
+      drawPixelRect(overlayTarget, px + 4, py + 7, 8, 4, 0xc99453, 0.86);
+      drawPixelRect(overlayTarget, px + 6, py + 5, 3, 2, 0xf0cd8e, 0.7);
     } else if (feature === UndergroundFeatureType.CrystalCluster) {
-      drawPixelRect(this.overlayGraphics, px + 6, py + 4, 2, 7, 0x9fe9ff, 0.9);
-      drawPixelRect(this.overlayGraphics, px + 9, py + 6, 2, 5, 0xc3a5ff, 0.86);
+      drawPixelRect(overlayTarget, px + 6, py + 4, 2, 7, 0x9fe9ff, 0.9);
+      drawPixelRect(overlayTarget, px + 9, py + 6, 2, 5, 0xc3a5ff, 0.86);
     } else if (feature === UndergroundFeatureType.MushroomGrove) {
-      drawPixelRect(this.overlayGraphics, px + 4, py + 8, 3, 4, 0xd2a4e8, 0.82);
-      drawPixelRect(this.overlayGraphics, px + 8, py + 7, 4, 5, 0x9fd1a5, 0.78);
+      drawPixelRect(overlayTarget, px + 4, py + 8, 3, 4, 0xd2a4e8, 0.82);
+      drawPixelRect(overlayTarget, px + 8, py + 7, 4, 5, 0x9fd1a5, 0.78);
     } else if (feature === UndergroundFeatureType.RootTangle) {
-      drawPixelRect(this.overlayGraphics, px + 3, py + 7, 10, 3, 0x8d6842, 0.75);
+      drawPixelRect(overlayTarget, px + 3, py + 7, 10, 3, 0x8d6842, 0.75);
     } else if (feature === UndergroundFeatureType.AncientRemains) {
-      drawPixelRect(this.overlayGraphics, px + 5, py + 7, 6, 5, 0x9e9289, 0.88);
-      drawPixelRect(this.overlayGraphics, px + 7, py + 4, 2, 3, 0xd8d0c2, 0.5);
+      drawPixelRect(overlayTarget, px + 5, py + 7, 6, 5, 0x9e9289, 0.88);
+      drawPixelRect(overlayTarget, px + 7, py + 4, 2, 3, 0xd8d0c2, 0.5);
     }
 
     if (resourceAmount > 0 && terrain !== UndergroundTerrainType.SolidRock) {
-      drawPixelRect(this.overlayGraphics, px + 2, py + 12, Math.min(12, 2 + Math.floor(resourceAmount / 40)), 1, 0xe8d7a8, 0.18);
+      drawPixelRect(overlayTarget, px + 2, py + 12, Math.min(12, 2 + Math.floor(resourceAmount / 40)), 1, 0xe8d7a8, 0.18);
+    }
+  }
+
+  private chunkKey(chunkX: number, chunkY: number, lodStep: number, viewMode: ViewMode): string {
+    return `${viewMode}:${lodStep}:${chunkX}:${chunkY}`;
+  }
+
+  private chunkPixelSize(): number {
+    return STATIC_CHUNK_TILES * TILE_SIZE;
+  }
+
+  private staticChunkFor(chunkX: number, chunkY: number, lodStep: number, viewMode: ViewMode): StaticChunkCache {
+    const key = this.chunkKey(chunkX, chunkY, lodStep, viewMode);
+    const existing = this.staticChunks.get(key);
+    if (existing) {
+      return existing;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = this.chunkPixelSize();
+    canvas.height = this.chunkPixelSize();
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Failed to create static chunk render context");
+    }
+    context.imageSmoothingEnabled = false;
+    const texture = Texture.from(canvas);
+    const sprite = new Sprite(texture);
+    sprite.x = chunkX * this.chunkPixelSize();
+    sprite.y = chunkY * this.chunkPixelSize();
+    const created: StaticChunkCache = { key, chunkX, chunkY, lodStep, viewMode, canvas, context, texture, sprite, dirty: true };
+    this.staticChunks.set(key, created);
+    this.staticChunkLayer.addChild(sprite);
+    return created;
+  }
+
+  private renderVisibleStaticChunks(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number, lodStep: number, tribeById: Map<number, TribeSummary>): void {
+    const world = this.state.world;
+    if (!world || !this.state.terrain || !this.state.biome || !this.state.elevation || !this.state.feature || !this.state.surfaceWater || !this.state.undergroundTerrain || !this.state.undergroundFeature || !this.state.undergroundResourceAmount || !this.state.owner || !this.state.road) {
+      return;
+    }
+
+    for (const chunk of this.staticChunks.values()) {
+      chunk.sprite.visible = false;
+    }
+
+    const chunkTileSpan = STATIC_CHUNK_TILES * lodStep;
+    const minChunkX = Math.floor(minTileX / chunkTileSpan);
+    const minChunkY = Math.floor(minTileY / chunkTileSpan);
+    const maxChunkX = Math.floor(maxTileX / chunkTileSpan);
+    const maxChunkY = Math.floor(maxTileY / chunkTileSpan);
+
+    for (let chunkY = minChunkY; chunkY <= maxChunkY; chunkY += 1) {
+      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
+        const chunk = this.staticChunkFor(chunkX, chunkY, lodStep, this.viewMode);
+        chunk.sprite.visible = true;
+        if (!chunk.dirty && !this.staticSceneDirty) {
+          continue;
+        }
+        const terrainCtx = chunk.context;
+        terrainCtx.clearRect(0, 0, chunk.canvas.width, chunk.canvas.height);
+
+        const startTileX = chunkX * chunkTileSpan;
+        const startTileY = chunkY * chunkTileSpan;
+        const endTileX = Math.min(world.width - 1, startTileX + chunkTileSpan - 1);
+        const endTileY = Math.min(world.height - 1, startTileY + chunkTileSpan - 1);
+
+        for (let y = startTileY; y <= endTileY; y += lodStep) {
+          for (let x = startTileX; x <= endTileX; x += lodStep) {
+            const index = indexOf(x, y, world.width);
+            const localPx = x * TILE_SIZE - chunk.sprite.x;
+            const localPy = y * TILE_SIZE - chunk.sprite.y;
+            const terrain = this.state.terrain[index] as TerrainType;
+            const biome = this.state.biome[index] as BiomeType;
+            const elevation = this.state.elevation[index] ?? 128;
+            const eastElevation = x < world.width - 1 ? this.state.elevation[index + 1] ?? elevation : elevation;
+            const southElevation = y < world.height - 1 ? this.state.elevation[index + world.width] ?? elevation : elevation;
+            if (this.viewMode === "surface") {
+              this.drawTerrainTile(terrainCtx, localPx, localPy, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater[index] ?? 0, lodStep, this.zoom > 1.22);
+              const owner = this.state.owner[index];
+              if (owner >= 0) {
+                const tribe = tribeById.get(owner);
+                if (tribe) {
+                  drawPixelRect(terrainCtx, localPx, localPy, TILE_SIZE * lodStep, TILE_SIZE * lodStep, tribe.color, lodStep > 1 ? 0.06 : 0.08);
+                }
+              }
+              if (this.state.road[index] > 0 && lodStep === 1 && this.zoom > 1.18) {
+                this.drawRoadTile(terrainCtx, localPx, localPy);
+              }
+              if (lodStep === 1 && this.zoom > 1.28) {
+                this.drawFeature(terrainCtx, this.state.feature[index] as FeatureType, localPx, localPy, terrain);
+              }
+            } else {
+              this.drawUndergroundTile(
+                terrainCtx,
+                terrainCtx,
+                localPx,
+                localPy,
+                this.state.undergroundTerrain[index] as UndergroundTerrainType,
+                this.state.undergroundFeature[index] as UndergroundFeatureType,
+                this.state.undergroundResourceAmount[index] ?? 0,
+                lodStep,
+                this.zoom > 1.18,
+              );
+            }
+          }
+        }
+
+        chunk.texture.update();
+        chunk.dirty = false;
+      }
     }
   }
 
@@ -1174,73 +1265,73 @@ export class GameRenderer {
     }
   }
 
-  private drawRoadTile(px: number, py: number): void {
-    drawPixelRect(this.overlayGraphics, px + 2, py + 6, 12, 4, 0xb99663, 0.95);
-    drawPixelRect(this.overlayGraphics, px + 4, py + 7, 8, 2, 0x7d6643, 0.5);
+  private drawRoadTile(target: PixelTarget, px: number, py: number): void {
+    drawPixelRect(target, px + 2, py + 6, 12, 4, 0xb99663, 0.95);
+    drawPixelRect(target, px + 4, py + 7, 8, 2, 0x7d6643, 0.5);
   }
 
-  private drawFeature(feature: FeatureType, px: number, py: number, terrain: TerrainType): void {
+  private drawFeature(target: PixelTarget, feature: FeatureType, px: number, py: number, terrain: TerrainType): void {
     switch (feature) {
       case FeatureType.Trees:
-        drawPixelRect(this.overlayGraphics, px + 7, py + 9, 2, 4, 0x4c321f);
-        drawPixelRect(this.overlayGraphics, px + 4, py + 6, 8, 4, 0x204e2f);
-        drawPixelRect(this.overlayGraphics, px + 5, py + 3, 6, 4, 0x2f6d3e);
+        drawPixelRect(target, px + 7, py + 9, 2, 4, 0x4c321f);
+        drawPixelRect(target, px + 4, py + 6, 8, 4, 0x204e2f);
+        drawPixelRect(target, px + 5, py + 3, 6, 4, 0x2f6d3e);
         break;
       case FeatureType.BerryPatch:
-        drawPixelRect(this.overlayGraphics, px + 5, py + 9, 6, 3, 0x49733b);
-        drawPixelRect(this.overlayGraphics, px + 4, py + 8, 2, 2, 0xc63d62);
-        drawPixelRect(this.overlayGraphics, px + 8, py + 7, 2, 2, 0xc63d62);
-        drawPixelRect(this.overlayGraphics, px + 10, py + 9, 2, 2, 0xc63d62);
+        drawPixelRect(target, px + 5, py + 9, 6, 3, 0x49733b);
+        drawPixelRect(target, px + 4, py + 8, 2, 2, 0xc63d62);
+        drawPixelRect(target, px + 8, py + 7, 2, 2, 0xc63d62);
+        drawPixelRect(target, px + 10, py + 9, 2, 2, 0xc63d62);
         break;
       case FeatureType.StoneOutcrop:
         drawPixelRect(this.overlayGraphics, px + 4, py + 8, 8, 5, 0xabb4bc);
         drawPixelRect(this.overlayGraphics, px + 6, py + 6, 5, 3, 0xd4dde3);
         break;
       case FeatureType.OreVein:
-        drawPixelRect(this.overlayGraphics, px + 4, py + 8, 8, 5, 0x78695c);
-        drawPixelRect(this.overlayGraphics, px + 5, py + 7, 2, 2, 0xc6914c);
-        drawPixelRect(this.overlayGraphics, px + 9, py + 9, 2, 2, 0xc6914c);
+        drawPixelRect(target, px + 4, py + 8, 8, 5, 0x78695c);
+        drawPixelRect(target, px + 5, py + 7, 2, 2, 0xc6914c);
+        drawPixelRect(target, px + 9, py + 9, 2, 2, 0xc6914c);
         break;
       case FeatureType.ClayDeposit:
-        drawPixelRect(this.overlayGraphics, px + 4, py + 8, 8, 4, 0x8f694c);
+        drawPixelRect(target, px + 4, py + 8, 8, 4, 0x8f694c);
         break;
       case FeatureType.FishShoal:
         if (terrain === TerrainType.River || terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow) {
-          drawPixelRect(this.overlayGraphics, px + 4, py + 8, 3, 2, 0xf0fbff, 0.75);
-          drawPixelRect(this.overlayGraphics, px + 9, py + 6, 3, 2, 0xd8f6ff, 0.72);
+          drawPixelRect(target, px + 4, py + 8, 3, 2, 0xf0fbff, 0.75);
+          drawPixelRect(target, px + 9, py + 6, 3, 2, 0xd8f6ff, 0.72);
         }
         break;
       case FeatureType.Volcano:
-        drawPixelRect(this.overlayGraphics, px + 4, py + 8, 8, 5, 0x39211b);
-        drawPixelRect(this.overlayGraphics, px + 6, py + 4, 4, 4, 0x4f2d1f);
-        drawPixelRect(this.overlayGraphics, px + 7, py + 5, 2, 4, 0xffa247, 0.88);
+        drawPixelRect(target, px + 4, py + 8, 8, 5, 0x39211b);
+        drawPixelRect(target, px + 6, py + 4, 4, 4, 0x4f2d1f);
+        drawPixelRect(target, px + 7, py + 5, 2, 4, 0xffa247, 0.88);
         break;
       case FeatureType.Reeds:
-        drawPixelRect(this.overlayGraphics, px + 5, py + 5, 1, 7, 0x98b96f);
-        drawPixelRect(this.overlayGraphics, px + 8, py + 4, 1, 8, 0x8fb45b);
-        drawPixelRect(this.overlayGraphics, px + 10, py + 6, 1, 6, 0xa5c472);
+        drawPixelRect(target, px + 5, py + 5, 1, 7, 0x98b96f);
+        drawPixelRect(target, px + 8, py + 4, 1, 8, 0x8fb45b);
+        drawPixelRect(target, px + 10, py + 6, 1, 6, 0xa5c472);
         break;
       case FeatureType.Trench:
-        drawPixelRect(this.overlayGraphics, px + 1, py + 7, 14, 3, 0x3d2c1d, 0.8);
-        drawPixelRect(this.overlayGraphics, px + 1, py + 6, 14, 1, 0x6f5a3e, 0.45);
+        drawPixelRect(target, px + 1, py + 7, 14, 3, 0x3d2c1d, 0.8);
+        drawPixelRect(target, px + 1, py + 6, 14, 1, 0x6f5a3e, 0.45);
         break;
       case FeatureType.IrrigationCanal:
-        drawPixelRect(this.overlayGraphics, px + 1, py + 7, 14, 3, 0x4691b8, 0.85);
-        drawPixelRect(this.overlayGraphics, px + 2, py + 6, 12, 1, 0x8bd3ee, 0.5);
+        drawPixelRect(target, px + 1, py + 7, 14, 3, 0x4691b8, 0.85);
+        drawPixelRect(target, px + 2, py + 6, 12, 1, 0x8bd3ee, 0.5);
         break;
       case FeatureType.Palisade:
-        drawPixelRect(this.overlayGraphics, px + 1, py + 4, 14, 2, 0x7b5a35, 0.95);
+        drawPixelRect(target, px + 1, py + 4, 14, 2, 0x7b5a35, 0.95);
         for (let spike = 2; spike <= 12; spike += 3) {
-          drawPixelRect(this.overlayGraphics, px + spike, py + 2, 1, 4, 0xa67d48, 0.9);
+          drawPixelRect(target, px + spike, py + 2, 1, 4, 0xa67d48, 0.9);
         }
         break;
       case FeatureType.Gate:
-        drawPixelRect(this.overlayGraphics, px + 1, py + 4, 14, 2, 0x7d6441, 0.95);
-        drawPixelRect(this.overlayGraphics, px + 6, py + 2, 4, 6, 0xb99663, 0.92);
+        drawPixelRect(target, px + 1, py + 4, 14, 2, 0x7d6441, 0.95);
+        drawPixelRect(target, px + 6, py + 2, 4, 6, 0xb99663, 0.92);
         break;
       case FeatureType.StoneWall:
-        drawPixelRect(this.overlayGraphics, px + 1, py + 4, 14, 3, 0x9ca5ae, 0.95);
-        drawPixelRect(this.overlayGraphics, px + 2, py + 3, 12, 1, 0xd8dde3, 0.55);
+        drawPixelRect(target, px + 1, py + 4, 14, 3, 0x9ca5ae, 0.95);
+        drawPixelRect(target, px + 2, py + 3, 12, 1, 0xd8dde3, 0.55);
         break;
       default:
         break;

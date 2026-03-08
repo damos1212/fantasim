@@ -2442,9 +2442,11 @@ export class Simulation {
     const jobs = this.jobs
       .filter((job) => job.tribeId === tribe.id && job.claimedBy === null)
       .sort((a, b) => {
+        const urgencyA = this.jobUrgencyScore(agent, tribe, a);
+        const urgencyB = this.jobUrgencyScore(agent, tribe, b);
         const distanceA = manhattan(agent.x, agent.y, a.x, a.y);
         const distanceB = manhattan(agent.x, agent.y, b.x, b.y);
-        return b.priority - a.priority || distanceA - distanceB;
+        return urgencyB - urgencyA || b.priority - a.priority || distanceA - distanceB;
       });
 
     for (const job of jobs) {
@@ -2524,6 +2526,73 @@ export class Simulation {
       targetY: idleY,
       workLeft: randInt(this.random, 4, 12),
     };
+  }
+
+  private jobUrgencyScore(agent: AgentState, tribe: TribeState, job: JobState): number {
+    const population = this.populationOf(tribe.id);
+    const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
+    const lowFood = tribe.resources[ResourceType.Rations] < foodNeed;
+    const lowWater = tribe.water < Math.max(14, population * 0.5);
+    const lowWood = tribe.resources[ResourceType.Wood] < 70;
+    const lowStone = tribe.resources[ResourceType.Stone] < 48;
+    const missingBootstrap =
+      !this.hasBuilt(tribe.id, BuildingType.Farm)
+      || !this.hasBuilt(tribe.id, BuildingType.LumberCamp)
+      || !this.hasBuilt(tribe.id, BuildingType.Stockpile)
+      || !this.hasBuilt(tribe.id, BuildingType.Cistern);
+
+    let score = job.priority * 10;
+
+    if (job.kind === "gather" || job.kind === "hunt" || job.kind === "fish") {
+      score += lowFood ? 80 : 12;
+    }
+    if (job.kind === "cut_tree") {
+      score += lowWood ? 72 : 10;
+    }
+    if (job.kind === "quarry") {
+      score += lowStone ? 58 : 8;
+    }
+    if (job.kind === "mine") {
+      score += missingBootstrap ? -30 : lowStone ? 6 : 12;
+    }
+    if (job.kind === "earthwork") {
+      score += missingBootstrap ? -80 : 0;
+    }
+    if (job.kind === "craft") {
+      score += missingBootstrap ? -36 : 6;
+      const payload = job.payload as CraftPayload;
+      if (payload.output === ResourceType.StoneTools || payload.output === ResourceType.BronzeTools || payload.output === ResourceType.IronTools || payload.output === ResourceType.Rations) {
+        score += 24;
+      }
+    }
+    if (job.kind === "build") {
+      const payload = job.payload as BuildPayload;
+      const type = payload.buildingType;
+      if (type === BuildingType.Farm) score += lowFood || !this.hasBuilt(tribe.id, BuildingType.Farm) ? 88 : 12;
+      if (type === BuildingType.Cistern) score += lowWater || !this.hasBuilt(tribe.id, BuildingType.Cistern) ? 86 : 10;
+      if (type === BuildingType.LumberCamp) score += lowWood || !this.hasBuilt(tribe.id, BuildingType.LumberCamp) ? 82 : 8;
+      if (type === BuildingType.Stockpile) score += !this.hasBuilt(tribe.id, BuildingType.Stockpile) ? 78 : 6;
+      if (type === BuildingType.Quarry) score += lowStone || !this.hasBuilt(tribe.id, BuildingType.Quarry) ? 56 : 5;
+      if (type === BuildingType.House) score += this.computeHousing(tribe.id) < population + 2 ? 44 : 4;
+      if (type === BuildingType.Warehouse) score += missingBootstrap ? -20 : 18;
+      if (type === BuildingType.Shrine || type === BuildingType.Tavern || type === BuildingType.Watchtower) score += missingBootstrap ? -44 : 0;
+      if (type === BuildingType.Barracks || type === BuildingType.Armory || type === BuildingType.Castle) score += missingBootstrap ? -56 : 0;
+    }
+    if (job.kind === "haul") {
+      const payload = job.payload as HaulPayload;
+      const targetJob = this.jobs.find((entry) => entry.id === payload.targetJobId);
+      if (targetJob) {
+        score += this.jobUrgencyScore(agent, tribe, targetJob) * 0.7;
+      } else {
+        score += 8;
+      }
+    }
+
+    if ((agent.role === AgentRole.Builder || agent.role === AgentRole.Hauler) && missingBootstrap) {
+      score += 8;
+    }
+
+    return score;
   }
 
   private roleMatches(role: AgentRole, kind: JobKind): boolean {
