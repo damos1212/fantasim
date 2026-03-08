@@ -424,6 +424,17 @@ export type BuildingSnapshot = {
   hp: number;
 };
 
+export type PlannedSiteSnapshot = {
+  tribeId: number;
+  type: BuildingType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  supplied: number;
+  supplyNeeded: number;
+};
+
 export type AnimalSnapshot = {
   id: number;
   type: AnimalType;
@@ -522,6 +533,7 @@ export type DynamicSnapshot = {
   tribes: TribeSummary[];
   agents: AgentSnapshot[];
   buildings: BuildingSnapshot[];
+  plannedSites: PlannedSiteSnapshot[];
   animals: AnimalSnapshot[];
   boats: BoatSnapshot[];
   wagons: WagonSnapshot[];

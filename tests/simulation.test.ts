@@ -36,6 +36,26 @@ describe("simulation", () => {
       tribe.resources[ResourceType.BasicWeapons] >= 10 &&
       tribe.resources[ResourceType.BasicArmor] >= 8,
     )).toBe(true);
+    expect(sim.tribes.every((tribe) => {
+      let embarkPileTiles = 0;
+      for (let dy = -10; dy <= 10; dy += 1) {
+        for (let dx = -10; dx <= 10; dx += 1) {
+          const x = tribe.capitalX + dx;
+          const y = tribe.capitalY + dy;
+          if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
+          const index = y * sim.world.width + x;
+          const type = sim.world.resourceType[index] as ResourceType;
+          const amount = sim.world.resourceAmount[index] ?? 0;
+          if (
+            amount > 0
+            && (type === ResourceType.Wood || type === ResourceType.Stone || type === ResourceType.Clay || type === ResourceType.Grain || type === ResourceType.Berries)
+          ) {
+            embarkPileTiles += 1;
+          }
+        }
+      }
+      return embarkPileTiles >= 12;
+    })).toBe(true);
   });
 
   test("primitive tribes start with a workable specialist mix and starter gear", () => {
