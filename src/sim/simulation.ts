@@ -2520,6 +2520,10 @@ export class Simulation {
       candidate.gear = improveGear(candidate.gear, tribe.race.type === RaceType.Darkfolk || tribe.race.type === RaceType.Elves ? "Crowned" : "Royal");
       candidate.title = titleForAgent(candidate, tribe.race.type);
     }
+    if (tribe.successionCount > 1) {
+      tribe.morale = Math.max(18, tribe.morale - 8);
+      tribe.faith = Math.max(0, tribe.faith - 12);
+    }
     const rulerTitle = this.rulerTitleForTribe(tribe);
     this.pushEvent({
       kind: tribe.successionCount > 1 ? "succession" : "coronation",
@@ -2851,7 +2855,7 @@ export class Simulation {
           this.finishTask(agent);
           return;
         }
-        const storageSite = this.findNearestStorageSite(tribe.id, agent.x, agent.y);
+        const storageSite = this.findNearestStorageSite(tribe.id, agent.x, agent.y, task.resourceType);
         task.stage = "return";
         task.targetX = storageSite.x;
         task.targetY = storageSite.y;
@@ -3035,12 +3039,77 @@ export class Simulation {
     return site ? buildingCenter(site) : { x: tribe.capitalX, y: tribe.capitalY };
   }
 
-  private findNearestStorageSite(tribeId: number, originX: number, originY: number): { x: number; y: number } {
+  private storageAffinityScore(tribeId: number, building: BuildingState, resourceType: ResourceType): number {
+    const center = buildingCenter(building);
+    let score = building.type === BuildingType.Warehouse ? 26 : building.type === BuildingType.Stockpile ? 18 : 10;
+    if (resourceType === ResourceType.None) {
+      return score;
+    }
+
+    if (resourceType === ResourceType.Rations || resourceType === ResourceType.Grain || resourceType === ResourceType.Berries || resourceType === ResourceType.Fish || resourceType === ResourceType.Meat) {
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Farm, center.x, center.y, 10) * 6;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Orchard, center.x, center.y, 10) * 5;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.FishingHut, center.x, center.y, 12) * 5;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Fishery, center.x, center.y, 12) * 6;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.House, center.x, center.y, 10) * 2;
+      return score;
+    }
+
+    if (resourceType === ResourceType.Wood || resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal) {
+      score += this.nearbyBuildingCount(tribeId, BuildingType.LumberCamp, center.x, center.y, 12) * 7;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Workshop, center.x, center.y, 10) * 6;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Foundry, center.x, center.y, 10) * 5;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Factory, center.x, center.y, 10) * 6;
+      return score;
+    }
+
+    if (resourceType === ResourceType.Stone || resourceType === ResourceType.Clay || resourceType === ResourceType.Ore || resourceType === ResourceType.Bricks) {
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Quarry, center.x, center.y, 12) * 7;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Mine, center.x, center.y, 12) * 7;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.DeepMine, center.x, center.y, 12) * 8;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Foundry, center.x, center.y, 10) * 5;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Factory, center.x, center.y, 10) * 6;
+      return score;
+    }
+
+    if (
+      resourceType === ResourceType.StoneTools
+      || resourceType === ResourceType.BronzeTools
+      || resourceType === ResourceType.IronTools
+      || resourceType === ResourceType.BasicWeapons
+      || resourceType === ResourceType.MetalWeapons
+      || resourceType === ResourceType.BasicArmor
+      || resourceType === ResourceType.MetalArmor
+    ) {
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Workshop, center.x, center.y, 10) * 4;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Smithy, center.x, center.y, 10) * 7;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Armory, center.x, center.y, 10) * 8;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Barracks, center.x, center.y, 10) * 5;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Factory, center.x, center.y, 10) * 6;
+      return score;
+    }
+
+    if (resourceType === ResourceType.Horses || resourceType === ResourceType.Livestock || resourceType === ResourceType.Hides) {
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Stable, center.x, center.y, 12) * 8;
+      score += this.nearbyBuildingCount(tribeId, BuildingType.Farm, center.x, center.y, 12) * 4;
+      return score;
+    }
+
+    return score;
+  }
+
+  private findNearestStorageSite(tribeId: number, originX: number, originY: number, resourceType: ResourceType = ResourceType.None): { x: number; y: number } {
     const candidates = this.buildingsForTribe(tribeId)
       .filter((building) =>
         (building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile || building.type === BuildingType.CapitalHall),
       )
-      .sort((a, b) => manhattan(originX, originY, a.x, a.y) - manhattan(originX, originY, b.x, b.y));
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        const scoreA = this.storageAffinityScore(tribeId, a, resourceType) - manhattan(originX, originY, centerA.x, centerA.y) * 1.4;
+        const scoreB = this.storageAffinityScore(tribeId, b, resourceType) - manhattan(originX, originY, centerB.x, centerB.y) * 1.4;
+        return scoreB - scoreA;
+      });
     const site = candidates[0];
     return site ? buildingCenter(site) : { x: this.tribes[tribeId]!.capitalX, y: this.tribes[tribeId]!.capitalY };
   }
@@ -3695,6 +3764,7 @@ export class Simulation {
         this.maybePromoteHero(tribe);
         this.maybeGrantBlessing(tribe);
       }
+      this.maybeTriggerUnrest(tribe);
     }
   }
 
@@ -3718,6 +3788,55 @@ export class Simulation {
       description: `${candidate.name} has been anointed as a blessed champion of ${tribe.name}.`,
       x: candidate.x,
       y: candidate.y,
+      tribeId: tribe.id,
+    });
+  }
+
+  private maybeTriggerUnrest(tribe: TribeState): void {
+    if (this.tickCount % (SIM_TICKS_PER_SECOND * 22) !== 0) {
+      return;
+    }
+    const population = this.populationOf(tribe.id);
+    const wounded = this.agentsForTribe(tribe.id).filter((agent) => agent.wounds > 0).length;
+    const instability =
+      (tribe.morale < 34 ? 0.16 : tribe.morale < 44 ? 0.08 : 0)
+      + (tribe.tributeTo !== null ? 0.08 : 0)
+      + Math.max(0, tribe.successionCount - 1) * 0.015
+      + wounded * 0.004
+      + (tribe.resources[ResourceType.Rations] < population * 2.2 ? 0.06 : 0)
+      + (tribe.water < Math.max(8, population * 0.35) ? 0.05 : 0);
+    if (instability < 0.1 || this.random() > instability) {
+      return;
+    }
+
+    const victims = this.agents
+      .filter((agent) => agent.tribeId === tribe.id)
+      .sort((a, b) => b.level - a.level)
+      .slice(0, 3);
+    for (const agent of victims) {
+      agent.wounds = clamp(agent.wounds + 1, 0, 5);
+      agent.health = Math.max(24, agent.health - randInt(this.random, 8, 18));
+    }
+    tribe.resources[ResourceType.Rations] = Math.max(0, tribe.resources[ResourceType.Rations] - randInt(this.random, 18, 42));
+    tribe.resources[ResourceType.Wood] = Math.max(0, tribe.resources[ResourceType.Wood] - randInt(this.random, 8, 20));
+    tribe.resources[ResourceType.Stone] = Math.max(0, tribe.resources[ResourceType.Stone] - randInt(this.random, 6, 16));
+    tribe.morale = Math.max(12, tribe.morale - randInt(this.random, 10, 18));
+
+    if (tribe.tributeTo !== null) {
+      const overlord = this.tribes[tribe.tributeTo];
+      if (overlord) {
+        tribe.relations[overlord.id] = clamp(tribe.relations[overlord.id]! - 22, -100, 100);
+        overlord.relations[tribe.id] = clamp(overlord.relations[tribe.id]! - 12, -100, 100);
+      }
+      tribe.tributeTo = null;
+    }
+
+    this.pushEvent({
+      kind: "rebellion",
+      title: `${tribe.name} is shaken by rebellion`,
+      description: `${tribe.name} is struggling with unrest after hardship, succession strain, and internal fighting.`,
+      x: tribe.capitalX,
+      y: tribe.capitalY,
       tribeId: tribe.id,
     });
   }
@@ -4601,6 +4720,20 @@ export class Simulation {
     }
   }
 
+  private primaryInputResource(inputs: Partial<Record<ResourceType, number>>): ResourceType {
+    let bestResource = ResourceType.None;
+    let bestAmount = -1;
+    for (const [resource, amount] of Object.entries(inputs)) {
+      const numericResource = Number(resource) as ResourceType;
+      const numericAmount = amount ?? 0;
+      if (numericAmount > bestAmount) {
+        bestAmount = numericAmount;
+        bestResource = numericResource;
+      }
+    }
+    return bestResource;
+  }
+
   private chooseTradeCargo(tribe: TribeState, partner?: TribeState): ResourceType {
     const preferred = this.tradePreferenceForRace(tribe.race.type);
     const ordered = partner
@@ -5178,7 +5311,7 @@ export class Simulation {
 
     if (!building) return;
 
-    const stock = this.findNearestStorageSite(tribe.id, building.x, building.y);
+    const stock = this.findNearestStorageSite(tribe.id, building.x, building.y, this.primaryInputResource(inputs));
     const haulSpecs = this.constructionHaulPlan(inputs);
 
     for (const [resource, amountNeeded] of Object.entries(inputs)) {
