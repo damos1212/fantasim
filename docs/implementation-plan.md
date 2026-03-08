@@ -649,6 +649,7 @@ The following major systems are still not fully implemented and should remain vi
 - more explicit diplomacy through formal trade pacts, tribute pressure, and clearer kingdom-level relationship state in the observer UI
 - diplomacy effects that materially change survival pressure through alliance aid convoys, tribute strain, and tributary morale/rebellion pressure
 - first-contact/discovery gating so kingdoms explore outward and only broaden diplomacy, trade, and war after establishing contact
+- stronger logistics-district growth so expanding resource clusters seed nearby stockpiles and later warehouses instead of hauling everything through the capital forever
 - stronger render polish through underground/surface view toggles, animated water and lava shimmer, drifting cloud shadows, and subtler building shadowing
 
 ## Expansion Roadmap

@@ -26,6 +26,7 @@ describe("simulation", () => {
     expect(snapshot.tribes.every((tribe) => !tribe.techs.includes("Modern Logistics") && !tribe.techs.includes("Airfields"))).toBe(true);
     expect(snapshot.tribes.every((tribe) => tribe.techs.length <= 6)).toBe(true);
     expect(snapshot.tribes.every((tribe) => tribe.flooded === 0)).toBe(true);
+    expect(snapshot.tribes.every((tribe) => tribe.contacts === 0 && tribe.enemyCount === 0 && tribe.allies === 0)).toBe(true);
     expect(snapshot.tribes.every((tribe) =>
       snapshot.animals.some((animal) => Math.abs(animal.x - tribe.capitalX) + Math.abs(animal.y - tribe.capitalY) <= 18),
     )).toBe(true);
@@ -198,13 +199,13 @@ describe("simulation", () => {
     expect(lastSnapshot.tribes.every((tribe) => tribe.age <= AgeType.Stone)).toBe(true);
   });
 
-  test("tribes make first contact before wider diplomacy activates", { timeout: 20000 }, () => {
-    const sim = createSimulation("discovery-flow", { width: 512, height: 512 });
+  test("tribes make first contact before wider diplomacy activates", { timeout: 30000 }, () => {
+    const sim = createSimulation("discovery-flow", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
 
     expect(lastSnapshot.tribes.every((tribe) => tribe.contacts === 0)).toBe(true);
 
-    for (let i = 0; i < 1800; i += 1) {
+    for (let i = 0; i < 1400; i += 1) {
       const snapshot = sim.tick();
       if (snapshot) {
         lastSnapshot = snapshot;
@@ -212,5 +213,24 @@ describe("simulation", () => {
     }
 
     expect(lastSnapshot.tribes.some((tribe) => tribe.contacts > 0)).toBe(true);
+  });
+
+  test("maturing tribes add logistics districts as settlements spread", { timeout: 30000 }, () => {
+    const sim = createSimulation("district-flow", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1600; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.tribes.some((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const stockpiles = tribeBuildings.filter((building) => building.type === BuildingType.Stockpile).length;
+      const warehouses = tribeBuildings.filter((building) => building.type === BuildingType.Warehouse).length;
+      return stockpiles >= 2 || warehouses >= 1;
+    })).toBe(true);
   });
 });

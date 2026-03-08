@@ -761,6 +761,7 @@ The next expansion pass should deepen the simulation in these concrete ways:
 - more explicit diplomacy with formal trade pacts, tribute relationships, and clearer allied/trading/tributary visibility in kingdom inspection
 - diplomacy that has material consequences through alliance aid, tribute extraction, and added morale pressure on subjugated kingdoms
 - first-contact/discovery gating so tribes scout outward, accumulate contacts, and only unlock diplomacy/trade/war after meeting neighbors
+- stronger settlement expansion logic so remote farms, lumber camps, mines, and docks can grow their own logistics districts with supporting stockpiles and warehouses
 - minimap and stronger observer UI for long sessions
 - cleaner RTS/sim-style interface with tabs, shortcuts, inspection panels, and a surface/underground view toggle
 - stronger visual polish through animated water/lava highlights, drifting cloud-shadow overlays, and restrained shadowing on structures and relief
