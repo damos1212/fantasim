@@ -323,4 +323,28 @@ describe("simulation", () => {
       return tribeBuildings.some((building) => building.type === BuildingType.Workshop || building.type === BuildingType.Mine);
     })).toBe(true);
   });
+
+  test("stone-age proto-industry gains supporting labor roles", { timeout: 30000 }, () => {
+    const sim = createSimulation("stone-labor", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.tribes.some((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      if (!tribeBuildings.some((building) => building.type === BuildingType.Workshop)) {
+        return false;
+      }
+      const tribeAgents = lastSnapshot.agents.filter((agent) => agent.tribeId === tribe.id);
+      const crafters = tribeAgents.filter((agent) => agent.role === AgentRole.Crafter).length;
+      const miners = tribeAgents.filter((agent) => agent.role === AgentRole.Miner).length;
+      const haulers = tribeAgents.filter((agent) => agent.role === AgentRole.Hauler).length;
+      return crafters >= 1 && miners >= 2 && haulers >= 2;
+    })).toBe(true);
+  });
 });

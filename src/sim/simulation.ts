@@ -1113,19 +1113,62 @@ export class Simulation {
     const hostility = this.meanHostility(tribe);
     const primitive = tribe.age === AgeType.Primitive;
     const bootstrap = this.isBootstrapPhase(tribe);
+    const tribeBuildings = this.buildingsForTribe(tribe.id);
+    const industrialSites =
+      this.buildingCount(tribe.id, BuildingType.Quarry)
+      + this.buildingCount(tribe.id, BuildingType.Mine)
+      + this.buildingCount(tribe.id, BuildingType.DeepMine)
+      + this.buildingCount(tribe.id, BuildingType.TunnelEntrance);
+    const overflowSites = tribeBuildings.filter((building) => {
+      const top = this.topStoredResource(building);
+      return top.resourceType !== ResourceType.None && top.amount > this.localStockTarget(building.type, top.resourceType);
+    }).length;
+    const hasProtoIndustry =
+      this.hasBuilt(tribe.id, BuildingType.Workshop)
+      || this.hasBuilt(tribe.id, BuildingType.Smithy)
+      || this.hasBuilt(tribe.id, BuildingType.Armory)
+      || this.hasBuilt(tribe.id, BuildingType.Foundry)
+      || this.hasBuilt(tribe.id, BuildingType.Factory);
     const desiredSoldiers = clamp(Math.floor(tribeAgents.length * (0.12 + tribe.race.militaryBias * 0.08 + hostility * 0.002)), primitive ? 1 : 2, 18);
     const desiredFarmers = clamp(Math.floor(tribeAgents.length * (primitive ? 0.24 : 0.18) * tribe.race.foodBias), primitive ? 4 : 3, 18);
     const desiredWoodcutters = clamp(Math.floor(tribeAgents.length * (primitive ? 0.16 : 0.14)), primitive ? 3 : 2, 12);
-    const desiredMiners = tribe.age >= AgeType.Bronze
-      ? clamp(Math.floor(tribeAgents.length * 0.1 * tribe.race.buildBias + this.buildingCount(tribe.id, BuildingType.DeepMine) * 0.8), 2, 12)
+    const desiredMiners = tribe.age >= AgeType.Stone
+      ? clamp(
+        Math.floor(
+          tribeAgents.length * (tribe.age >= AgeType.Bronze ? 0.1 : 0.07) * tribe.race.buildBias
+          + industrialSites * (tribe.age >= AgeType.Bronze ? 0.75 : 0.45),
+        ),
+        primitive ? 3 : 2,
+        12,
+      )
       : primitive ? 3 : 0;
     const desiredFishers = this.hasBuilt(tribe.id, BuildingType.Dock) || this.hasBuilt(tribe.id, BuildingType.Fishery) ? 4 + this.buildingCount(tribe.id, BuildingType.Fishery) : 0;
-    const desiredCrafters = tribe.age >= AgeType.Bronze ? clamp(Math.floor(tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.Armory) ? 0.1 : 0.08)), 1, 10) : primitive ? 1 : 0;
+    const desiredCrafters = hasProtoIndustry
+      ? clamp(
+        Math.floor(
+          tribeAgents.length * (
+            tribe.age >= AgeType.Bronze
+              ? (this.hasBuilt(tribe.id, BuildingType.Armory) ? 0.1 : 0.08)
+              : this.hasBuilt(tribe.id, BuildingType.Workshop) ? 0.06 : 0.04
+          ),
+        ),
+        1,
+        10,
+      )
+      : primitive ? 1 : 0;
     const desiredScholars = tribe.age >= AgeType.Bronze && (this.hasBuilt(tribe.id, BuildingType.Workshop) || this.hasBuilt(tribe.id, BuildingType.Castle) || this.hasBuilt(tribe.id, BuildingType.MageTower) || this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum) || this.hasBuilt(tribe.id, BuildingType.School))
       ? clamp(Math.floor(tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.School) ? 0.08 : 0.04)), 1, 5)
       : 0;
     const desiredBuilders = clamp(Math.floor(tribeAgents.length * (primitive ? 0.14 : 0.12) + tribe.race.buildBias * 2), primitive ? 3 : 2, 10);
-    const desiredHaulers = clamp(Math.floor(tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.Warehouse) ? 0.11 : 0.08) + this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length * 0.05), primitive ? 2 : 1, 10);
+    const desiredHaulers = clamp(
+      Math.floor(
+        tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.Warehouse) ? 0.11 : 0.08)
+        + this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length * 0.05
+        + overflowSites * 0.75,
+      ),
+      primitive ? 2 : 1,
+      10,
+    );
     const canUseMagic = (tribe.race.type === RaceType.Elves || tribe.race.type === RaceType.Darkfolk) && tribe.age >= AgeType.Iron;
     const desiredMages = canUseMagic
       ? clamp(Math.floor(tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum) ? 0.16 : this.hasBuilt(tribe.id, BuildingType.MageTower) ? 0.1 : 0.06)), 1, this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum) ? 9 : this.hasBuilt(tribe.id, BuildingType.MageTower) ? 6 : 4)
