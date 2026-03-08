@@ -683,7 +683,7 @@ export class GameRenderer {
     const minTileY = Math.max(0, Math.floor(this.cameraY / TILE_SIZE));
     const maxTileX = Math.min(world.width - 1, Math.ceil((this.cameraX + viewportWidth / this.zoom) / TILE_SIZE) + 1);
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
-    const lodStep = this.zoom < 0.35 ? 4 : this.zoom < 0.58 ? 2 : 1;
+    const lodStep = this.zoom < 0.42 ? 4 : this.zoom < 0.9 ? 2 : 1;
     const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
     const now = performance.now();
     const redrawStaticScene =
@@ -763,11 +763,11 @@ export class GameRenderer {
       this.lastStaticRenderAt = now;
     }
 
-    if (this.viewMode === "surface" && lodStep <= 2) {
+    if (this.viewMode === "surface" && this.zoom > 0.55 && lodStep <= 2) {
       this.drawCloudShadowOverlay(minTileX, minTileY, maxTileX, maxTileY);
     }
 
-    if (this.viewMode === "surface" && lodStep === 1) {
+    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.02) {
       this.drawWeatherOverlay(minTileX, minTileY, maxTileX, maxTileY);
     }
 

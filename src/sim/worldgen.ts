@@ -328,6 +328,13 @@ function markRiver(world: WorldData, x: number, y: number, width = 1): void {
 
 function carveRivers(world: WorldData, random: () => number): void {
   const heads: number[] = [];
+  const riverDirections = [
+    ...CARDINALS,
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ] as const;
   for (let y = 20; y < world.height - 20; y += 4) {
     for (let x = 20; x < world.width - 20; x += 4) {
       const index = indexOf(x, y, world.width);
@@ -341,6 +348,11 @@ function carveRivers(world: WorldData, random: () => number): void {
         heads.push(index);
       }
     }
+  }
+
+  for (let i = heads.length - 1; i > 0; i -= 1) {
+    const j = randInt(random, 0, i);
+    [heads[i], heads[j]] = [heads[j]!, heads[i]!];
   }
 
   const maxRivers = Math.max(80, Math.floor((world.width * world.height) / 70000));
@@ -368,8 +380,8 @@ function carveRivers(world: WorldData, random: () => number): void {
       }
 
       let best = current;
-      let bestElevation = world.elevation[current];
-      for (const [dx, dy] of CARDINALS) {
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (const [dx, dy] of riverDirections) {
         const nx = x + dx;
         const ny = y + dy;
         if (!inBounds(nx, ny, world.width, world.height)) {
@@ -381,8 +393,11 @@ function carveRivers(world: WorldData, random: () => number): void {
           best = neighbor;
           break;
         }
-        if (nextElevation <= bestElevation + 4) {
-          bestElevation = nextElevation;
+        const diagonalPenalty = dx !== 0 && dy !== 0 ? 1.2 : 0;
+        const meanderBias = (random() - 0.5) * 3.2;
+        const score = nextElevation + diagonalPenalty + meanderBias;
+        if (score <= bestScore + 4) {
+          bestScore = score;
           best = neighbor;
         }
       }

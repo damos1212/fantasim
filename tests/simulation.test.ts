@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createSimulation } from "../src/sim/simulation";
 import { INITIAL_AGENTS_PER_TRIBE, INITIAL_TRIBE_COUNT } from "../src/shared/config";
-import { AgeType } from "../src/shared/gameTypes";
+import { AgentRole, AgeType } from "../src/shared/gameTypes";
 
 describe("simulation", () => {
   test("seeds tribes, buildings, and agents", () => {
@@ -28,6 +28,27 @@ describe("simulation", () => {
     expect(snapshot.tribes.every((tribe) =>
       snapshot.animals.some((animal) => Math.abs(animal.x - tribe.capitalX) + Math.abs(animal.y - tribe.capitalY) <= 18),
     )).toBe(true);
+  });
+
+  test("primitive tribes start with a workable specialist mix and starter gear", () => {
+    const sim = createSimulation("starting-roles", { width: 768, height: 768 });
+    const snapshot = sim.snapshotNow();
+
+    for (const tribe of snapshot.tribes) {
+      const tribeAgents = snapshot.agents.filter((agent) => agent.tribeId === tribe.id);
+      const roleCounts = new Map<number, number>();
+      for (const agent of tribeAgents) {
+        roleCounts.set(agent.role, (roleCounts.get(agent.role) ?? 0) + 1);
+      }
+      expect(roleCounts.get(AgentRole.Farmer) ?? 0).toBeGreaterThanOrEqual(3);
+      expect(roleCounts.get(AgentRole.Woodcutter) ?? 0).toBeGreaterThanOrEqual(2);
+      expect(roleCounts.get(AgentRole.Miner) ?? 0).toBeGreaterThanOrEqual(2);
+      expect(roleCounts.get(AgentRole.Builder) ?? 0).toBeGreaterThanOrEqual(2);
+      expect(roleCounts.get(AgentRole.Hauler) ?? 0).toBeGreaterThanOrEqual(2);
+      expect(roleCounts.get(AgentRole.Crafter) ?? 0).toBeGreaterThanOrEqual(1);
+      expect(roleCounts.get(AgentRole.Soldier) ?? 0).toBeGreaterThanOrEqual(2);
+      expect(tribeAgents.every((agent) => agent.gear.weapon.length > 0 && agent.gear.armor.length > 0)).toBe(true);
+    }
   });
 
   test("remains stable across extended ticks and progresses technology", { timeout: 20000 }, () => {
