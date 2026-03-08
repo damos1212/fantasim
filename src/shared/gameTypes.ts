@@ -550,6 +550,14 @@ export type InitMessage = {
   seed: string;
 };
 
+export type ControlMessage = {
+  type: "control";
+  paused?: boolean;
+  speed?: 1 | 2 | 4 | 8;
+};
+
+export type WorkerInboundMessage = InitMessage | ControlMessage;
+
 export type WorldMessage =
   | {
       type: "world-init";

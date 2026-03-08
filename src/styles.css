@@ -140,7 +140,7 @@ body {
 
 .sidebar__tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border-bottom: 1px solid rgb(120 140 160 / 18%);
   pointer-events: auto;
 }
@@ -217,6 +217,12 @@ body {
   display: block;
 }
 
+.tribe-row-wrap {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
 .tribe-row {
   display: grid;
   width: 100%;
@@ -238,6 +244,28 @@ body {
   background: linear-gradient(180deg, rgb(255 255 255 / 6%) 0%, rgb(255 255 255 / 2%) 100%);
 }
 
+.tribe-compare,
+.event-row {
+  border: 1px solid rgb(120 140 160 / 16%);
+  background: linear-gradient(180deg, rgb(26 33 43) 0%, rgb(12 18 24) 100%);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tribe-compare {
+  min-width: 78px;
+  padding: 6px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tribe-compare.is-active {
+  border-color: rgb(162 182 198 / 32%);
+  color: #f6fbff;
+}
+
 .tribe-dot {
   width: 12px;
   height: 12px;
@@ -254,10 +282,22 @@ body {
 }
 
 .event-list li {
-  padding: 8px 9px;
+  padding: 0;
   border: 1px solid rgb(120 140 160 / 12%);
   background:
     linear-gradient(180deg, rgb(255 255 255 / 5%) 0%, rgb(255 255 255 / 2%) 100%);
+}
+
+.event-row {
+  display: block;
+  width: 100%;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.event-row:hover {
+  border-color: rgb(162 182 198 / 24%);
+  background: linear-gradient(180deg, rgb(255 255 255 / 8%) 0%, rgb(255 255 255 / 3%) 100%);
 }
 
 .event-title {
@@ -436,6 +476,15 @@ body {
   border: 1px solid rgb(120 140 160 / 18%);
   background: rgb(255 255 255 / 4%);
   font-size: 11px;
+  color: #d6e5f2;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip--active {
+  background: linear-gradient(180deg, rgb(59 85 108) 0%, rgb(28 44 58) 100%);
+  border-color: rgb(129 166 195 / 36%);
+  color: #f5fbff;
 }
 
 .kv span {
@@ -454,6 +503,27 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #dce9f4;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.compare-card {
+  padding: 8px;
+  border: 1px solid rgb(120 140 160 / 14%);
+  background: linear-gradient(180deg, rgb(22 30 39) 0%, rgb(12 16 22) 100%);
+}
+
+.compare-card h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #c8d8e6;
 }
 
 @media (max-width: 1200px) {

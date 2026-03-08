@@ -14,6 +14,7 @@ export async function boot(): Promise<void> {
   renderer.setLoadingStatus("Starting world generator...");
 
   const worker = new Worker(new URL("../sim/worker.ts", import.meta.url), { type: "module" });
+  renderer.bindWorker(worker);
   worker.onmessage = (event: MessageEvent<WorldMessage>) => {
     if (event.data.type === "world-init") {
       renderer.setLoadingStatus("World built. Streaming terrain and tribes...");

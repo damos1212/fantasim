@@ -108,8 +108,9 @@ type Selection = {
   y: number;
 };
 
-type SidebarTab = "inspect" | "tribes" | "events" | "world";
+type SidebarTab = "inspect" | "tribes" | "events" | "legends" | "world";
 type ViewMode = "surface" | "underground";
+type RenderFilterKey = "armies" | "trade" | "weather" | "underground" | "creatures";
 
 type MotionState = {
   fromX: number;
@@ -139,6 +140,8 @@ type IconSpriteState = {
   sprite: Sprite;
   textureKey: string;
 };
+
+type RenderFilters = Record<RenderFilterKey, boolean>;
 
 type RenderState = {
   world: StaticWorldData | null;
@@ -235,9 +238,10 @@ function entityPosition(motion: Map<number, MotionState>, id: number, fallbackX:
   if (!state) {
     return { x: fallbackX, y: fallbackY };
   }
+  const eased = alpha <= 0 ? 0 : alpha >= 1 ? 1 : alpha * alpha * (3 - 2 * alpha);
   return {
-    x: state.fromX + (state.toX - state.fromX) * alpha,
-    y: state.fromY + (state.toY - state.fromY) * alpha,
+    x: state.fromX + (state.toX - state.fromX) * eased,
+    y: state.fromY + (state.toY - state.fromY) * eased,
   };
 }
 
@@ -363,6 +367,7 @@ export class GameRenderer {
   readonly boatMotion = new Map<number, MotionState>();
   readonly wagonMotion = new Map<number, MotionState>();
   readonly caravanMotion = new Map<number, MotionState>();
+  workerPort: Worker | null = null;
 
   cameraX = 0;
   cameraY = 0;
@@ -372,12 +377,25 @@ export class GameRenderer {
   lastPointer = { x: 0, y: 0 };
   selection: Selection | null = null;
   selectedTribeId: number | null = null;
+  compareTribeId: number | null = null;
   selectedUnitId: number | null = null;
   followSelectedUnit = false;
   sidebarTab: SidebarTab = "inspect";
   renderedSidebarTab: SidebarTab = "inspect";
   viewMode: ViewMode = "surface";
+  simSpeed: 1 | 2 | 4 | 8 = 1;
+  paused = false;
+  eventKindFilter = "all";
+  renderFilters: RenderFilters = {
+    armies: true,
+    trade: true,
+    weather: true,
+    underground: true,
+    creatures: true,
+  };
   lastSnapshotAt = performance.now();
+  lastFrameAt = performance.now();
+  presentationClock = 0;
   lastHudRenderAt = 0;
   hudDirty = true;
   lastTopbarMarkup = "";
@@ -387,6 +405,7 @@ export class GameRenderer {
     inspect: 0,
     tribes: 0,
     events: 0,
+    legends: 0,
     world: 0,
   };
   minimapDirty = true;
@@ -423,6 +442,17 @@ export class GameRenderer {
         <div class="loading-overlay__status">Preparing terrain, tribes, and simulation...</div>
       </div>
     `;
+  }
+
+  bindWorker(worker: Worker): void {
+    this.workerPort = worker;
+  }
+
+  private postControl(update: { paused?: boolean; speed?: 1 | 2 | 4 | 8 }): void {
+    this.workerPort?.postMessage({
+      type: "control",
+      ...update,
+    });
   }
 
   async init(): Promise<void> {
@@ -473,6 +503,33 @@ export class GameRenderer {
         this.updateHud();
         return;
       }
+      const compareButton = target?.closest<HTMLButtonElement>("[data-compare-tribe-id]");
+      if (compareButton) {
+        this.compareTribeId = Number(compareButton.dataset.compareTribeId);
+        this.sidebarTab = "tribes";
+        this.updateHud();
+        return;
+      }
+      const eventButton = target?.closest<HTMLButtonElement>("[data-event-index]");
+      if (eventButton) {
+        const eventIndex = Number(eventButton.dataset.eventIndex);
+        const worldEvent = this.state.events[eventIndex];
+        if (worldEvent) {
+          this.focusWorld(worldEvent.x, worldEvent.y);
+          this.selection = { x: Math.floor(worldEvent.x), y: Math.floor(worldEvent.y) };
+        }
+        this.sidebarTab = "events";
+        this.updateHud();
+        this.drawMinimap();
+        return;
+      }
+      const eventFilterButton = target?.closest<HTMLButtonElement>("[data-event-filter]");
+      if (eventFilterButton) {
+        this.eventKindFilter = eventFilterButton.dataset.eventFilter ?? "all";
+        this.sidebarTab = "events";
+        this.updateHud();
+        return;
+      }
       const tab = target?.closest<HTMLButtonElement>("[data-tab]");
       if (tab) {
         this.sidebarTab = tab.dataset.tab as SidebarTab;
@@ -480,10 +537,37 @@ export class GameRenderer {
       this.updateHud();
     });
     this.topbar.addEventListener("click", (event) => {
-      const target = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-view-mode]");
-      if (!target) return;
-      this.viewMode = target.dataset.viewMode as ViewMode;
-      this.minimapTerrainDirty = true;
+      const target = event.target as HTMLElement | null;
+      const viewButton = target?.closest<HTMLButtonElement>("[data-view-mode]");
+      if (viewButton) {
+        this.viewMode = viewButton.dataset.viewMode as ViewMode;
+        this.minimapTerrainDirty = true;
+      }
+      const speedButton = target?.closest<HTMLButtonElement>("[data-speed]");
+      if (speedButton) {
+        this.simSpeed = Number(speedButton.dataset.speed) as 1 | 2 | 4 | 8;
+        this.postControl({ speed: this.simSpeed, paused: this.paused });
+      }
+      const pauseButton = target?.closest<HTMLButtonElement>("[data-toggle-pause]");
+      if (pauseButton) {
+        this.paused = !this.paused;
+        this.postControl({ paused: this.paused, speed: this.simSpeed });
+      }
+      const jumpButton = target?.closest<HTMLButtonElement>("[data-jump-event]");
+      if (jumpButton) {
+        const latest = this.state.events[0];
+        if (latest) {
+          this.focusWorld(latest.x, latest.y);
+          this.sidebarTab = "events";
+        }
+      }
+      const filterButton = target?.closest<HTMLButtonElement>("[data-filter-key]");
+      if (filterButton) {
+        const key = filterButton.dataset.filterKey as RenderFilterKey;
+        this.renderFilters[key] = !this.renderFilters[key];
+        this.staticSceneDirty = true;
+        this.atmosphereDirty = true;
+      }
       this.updateHud();
       this.drawMinimap();
     });
@@ -491,7 +575,8 @@ export class GameRenderer {
       if (event.key === "1") this.sidebarTab = "inspect";
       if (event.key === "2") this.sidebarTab = "tribes";
       if (event.key === "3") this.sidebarTab = "events";
-      if (event.key === "4") this.sidebarTab = "world";
+      if (event.key === "4") this.sidebarTab = "legends";
+      if (event.key === "5") this.sidebarTab = "world";
       if (event.key === "Escape") {
         this.selectedUnitId = null;
         this.followSelectedUnit = false;
@@ -506,6 +591,19 @@ export class GameRenderer {
       if (event.key.toLowerCase() === "g") {
         this.viewMode = this.viewMode === "surface" ? "underground" : "surface";
         this.minimapTerrainDirty = true;
+      }
+      if (event.key === " ") {
+        event.preventDefault();
+        this.paused = !this.paused;
+        this.postControl({ paused: this.paused, speed: this.simSpeed });
+      }
+      if (event.key === "=" || event.key === "+") {
+        this.simSpeed = this.simSpeed === 1 ? 2 : this.simSpeed === 2 ? 4 : 8;
+        this.postControl({ speed: this.simSpeed, paused: this.paused });
+      }
+      if (event.key === "-") {
+        this.simSpeed = this.simSpeed === 8 ? 4 : this.simSpeed === 4 ? 2 : 1;
+        this.postControl({ speed: this.simSpeed, paused: this.paused });
       }
       this.updateHud();
       this.drawMinimap();
@@ -793,7 +891,11 @@ export class GameRenderer {
       return;
     }
 
-    const alpha = clamp((performance.now() - this.lastSnapshotAt) / ((1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS), 0, 1);
+    const nowMs = performance.now();
+    const frameDelta = Math.min(0.05, Math.max(0, (nowMs - this.lastFrameAt) / 1000));
+    this.lastFrameAt = nowMs;
+    this.presentationClock += frameDelta * (this.paused ? 0.35 : 0.7 + this.simSpeed * 0.18);
+    const alpha = clamp((nowMs - this.lastSnapshotAt) / ((1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS), 0, 1);
     const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
     if (this.followSelectedUnit && this.selectedUnitId !== null) {
       const followed = this.state.agents.find((agent) => agent.id === this.selectedUnitId);
@@ -814,7 +916,7 @@ export class GameRenderer {
     const lodStep = this.zoom < 0.58 ? 4 : this.zoom < 1.08 ? 2 : 1;
     const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
     const atmosphereViewportSignature = `${this.viewMode}:${Math.floor(minTileX / 8)}:${Math.floor(minTileY / 8)}:${Math.floor(maxTileX / 8)}:${Math.floor(maxTileY / 8)}:${this.zoom > 1.24 ? 1 : 0}:${this.zoom > 0.92 ? 1 : 0}`;
-    const now = performance.now();
+    const now = nowMs;
     const redrawStaticScene =
       this.staticSceneDirty ||
       this.lastStaticViewportSignature !== staticViewportSignature ||
@@ -885,6 +987,7 @@ export class GameRenderer {
     }
 
     for (const boat of this.state.boats) {
+      if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
       const position = entityPosition(this.boatMotion, boat.id, boat.x, boat.y, alpha);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
@@ -899,6 +1002,7 @@ export class GameRenderer {
     }
 
     for (const wagon of this.state.wagons) {
+      if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
       const position = entityPosition(this.wagonMotion, wagon.id, wagon.x, wagon.y, alpha);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
@@ -914,6 +1018,7 @@ export class GameRenderer {
     }
 
     for (const caravan of this.state.caravans) {
+      if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
       const position = entityPosition(this.caravanMotion, caravan.id, caravan.x, caravan.y, alpha);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
@@ -929,6 +1034,7 @@ export class GameRenderer {
     }
 
     for (const engine of this.state.siegeEngines) {
+      if (!this.renderFilters.armies) continue;
       if (engine.x < minTileX || engine.y < minTileY || engine.x > maxTileX || engine.y > maxTileY) {
         continue;
       }
@@ -964,6 +1070,7 @@ export class GameRenderer {
     }
 
     for (const creature of this.state.creatures) {
+      if (!this.renderFilters.creatures) continue;
       if (this.viewMode === "underground") continue;
       if (creature.x < minTileX || creature.y < minTileY || creature.x > maxTileX || creature.y > maxTileY) {
         continue;
@@ -977,6 +1084,15 @@ export class GameRenderer {
 
     for (const agent of this.state.agents) {
       if (this.viewMode === "underground" && !agent.underground) {
+        continue;
+      }
+      if (this.viewMode === "underground" && !this.renderFilters.underground) {
+        continue;
+      }
+      if (
+        !this.renderFilters.armies &&
+        (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage)
+      ) {
         continue;
       }
       const position = entityPosition(this.agentMotion, agent.id, agent.x, agent.y, alpha);
@@ -1320,6 +1436,9 @@ export class GameRenderer {
   }
 
   private drawCloudShadowOverlay(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number): void {
+    if (!this.renderFilters.weather) {
+      return;
+    }
     const world = this.state.world;
     if (!world) {
       return;
@@ -1331,11 +1450,11 @@ export class GameRenderer {
     const worldPxWidth = world.width * TILE_SIZE;
     const worldPxHeight = world.height * TILE_SIZE;
     for (let i = 0; i < 6; i += 1) {
-      const drift = this.state.tick * (10 + i * 1.7);
+      const drift = this.presentationClock * 160 * (0.8 + i * 0.11);
       const bandY = worldPxHeight * (0.12 + (((i * 241) % 1000) / 1000) * 0.74);
       const baseX = (((i * 977) % 4096) / 4096) * (worldPxWidth + 520);
       const cx = (baseX + drift) % (worldPxWidth + 520) - 260;
-      const cy = bandY + Math.sin(this.state.tick * 0.005 + i * 1.43) * 36;
+      const cy = bandY + Math.sin(this.presentationClock * 0.35 + i * 1.43) * 36;
       const rx = 90 + i * 28;
       const ry = 44 + i * 15;
       if (cx + rx < minPxX || cy + ry < minPxY || cx - rx > maxPxX || cy - ry > maxPxY) {
@@ -1352,6 +1471,9 @@ export class GameRenderer {
   }
 
   private drawWeatherOverlay(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number): void {
+    if (!this.renderFilters.weather) {
+      return;
+    }
     for (let weatherIndex = 0; weatherIndex < this.state.weather.length; weatherIndex += 1) {
       const cell = this.state.weather[weatherIndex]!;
       if (cell.x + cell.radius < minTileX || cell.y + cell.radius < minTileY || cell.x - cell.radius > maxTileX || cell.y - cell.radius > maxTileY) {
@@ -1373,15 +1495,15 @@ export class GameRenderer {
       this.atmosphereGraphics.drawCircle(px, py, radius);
       this.atmosphereGraphics.endFill();
       if (cell.kind === WeatherKind.Storm) {
-        this.atmosphereGraphics.beginFill(0xeaf5ff, 0.01 + ((Math.sin(this.state.tick * 0.35 + weatherIndex * 1.7) + 1) * 0.5) * 0.04);
+        this.atmosphereGraphics.beginFill(0xeaf5ff, 0.01 + ((Math.sin(this.presentationClock * 3.2 + weatherIndex * 1.7) + 1) * 0.5) * 0.04);
         this.atmosphereGraphics.drawCircle(px + radius * 0.12, py - radius * 0.1, radius * 0.66);
         this.atmosphereGraphics.endFill();
       }
 
       const particleCount = this.zoom > 1.45 ? 10 : 5;
       for (let i = 0; i < particleCount; i += 1) {
-        const angle = (i / particleCount) * Math.PI * 2 + (this.state.tick * 0.07);
-        const radial = ((i * 37 + this.state.tick * 5) % 100) / 100;
+        const angle = (i / particleCount) * Math.PI * 2 + (this.presentationClock * 0.9);
+        const radial = ((i * 37 + Math.floor(this.presentationClock * 60)) % 100) / 100;
         const offsetX = Math.cos(angle) * radius * radial * 0.9;
         const offsetY = Math.sin(angle * 1.3) * radius * radial * 0.9;
         const particleX = px + offsetX;
@@ -2485,12 +2607,24 @@ export class GameRenderer {
       this.statMarkup("Inspired", `${totalInspired}`),
       this.statMarkup("Animals", `${this.state.animals.length}`),
       this.statMarkup("Wars/Hostility", `${activeWars}`),
+      this.statMarkup("Speed", this.paused ? "Paused" : `${this.simSpeed}x`),
       this.statMarkup("Tick", `${this.state.tick}`),
     ].join("");
     const topbarMarkup = `
       <div class="topbar__controls">
         <button class="topbar__toggle ${this.viewMode === "surface" ? "is-active" : ""}" data-view-mode="surface">Surface</button>
         <button class="topbar__toggle ${this.viewMode === "underground" ? "is-active" : ""}" data-view-mode="underground">Underground</button>
+        <button class="topbar__toggle ${this.paused ? "is-active" : ""}" data-toggle-pause="1">${this.paused ? "Resume" : "Pause"}</button>
+        <button class="topbar__toggle ${this.simSpeed === 1 ? "is-active" : ""}" data-speed="1">1x</button>
+        <button class="topbar__toggle ${this.simSpeed === 2 ? "is-active" : ""}" data-speed="2">2x</button>
+        <button class="topbar__toggle ${this.simSpeed === 4 ? "is-active" : ""}" data-speed="4">4x</button>
+        <button class="topbar__toggle ${this.simSpeed === 8 ? "is-active" : ""}" data-speed="8">8x</button>
+        <button class="topbar__toggle" data-jump-event="1">Latest Event</button>
+        <button class="topbar__toggle ${this.renderFilters.armies ? "is-active" : ""}" data-filter-key="armies">Armies</button>
+        <button class="topbar__toggle ${this.renderFilters.trade ? "is-active" : ""}" data-filter-key="trade">Trade</button>
+        <button class="topbar__toggle ${this.renderFilters.weather ? "is-active" : ""}" data-filter-key="weather">Weather</button>
+        <button class="topbar__toggle ${this.renderFilters.underground ? "is-active" : ""}" data-filter-key="underground">Underground</button>
+        <button class="topbar__toggle ${this.renderFilters.creatures ? "is-active" : ""}" data-filter-key="creatures">Creatures</button>
       </div>
       <div class="topbar__stats">${statsMarkup}</div>
     `;
@@ -2504,23 +2638,30 @@ export class GameRenderer {
       : "<p>No tile selected.</p>";
 
     const sortedTribes = this.state.tribes.slice().sort((a, b) => b.population - a.population);
+    const compareTribe = this.compareTribeId !== null ? tribeById.get(this.compareTribeId) : null;
     const tribesHtml = sortedTribes
       .map(
         (tribe) => `
           <li>
-            <button class="tribe-row ${this.selectedTribeId === tribe.id ? "is-active" : ""}" data-tribe-id="${tribe.id}">
-              <span class="tribe-dot" style="background:#${tribe.color.toString(16).padStart(6, "0")}"></span>
-              <span>${RACE_NAMES[tribe.race]} ${tribe.name.split(" ").slice(-1)[0]} | ${tribe.doctrine} | ${AGE_NAMES[tribe.age as AgeType]} | Pop ${tribe.population} | Food ${tribe.food}</span>
-            </button>
+            <div class="tribe-row-wrap">
+              <button class="tribe-row ${this.selectedTribeId === tribe.id ? "is-active" : ""}" data-tribe-id="${tribe.id}">
+                <span class="tribe-dot" style="background:#${tribe.color.toString(16).padStart(6, "0")}"></span>
+                <span>${RACE_NAMES[tribe.race]} ${tribe.name.split(" ").slice(-1)[0]} | ${tribe.doctrine} | ${AGE_NAMES[tribe.age as AgeType]} | Pop ${tribe.population} | Food ${tribe.food}</span>
+              </button>
+              <button class="tribe-compare ${this.compareTribeId === tribe.id ? "is-active" : ""}" data-compare-tribe-id="${tribe.id}">Compare</button>
+            </div>
           </li>`,
       )
       .join("");
 
     const dominant = sortedTribes[0];
-    const eventsHtml = this.state.events.slice(0, 6).map((event) => `
+    const filteredEvents = this.state.events.filter((event) => this.eventKindFilter === "all" || event.kind === this.eventKindFilter);
+    const eventsHtml = filteredEvents.slice(0, 20).map((event) => `
       <li>
-        <span class="event-title">${event.title}</span>
-        <span class="event-desc">${event.description}</span>
+        <button class="event-row" data-event-index="${this.state.events.indexOf(event)}">
+          <span class="event-title">${event.title}</span>
+          <span class="event-desc">${event.description}</span>
+        </button>
       </li>
     `).join("");
     const worldPanel = `
@@ -2638,11 +2779,38 @@ export class GameRenderer {
       </section>
       <section class="panel">
         <h2>Tribes</h2>
+        ${selectedTribe && compareTribe && selectedTribe.id !== compareTribe.id ? `<div class="compare-grid">
+          <div class="compare-card">
+            <h3>${selectedTribe.name}</h3>
+            <div class="kv">
+              <strong>Pop</strong><span>${selectedTribe.population}</span>
+              <strong>Food</strong><span>${selectedTribe.food}</span>
+              <strong>Water</strong><span>${selectedTribe.water}</span>
+              <strong>Army</strong><span>${selectedTribe.armyPower}</span>
+              <strong>Research</strong><span>${selectedTribe.research}</span>
+              <strong>Morale</strong><span>${selectedTribe.morale}</span>
+            </div>
+          </div>
+          <div class="compare-card">
+            <h3>${compareTribe.name}</h3>
+            <div class="kv">
+              <strong>Pop</strong><span>${compareTribe.population}</span>
+              <strong>Food</strong><span>${compareTribe.food}</span>
+              <strong>Water</strong><span>${compareTribe.water}</span>
+              <strong>Army</strong><span>${compareTribe.armyPower}</span>
+              <strong>Research</strong><span>${compareTribe.research}</span>
+              <strong>Morale</strong><span>${compareTribe.morale}</span>
+            </div>
+          </div>
+        </div>` : ""}
         <ul class="tribe-list">${tribesHtml}</ul>
       </section>`;
     const eventsPanel = `
       <section class="panel">
         <h2>Recent Events</h2>
+        <div class="chip-list">
+          ${["all", "construction", "battle", "weather", "tribute", "creature", "delve"].map((kind) => `<button class="chip ${this.eventKindFilter === kind ? "chip--active" : ""}" data-event-filter="${kind}">${kind}</button>`).join("")}
+        </div>
         <ul class="event-list">${eventsHtml || "<li><span class='event-title'>No major events yet.</span></li>"}</ul>
       </section>
       <section class="panel">
@@ -2676,18 +2844,38 @@ export class GameRenderer {
           <strong>Horses</strong><span>${dominant.horses}</span>
         </div>` : "<p>Waiting for sim data.</p>"}
       </section>`;
+    const legendsPanel = `
+      <section class="panel">
+        <h2>Chronicle</h2>
+        <div class="kv">
+          <strong>Total Events</strong><span>${this.state.events.length}</span>
+          <strong>Latest Lead</strong><span>${dominant?.name ?? "None"}</span>
+          <strong>Known Dungeons</strong><span>${this.state.dungeons.length}</span>
+          <strong>Creatures</strong><span>${this.state.creatures.length}</span>
+        </div>
+        <ul class="event-list">${this.state.events.slice(0, 40).map((event) => `
+          <li>
+            <button class="event-row" data-event-index="${this.state.events.indexOf(event)}">
+              <span class="event-title">Y${Math.floor(event.tick / 32)} ${event.title}</span>
+              <span class="event-desc">${event.description}</span>
+            </button>
+          </li>`).join("") || "<li><span class='event-title'>History will accumulate here.</span></li>"}</ul>
+      </section>`;
     const bodyMarkup = this.sidebarTab === "inspect"
       ? `${inspectPanel}${worldPanel}`
       : this.sidebarTab === "tribes"
         ? tribesPanel
         : this.sidebarTab === "events"
           ? `${eventsPanel}${worldPanel}`
+          : this.sidebarTab === "legends"
+            ? `${legendsPanel}${worldPanel}`
           : `${worldPanel}${tribesPanel}`;
     this.sidebarScrollTopByTab[this.renderedSidebarTab] = this.sidebarBody.scrollTop;
     const sidebarTabsMarkup = `
       <button class="sidebar__tab ${this.sidebarTab === "inspect" ? "is-active" : ""}" data-tab="inspect">Inspect</button>
       <button class="sidebar__tab ${this.sidebarTab === "tribes" ? "is-active" : ""}" data-tab="tribes">Tribes</button>
       <button class="sidebar__tab ${this.sidebarTab === "events" ? "is-active" : ""}" data-tab="events">Events</button>
+      <button class="sidebar__tab ${this.sidebarTab === "legends" ? "is-active" : ""}" data-tab="legends">Legends</button>
       <button class="sidebar__tab ${this.sidebarTab === "world" ? "is-active" : ""}" data-tab="world">World</button>
     `;
     if (sidebarTabsMarkup !== this.lastSidebarTabsMarkup) {
