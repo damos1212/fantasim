@@ -117,6 +117,8 @@ type MotionState = {
   toY: number;
 };
 
+type PixelTarget = Graphics | CanvasRenderingContext2D;
+
 type RenderState = {
   world: StaticWorldData | null;
   terrain: Uint8Array | null;
@@ -217,10 +219,22 @@ function entityPosition(motion: Map<number, MotionState>, id: number, fallbackX:
   };
 }
 
-function drawPixelRect(graphics: Graphics, x: number, y: number, w: number, h: number, color: number, alpha = 1): void {
-  graphics.beginFill(color, alpha);
-  graphics.drawRect(x, y, w, h);
-  graphics.endFill();
+function colorHex(color: number): string {
+  return `#${color.toString(16).padStart(6, "0")}`;
+}
+
+function drawPixelRect(target: PixelTarget, x: number, y: number, w: number, h: number, color: number, alpha = 1): void {
+  if ("fillRect" in target) {
+    const previousAlpha = target.globalAlpha;
+    target.globalAlpha = previousAlpha * alpha;
+    target.fillStyle = colorHex(color);
+    target.fillRect(x, y, w, h);
+    target.globalAlpha = previousAlpha;
+    return;
+  }
+  target.beginFill(color, alpha);
+  target.drawRect(x, y, w, h);
+  target.endFill();
 }
 
 export class GameRenderer {
@@ -291,7 +305,7 @@ export class GameRenderer {
 
   cameraX = 0;
   cameraY = 0;
-  zoom = 0.72;
+  zoom = 1.18;
   dragging = false;
   dragMoved = false;
   lastPointer = { x: 0, y: 0 };
@@ -352,7 +366,10 @@ export class GameRenderer {
       resizeTo: window,
       antialias: false,
       backgroundAlpha: 0,
+      resolution: Math.min(window.devicePixelRatio || 1, 1.25),
     });
+
+    this.app.ticker.maxFPS = 60;
 
     this.worldContainer.addChild(this.terrainGraphics);
     this.worldContainer.addChild(this.overlayGraphics);
@@ -486,9 +503,11 @@ export class GameRenderer {
     const defaultTribe = tribes.find((tribe) => tribe.race === RaceType.Humans) ?? tribes[0];
     this.selectedTribeId = defaultTribe?.id ?? null;
     if (defaultTribe) {
+      this.zoom = 1.3;
       this.cameraX = defaultTribe.capitalX * TILE_SIZE - this.app.renderer.width / this.zoom / 2;
       this.cameraY = defaultTribe.capitalY * TILE_SIZE - this.app.renderer.height / this.zoom / 2;
     } else {
+      this.zoom = 0.92;
       this.cameraX = world.width * TILE_SIZE * 0.42;
       this.cameraY = world.height * TILE_SIZE * 0.42;
     }
@@ -690,13 +709,13 @@ export class GameRenderer {
     const minTileY = Math.max(0, Math.floor(this.cameraY / TILE_SIZE));
     const maxTileX = Math.min(world.width - 1, Math.ceil((this.cameraX + viewportWidth / this.zoom) / TILE_SIZE) + 1);
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
-    const lodStep = this.zoom < 0.42 ? 4 : this.zoom < 0.9 ? 2 : 1;
+    const lodStep = this.zoom < 0.58 ? 4 : this.zoom < 1.08 ? 2 : 1;
     const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
     const now = performance.now();
     const redrawStaticScene =
       this.staticSceneDirty ||
       this.lastStaticViewportSignature !== staticViewportSignature ||
-      (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.2 && now - this.lastStaticRenderAt > 850);
+      (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.35 && now - this.lastStaticRenderAt > 1100);
 
     this.worldContainer.scale.set(this.zoom);
     this.worldContainer.position.set(-this.cameraX * this.zoom, -this.cameraY * this.zoom);
@@ -725,7 +744,7 @@ export class GameRenderer {
           const px = x * TILE_SIZE;
           const py = y * TILE_SIZE;
           if (this.viewMode === "surface") {
-            this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep, this.zoom > 1.12);
+            this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep, this.zoom > 1.22);
           } else {
             this.drawUndergroundTile(
               px,
@@ -734,7 +753,7 @@ export class GameRenderer {
               this.state.undergroundFeature[index] as UndergroundFeatureType,
               this.state.undergroundResourceAmount[index] ?? 0,
               lodStep,
-              this.zoom > 1.08,
+              this.zoom > 1.18,
             );
           }
 
@@ -746,11 +765,11 @@ export class GameRenderer {
             }
           }
 
-          if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.08) {
+          if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.18) {
             this.drawRoadTile(px, py);
           }
 
-          if (lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.16) {
+          if (lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.28) {
             this.drawFeature(this.state.feature[index] as FeatureType, px, py, terrain);
           }
         }
@@ -764,18 +783,18 @@ export class GameRenderer {
           continue;
         }
         const tribe = tribeById.get(building.tribeId);
-        this.drawBuilding(building, tribe, this.zoom > 1.05);
+        this.drawBuilding(building, tribe, this.zoom > 1.12);
       }
       this.staticSceneDirty = false;
       this.lastStaticViewportSignature = staticViewportSignature;
       this.lastStaticRenderAt = now;
     }
 
-    if (this.viewMode === "surface" && this.zoom > 0.55 && lodStep <= 2) {
+    if (this.viewMode === "surface" && this.zoom > 0.92 && lodStep <= 2) {
       this.drawCloudShadowOverlay(minTileX, minTileY, maxTileX, maxTileY);
     }
 
-    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.02) {
+    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.24) {
       this.drawWeatherOverlay(minTileX, minTileY, maxTileX, maxTileY);
     }
 
@@ -875,7 +894,7 @@ export class GameRenderer {
       if (lodStep > 1) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
       } else {
-        this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.02);
+        this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.12);
         this.drawAgentLabel(agent, position.x, position.y);
       }
     }
@@ -1083,7 +1102,7 @@ export class GameRenderer {
     const maxPxY = (maxTileY + 1) * TILE_SIZE;
     const worldPxWidth = world.width * TILE_SIZE;
     const worldPxHeight = world.height * TILE_SIZE;
-    for (let i = 0; i < 10; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       const drift = this.state.tick * (10 + i * 1.7);
       const bandY = worldPxHeight * (0.12 + (((i * 241) % 1000) / 1000) * 0.74);
       const baseX = (((i * 977) % 4096) / 4096) * (worldPxWidth + 520);
@@ -1131,7 +1150,7 @@ export class GameRenderer {
         this.atmosphereGraphics.endFill();
       }
 
-      const particleCount = this.zoom > 1 ? 18 : 10;
+      const particleCount = this.zoom > 1.45 ? 10 : 5;
       for (let i = 0; i < particleCount; i += 1) {
         const angle = (i / particleCount) * Math.PI * 2 + (this.state.tick * 0.07);
         const radial = ((i * 37 + this.state.tick * 5) % 100) / 100;
@@ -1867,15 +1886,17 @@ export class GameRenderer {
     if (agent.carrying !== ResourceType.None) {
       drawPixelRect(this.unitGraphics, px + 11, py + 10, 3, 3, 0xf4d36c, 0.95);
     }
-    if (this.zoom > 0.95) {
+    if (this.zoom > 1.18 || this.selectedUnitId === agent.id || agent.hero) {
       drawPixelRect(this.unitGraphics, px + 3, py + 1, 10 * (agent.health / 100), 1, 0x78d67a, 0.9);
       drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
     }
     if (agent.hero || agent.role === AgentRole.Mage) {
       drawPixelRect(this.unitGraphics, px + 5, py + 0, 6, 1, agent.role === AgentRole.Mage ? 0x97bcff : 0xf0d57e, 0.9);
     }
-    this.drawTaskIndicator(agent.task, px, py - 3 - taskBob);
-    this.drawActionEffect(agent, px, py);
+    if (this.zoom > 1.16 || this.selectedUnitId === agent.id || agent.hero) {
+      this.drawTaskIndicator(agent.task, px, py - 3 - taskBob);
+      this.drawActionEffect(agent, px, py);
+    }
     if (agent.gear.rarity === "Epic" || agent.gear.rarity === "Legendary") {
       drawPixelRect(this.unitGraphics, px + 1, py + 3, 2, 2, 0xf5d36d, 0.95);
     }
@@ -2032,7 +2053,7 @@ export class GameRenderer {
   }
 
   private drawAgentLabel(agent: AgentSnapshot, tileX: number, tileY: number): void {
-    if (!(this.zoom > 1.6 || this.selectedUnitId === agent.id || agent.hero || agent.blessed || agent.gear.rarity === "Epic" || agent.gear.rarity === "Legendary")) {
+    if (!(this.zoom > 1.95 || this.selectedUnitId === agent.id || agent.hero || agent.blessed || agent.gear.rarity === "Legendary")) {
       return;
     }
     const label = agent.title ? `${agent.name} ${agent.title}` : agent.name;

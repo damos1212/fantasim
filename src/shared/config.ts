@@ -1,13 +1,13 @@
-export const WORLD_WIDTH = 1152;
-export const WORLD_HEIGHT = 1024;
+export const WORLD_WIDTH = 768;
+export const WORLD_HEIGHT = 768;
 export const CHUNK_SIZE = 32;
 export const TILE_SIZE = 16;
 
 export const INITIAL_TRIBE_COUNT = 8;
 export const INITIAL_AGENTS_PER_TRIBE = 20;
-export const INITIAL_ANIMAL_HERDS = 96;
+export const INITIAL_ANIMAL_HERDS = 72;
 
-export const SIM_TICKS_PER_SECOND = 10;
+export const SIM_TICKS_PER_SECOND = 8;
 export const SNAPSHOT_TICKS = 2;
 export const STRATEGY_TICKS = 20;
 export const YEAR_TICKS = 1200;

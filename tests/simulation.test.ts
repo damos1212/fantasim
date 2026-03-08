@@ -24,7 +24,8 @@ describe("simulation", () => {
 
     expect(snapshot.tribes.every((tribe) => tribe.age === AgeType.Primitive)).toBe(true);
     expect(snapshot.tribes.every((tribe) => !tribe.techs.includes("Modern Logistics") && !tribe.techs.includes("Airfields"))).toBe(true);
-    expect(snapshot.tribes.every((tribe) => tribe.techs.length <= 8)).toBe(true);
+    expect(snapshot.tribes.every((tribe) => tribe.techs.length <= 6)).toBe(true);
+    expect(snapshot.tribes.every((tribe) => tribe.flooded === 0)).toBe(true);
     expect(snapshot.tribes.every((tribe) =>
       snapshot.animals.some((animal) => Math.abs(animal.x - tribe.capitalX) + Math.abs(animal.y - tribe.capitalY) <= 18),
     )).toBe(true);

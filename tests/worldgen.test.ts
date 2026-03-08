@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 
-import { BiomeType } from "../src/shared/gameTypes";
+import { BiomeType, TerrainType } from "../src/shared/gameTypes";
 import { generateWorld } from "../src/sim/worldgen";
+import { indexOf } from "../src/shared/grid";
 
 function checksum(values: Uint8Array | Uint16Array): number {
   let sum = 0;
@@ -66,5 +67,57 @@ describe("world generation", () => {
     expect(archipelagoTiles).toBeGreaterThan(400);
     expect(cavernishTiles).toBeGreaterThan(180);
     expect(world.candidateStarts.length).toBeGreaterThan(8);
+  });
+
+  test("river networks are mostly connected and not dominated by stray strips", () => {
+    const world = generateWorld("river-coherence", 320, 320);
+    const directions = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+    ] as const;
+    const visited = new Uint8Array(world.width * world.height);
+    let riverTiles = 0;
+    let orphanTiles = 0;
+
+    for (let index = 0; index < world.terrain.length; index += 1) {
+      if (world.terrain[index] !== TerrainType.River || visited[index]) continue;
+      let touchesWater = false;
+      let size = 0;
+      const stack = [index];
+      visited[index] = 1;
+      while (stack.length > 0) {
+        const current = stack.pop()!;
+        size += 1;
+        const x = current % world.width;
+        const y = Math.floor(current / world.width);
+        for (const [dx, dy] of directions) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
+          const neighbor = indexOf(nx, ny, world.width);
+          const terrain = world.terrain[neighbor] as TerrainType;
+          if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow) {
+            touchesWater = true;
+          }
+          if (terrain === TerrainType.River && !visited[neighbor]) {
+            visited[neighbor] = 1;
+            stack.push(neighbor);
+          }
+        }
+      }
+      riverTiles += size;
+      if (!touchesWater) {
+        orphanTiles += size;
+      }
+    }
+
+    expect(riverTiles).toBeGreaterThan(40);
+    expect(orphanTiles / riverTiles).toBeLessThan(0.12);
   });
 });

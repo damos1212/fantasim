@@ -328,25 +328,38 @@ function markRiver(world: WorldData, x: number, y: number, width = 1): void {
 
 function carveRivers(world: WorldData, random: () => number): void {
   const heads: number[] = [];
-  const riverDirections = [
+  const directions = [
     ...CARDINALS,
     [1, 1],
     [1, -1],
     [-1, 1],
     [-1, -1],
   ] as const;
-  for (let y = 20; y < world.height - 20; y += 4) {
-    for (let x = 20; x < world.width - 20; x += 4) {
+  const hasNearbyMountain = (x: number, y: number, radius: number): boolean => {
+    for (let ny = Math.max(1, y - radius); ny <= Math.min(world.height - 2, y + radius); ny += 1) {
+      for (let nx = Math.max(1, x - radius); nx <= Math.min(world.width - 2, x + radius); nx += 1) {
+        const terrain = world.terrain[indexOf(nx, ny, world.width)] as TerrainType;
+        if (terrain === TerrainType.Mountain || terrain === TerrainType.Rocky || terrain === TerrainType.Snow) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  for (let y = 24; y < world.height - 24; y += 4) {
+    for (let x = 24; x < world.width - 24; x += 4) {
       const index = indexOf(x, y, world.width);
       if (
         world.elevation[index] > 168 &&
         world.moisture[index] > 118 &&
-        world.terrain[index] !== TerrainType.Mountain &&
+        world.terrain[index] !== TerrainType.WaterDeep &&
+        world.terrain[index] !== TerrainType.WaterShallow &&
         world.terrain[index] !== TerrainType.Lava &&
         world.terrain[index] !== TerrainType.River &&
+        hasNearbyMountain(x, y, 5) &&
         world.volcanic[index] < 155 &&
-        !hasAdjacentWater(world, x, y, 10) &&
-        random() > 0.982
+        !hasAdjacentWater(world, x, y, 12) &&
+        random() > 0.987
       ) {
         heads.push(index);
       }
@@ -358,8 +371,35 @@ function carveRivers(world: WorldData, random: () => number): void {
     [heads[i], heads[j]] = [heads[j]!, heads[i]!];
   }
 
-  const maxRivers = Math.max(16, Math.floor((world.width * world.height) / 180000));
-  const maxSteps = Math.max(220, Math.floor(Math.max(world.width, world.height) / 7));
+  if (heads.length < 6) {
+    const fallback: Array<{ index: number; score: number }> = [];
+    for (let y = 24; y < world.height - 24; y += 6) {
+      for (let x = 24; x < world.width - 24; x += 6) {
+        const index = indexOf(x, y, world.width);
+        if (
+          world.terrain[index] === TerrainType.WaterDeep ||
+          world.terrain[index] === TerrainType.WaterShallow ||
+          world.terrain[index] === TerrainType.Lava ||
+          world.terrain[index] === TerrainType.River ||
+          !hasNearbyMountain(x, y, 5) ||
+          hasAdjacentWater(world, x, y, 10)
+        ) {
+          continue;
+        }
+        fallback.push({
+          index,
+          score: world.elevation[index]! * 1.2 + world.moisture[index]! * 0.8 - world.volcanic[index]! * 0.5,
+        });
+      }
+    }
+    fallback.sort((a, b) => b.score - a.score);
+    for (const candidate of fallback.slice(0, 18)) {
+      heads.push(candidate.index);
+    }
+  }
+
+  const maxRivers = Math.max(10, Math.floor((world.width * world.height) / 240000));
+  const maxSteps = Math.max(180, Math.floor(Math.max(world.width, world.height) / 6));
   const chosenHeads: number[] = [];
   for (const head of heads) {
     if (chosenHeads.length >= maxRivers) {
@@ -367,7 +407,7 @@ function carveRivers(world: WorldData, random: () => number): void {
     }
     const hx = head % world.width;
     const hy = Math.floor(head / world.width);
-    if (chosenHeads.some((other) => manhattan(hx, hy, other % world.width, Math.floor(other / world.width)) < 36)) {
+    if (chosenHeads.some((other) => manhattan(hx, hy, other % world.width, Math.floor(other / world.width)) < 54)) {
       continue;
     }
     chosenHeads.push(head);
@@ -376,6 +416,8 @@ function carveRivers(world: WorldData, random: () => number): void {
   for (const head of chosenHeads) {
     let current = head;
     const seen = new Set<number>();
+    let previousDx = 0;
+    let previousDy = 1;
 
     for (let steps = 0; steps < maxSteps; steps += 1) {
       if (seen.has(current)) {
@@ -394,7 +436,9 @@ function carveRivers(world: WorldData, random: () => number): void {
 
       let best = current;
       let bestScore = Number.POSITIVE_INFINITY;
-      for (const [dx, dy] of riverDirections) {
+      let bestDx = 0;
+      let bestDy = 0;
+      for (const [dx, dy] of directions) {
         const nx = x + dx;
         const ny = y + dy;
         if (!inBounds(nx, ny, world.width, world.height)) {
@@ -406,23 +450,71 @@ function carveRivers(world: WorldData, random: () => number): void {
           best = neighbor;
           break;
         }
-        const diagonalPenalty = dx !== 0 && dy !== 0 ? 1.2 : 0;
-        const downhillPenalty = nextElevation > world.elevation[current]! ? 12 : 0;
-        const meanderBias = (random() - 0.5) * 1.6;
-        const score = nextElevation + diagonalPenalty + downhillPenalty + meanderBias;
+        const diagonalPenalty = dx !== 0 && dy !== 0 ? 0.8 : 0;
+        const uphillPenalty = nextElevation > world.elevation[current]! ? 24 + (nextElevation - world.elevation[current]!) * 0.9 : 0;
+        const sameDirectionBonus = dx === previousDx && dy === previousDy ? -1.4 : 0;
+        const oceanPull = (world.height - ny) * 0.015 + Math.min(nx, world.width - nx) * 0.003;
+        const meanderBias = (random() - 0.5) * 0.9;
+        const score = nextElevation + diagonalPenalty + uphillPenalty + oceanPull + meanderBias + sameDirectionBonus;
         if (score < bestScore) {
           bestScore = score;
           best = neighbor;
+          bestDx = dx;
+          bestDy = dy;
         }
       }
 
       if (best === current) {
-        if (steps > 12 && random() > 0.55) {
+        if (steps > 18 && random() > 0.72) {
           addLake(world, x, y, randInt(random, 2, 5));
         }
         break;
       }
+      previousDx = bestDx;
+      previousDy = bestDy;
       current = best;
+    }
+  }
+
+  const visited = new Uint8Array(world.width * world.height);
+  const component: number[] = [];
+  for (let index = 0; index < world.terrain.length; index += 1) {
+    if (visited[index] || world.terrain[index] !== TerrainType.River) {
+      continue;
+    }
+    component.length = 0;
+    let touchesWater = false;
+    const stack = [index];
+    visited[index] = 1;
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      component.push(current);
+      const x = current % world.width;
+      const y = Math.floor(current / world.width);
+      for (const [dx, dy] of directions) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny, world.width, world.height)) continue;
+        const neighbor = indexOf(nx, ny, world.width);
+        const terrain = world.terrain[neighbor] as TerrainType;
+        if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow) {
+          touchesWater = true;
+        }
+        if (terrain === TerrainType.River && !visited[neighbor]) {
+          visited[neighbor] = 1;
+          stack.push(neighbor);
+        }
+      }
+    }
+    if (!touchesWater && component.length < 72) {
+      for (const tile of component) {
+        if (world.feature[tile] === FeatureType.FishShoal) {
+          world.feature[tile] = FeatureType.None;
+        }
+        world.resourceType[tile] = ResourceType.None;
+        world.resourceAmount[tile] = 0;
+        classifyTerrain(world, tile);
+      }
     }
   }
 }
