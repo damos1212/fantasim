@@ -18,6 +18,18 @@ describe("simulation", () => {
     expect(sim.world.undergroundTerrain.length).toBe(768 * 768);
   });
 
+  test("starts with limited tech and nearby wildlife pressure", () => {
+    const sim = createSimulation("starting-state", { width: 768, height: 768 });
+    const snapshot = sim.snapshotNow();
+
+    expect(snapshot.tribes.every((tribe) => tribe.age === AgeType.Primitive)).toBe(true);
+    expect(snapshot.tribes.every((tribe) => !tribe.techs.includes("Modern Logistics") && !tribe.techs.includes("Airfields"))).toBe(true);
+    expect(snapshot.tribes.every((tribe) => tribe.techs.length <= 8)).toBe(true);
+    expect(snapshot.tribes.every((tribe) =>
+      snapshot.animals.some((animal) => Math.abs(animal.x - tribe.capitalX) + Math.abs(animal.y - tribe.capitalY) <= 18),
+    )).toBe(true);
+  });
+
   test("remains stable across extended ticks and progresses technology", { timeout: 20000 }, () => {
     const sim = createSimulation("long-run", { width: 768, height: 768 });
     let lastSnapshot = sim.snapshotNow();

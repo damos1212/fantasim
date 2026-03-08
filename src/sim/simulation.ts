@@ -831,7 +831,29 @@ export class Simulation {
 
   private seedAnimals(): void {
     const animalTypes = [AnimalType.Deer, AnimalType.Boar, AnimalType.Horse, AnimalType.Sheep, AnimalType.Goat];
-    for (let i = 0; i < INITIAL_ANIMAL_HERDS; i += 1) {
+    for (const tribe of this.tribes) {
+      const localHerds: AnimalType[] = [AnimalType.Deer, AnimalType.Sheep, AnimalType.Goat];
+      if (tribe.race.type === RaceType.Nomads || tribe.race.type === RaceType.Humans) {
+        localHerds.push(AnimalType.Horse);
+      }
+      if (tribe.race.type === RaceType.Orcs) {
+        localHerds.push(AnimalType.Boar);
+      }
+      for (const type of localHerds) {
+        const originX = clamp(tribe.capitalX + randInt(this.random, -12, 12), 1, this.world.width - 2);
+        const originY = clamp(tribe.capitalY + randInt(this.random, -12, 12), 1, this.world.height - 2);
+        this.animals.push({
+          id: this.nextAnimalId++,
+          type,
+          x: originX,
+          y: originY,
+          moveCooldown: randInt(this.random, 0, 7),
+        });
+      }
+    }
+
+    const roamingHerdCount = Math.max(0, INITIAL_ANIMAL_HERDS - this.animals.length);
+    for (let i = 0; i < roamingHerdCount; i += 1) {
       const candidate = chooseOne(this.random, this.world.candidateStarts);
       const type = chooseOne(this.random, animalTypes);
       this.animals.push({
@@ -3585,6 +3607,42 @@ export class Simulation {
   private generateBuildingPlans(tribe: TribeState): void {
     const population = this.populationOf(tribe.id);
     const housing = this.computeHousing(tribe.id);
+    const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
+    const lowFood = tribe.resources[ResourceType.Rations] < foodNeed;
+    const lowWater = tribe.water < Math.max(14, population * 0.5);
+    const lowWood = tribe.resources[ResourceType.Wood] < 70;
+    const lowStone = tribe.resources[ResourceType.Stone] < 48;
+    const infrastructureStable = !lowFood && !lowWater && !lowWood && !lowStone;
+
+    if (tribe.age >= AgeType.Stone && lowWater && this.buildingCount(tribe.id, BuildingType.Cistern) < 2) {
+      this.tryPlanBuilding(tribe, BuildingType.Cistern, 9);
+    }
+    if (tribe.age >= AgeType.Stone && lowFood && this.buildingCount(tribe.id, BuildingType.Farm) < 2) {
+      this.tryPlanBuilding(tribe, BuildingType.Farm, 10);
+      if (tribe.race.personality.ecology > 0.55) {
+        this.tryPlanBuilding(tribe, BuildingType.Orchard, 8);
+      }
+    }
+    if (tribe.age >= AgeType.Medieval && lowFood && hasAdjacentWater(this.world, tribe.capitalX, tribe.capitalY, 7)) {
+      if (!this.hasBuilt(tribe.id, BuildingType.Dock)) {
+        this.tryPlanBuilding(tribe, BuildingType.Dock, 9);
+      } else if (this.buildingCount(tribe.id, BuildingType.FishingHut) < 2) {
+        this.tryPlanBuilding(tribe, BuildingType.FishingHut, 8);
+      }
+    }
+    if (tribe.age >= AgeType.Stone && lowWood && this.buildingCount(tribe.id, BuildingType.LumberCamp) < 2) {
+      this.tryPlanBuilding(tribe, BuildingType.LumberCamp, 9);
+    }
+    if (tribe.age >= AgeType.Stone && lowStone && this.buildingCount(tribe.id, BuildingType.Quarry) < 2) {
+      this.tryPlanBuilding(tribe, BuildingType.Quarry, 8);
+    }
+    if (tribe.age >= AgeType.Stone && (lowFood || lowWood || lowStone) && this.buildingCount(tribe.id, BuildingType.Stockpile) < 2) {
+      this.tryPlanBuilding(tribe, BuildingType.Stockpile, 8);
+    }
+    if (tribe.age >= AgeType.Bronze && (lowFood || lowWood || lowStone || lowWater) && this.buildingCount(tribe.id, BuildingType.Warehouse) < 1) {
+      this.tryPlanBuilding(tribe, BuildingType.Warehouse, 9);
+    }
+
     if (housing < population + 2) {
       if (tribe.race.type === RaceType.Dwarves || tribe.race.type === RaceType.Darkfolk) {
         this.tryPlanBuilding(tribe, BuildingType.MountainHall, 8);
@@ -3617,19 +3675,19 @@ export class Simulation {
     if ((tribe.race.type === RaceType.Dwarves || tribe.race.type === RaceType.Darkfolk) && this.buildingCount(tribe.id, BuildingType.MountainHall) < 2) {
       this.tryPlanBuilding(tribe, BuildingType.MountainHall, 6);
     }
-    if (tribe.race.personality.ecology > 0.65 && tribe.age >= AgeType.Stone && this.buildingCount(tribe.id, BuildingType.Orchard) < 2) {
+    if (tribe.race.personality.ecology > 0.65 && tribe.age >= AgeType.Stone && infrastructureStable && this.buildingCount(tribe.id, BuildingType.Orchard) < 2) {
       this.tryPlanBuilding(tribe, BuildingType.Orchard, 5);
     }
-    if (tribe.age >= AgeType.Stone && population > 20 && !this.hasBuilt(tribe.id, BuildingType.Shrine)) {
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 20 && !this.hasBuilt(tribe.id, BuildingType.Shrine)) {
       this.tryPlanBuilding(tribe, BuildingType.Shrine, 5);
     }
-    if (tribe.age >= AgeType.Bronze && !this.hasBuilt(tribe.id, BuildingType.Workshop)) {
+    if (tribe.age >= AgeType.Bronze && infrastructureStable && !this.hasBuilt(tribe.id, BuildingType.Workshop)) {
       this.tryPlanBuilding(tribe, BuildingType.Workshop, 7);
     }
-    if (tribe.age >= AgeType.Bronze && !this.hasBuilt(tribe.id, BuildingType.School)) {
+    if (tribe.age >= AgeType.Bronze && infrastructureStable && !this.hasBuilt(tribe.id, BuildingType.School)) {
       this.tryPlanBuilding(tribe, BuildingType.School, 6);
     }
-    if (tribe.age >= AgeType.Bronze && population > 26 && !this.hasBuilt(tribe.id, BuildingType.Tavern)) {
+    if (tribe.age >= AgeType.Bronze && infrastructureStable && population > 26 && !this.hasBuilt(tribe.id, BuildingType.Tavern)) {
       this.tryPlanBuilding(tribe, BuildingType.Tavern, 5);
     }
     if (tribe.age >= AgeType.Bronze && !this.hasBuilt(tribe.id, BuildingType.Mine)) {
@@ -3641,16 +3699,16 @@ export class Simulation {
     if (tribe.age >= AgeType.Iron && (tribe.race.type === RaceType.Dwarves || tribe.race.type === RaceType.Darkfolk) && this.buildingCount(tribe.id, BuildingType.DeepMine) < 1) {
       this.tryPlanBuilding(tribe, BuildingType.DeepMine, 7);
     }
-    if (tribe.age >= AgeType.Bronze && this.meanHostility(tribe) > 20 && !this.hasBuilt(tribe.id, BuildingType.Barracks)) {
+    if (tribe.age >= AgeType.Bronze && infrastructureStable && this.meanHostility(tribe) > 20 && !this.hasBuilt(tribe.id, BuildingType.Barracks)) {
       this.tryPlanBuilding(tribe, BuildingType.Barracks, 8);
     }
     if (tribe.age >= AgeType.Iron && !this.hasBuilt(tribe.id, BuildingType.Smithy)) {
       this.tryPlanBuilding(tribe, BuildingType.Smithy, 6);
     }
-    if (tribe.age >= AgeType.Iron && this.meanHostility(tribe) > 12 && !this.hasBuilt(tribe.id, BuildingType.Armory)) {
+    if (tribe.age >= AgeType.Iron && infrastructureStable && this.meanHostility(tribe) > 12 && !this.hasBuilt(tribe.id, BuildingType.Armory)) {
       this.tryPlanBuilding(tribe, BuildingType.Armory, 7);
     }
-    if (tribe.age >= AgeType.Iron && this.buildingCount(tribe.id, BuildingType.Watchtower) < 2) {
+    if (tribe.age >= AgeType.Iron && infrastructureStable && this.meanHostility(tribe) > 8 && this.buildingCount(tribe.id, BuildingType.Watchtower) < 2) {
       this.tryPlanBuilding(tribe, BuildingType.Watchtower, 3);
     }
     if (
@@ -3732,16 +3790,33 @@ export class Simulation {
       return;
     }
 
+    const population = this.populationOf(tribe.id);
+    const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
+    const lowFood = tribe.resources[ResourceType.Rations] < foodNeed;
+    const lowWater = tribe.water < Math.max(14, population * 0.5);
+    const lowWood = tribe.resources[ResourceType.Wood] < 70;
+    const lowStone = tribe.resources[ResourceType.Stone] < 48;
+    const infrastructureStable = !lowFood && !lowWater && !lowWood && !lowStone;
+
     if (tribe.age >= AgeType.Stone) {
-      this.planFarmCanals(tribe, tribe.age >= AgeType.Iron ? 4 : 2);
+      this.planFarmCanals(tribe, lowWater ? 1 : tribe.age >= AgeType.Iron ? 3 : 1);
     }
 
     const hostility = this.meanHostility(tribe);
-    if (hostility > 10) {
-      this.planDefensiveRing(tribe, Math.min(12, 6 + Math.floor(hostility * 0.05)));
+    if (!infrastructureStable) {
+      return;
     }
-    if (hostility > 22 && tribe.age >= AgeType.Bronze) {
-      this.planOuterTrenches(tribe, 6);
+
+    const hasMilitaryAnchor =
+      this.hasBuilt(tribe.id, BuildingType.Barracks) ||
+      this.hasBuilt(tribe.id, BuildingType.Watchtower) ||
+      this.hasBuilt(tribe.id, BuildingType.Castle);
+
+    if (hostility > 14 && hasMilitaryAnchor) {
+      this.planDefensiveRing(tribe, Math.min(6, 2 + Math.floor(hostility * 0.04)));
+    }
+    if (hostility > 24 && tribe.age >= AgeType.Bronze && hasMilitaryAnchor) {
+      this.planOuterTrenches(tribe, 4);
     }
   }
 
@@ -3771,7 +3846,7 @@ export class Simulation {
     let planned = 0;
     for (let dx = -radius; dx <= radius && planned < limit; dx += 2) {
       for (const dy of [-radius, radius]) {
-        const kind = Math.abs(dx) <= 2 ? "gate" : tribe.age >= AgeType.Iron ? "stone_wall" : "palisade";
+        const kind = dx === 0 ? "gate" : tribe.age >= AgeType.Iron ? "stone_wall" : "palisade";
         if (this.canPlaceEarthwork(tribe.capitalX + dx, tribe.capitalY + dy, kind)) {
           this.enqueueEarthworkJob(tribe, tribe.capitalX + dx, tribe.capitalY + dy, kind, 6);
           planned += 1;
@@ -3780,7 +3855,7 @@ export class Simulation {
     }
     for (let dy = -radius + 2; dy <= radius - 2 && planned < limit; dy += 2) {
       for (const dx of [-radius, radius]) {
-        const kind = Math.abs(dy) <= 2 ? "gate" : tribe.age >= AgeType.Iron ? "stone_wall" : "palisade";
+        const kind = dy === 0 ? "gate" : tribe.age >= AgeType.Iron ? "stone_wall" : "palisade";
         if (this.canPlaceEarthwork(tribe.capitalX + dx, tribe.capitalY + dy, kind)) {
           this.enqueueEarthworkJob(tribe, tribe.capitalX + dx, tribe.capitalY + dy, kind, 6);
           planned += 1;
@@ -4796,143 +4871,145 @@ export class Simulation {
   }
 
   private tribeTechs(tribe: TribeState): string[] {
-    const techs = [
+    const techs = new Set<string>([
       "Shelter Craft",
       "Foraging Lore",
       "Hunting Bands",
       "Pack Hauling",
-    ];
-    if (tribe.age >= AgeType.Stone) {
-      techs.push(
-        "Stone Tools",
-        "Tree Felling",
-        "Field Farming",
-        "Orchard Keeping",
-        "Quarrying",
-        "Cisterns",
-        "Mountain Halls",
-        "Animal Pens",
-        "Smokehouses",
-        "Cart Paths",
-        "Clay Works",
-        "Defensive Ditches",
-        "Shrines",
-        "Water Catching",
-      );
+    ]);
+    const unlock = (condition: boolean, ...names: string[]) => {
+      if (!condition) return;
+      for (const name of names) {
+        techs.add(name);
+      }
+    };
+
+    unlock(tribe.age >= AgeType.Stone, "Stone Tools");
+    unlock(this.hasBuilt(tribe.id, BuildingType.LumberCamp), "Tree Felling");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Farm), "Field Farming", "Water Catching");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Orchard), "Orchard Keeping");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Quarry), "Quarrying");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Cistern), "Cisterns");
+    unlock(this.hasBuilt(tribe.id, BuildingType.MountainHall), "Mountain Halls");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Stable), "Animal Pens");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Stockpile), "Smokehouses", "Cart Paths");
+    unlock(this.resourceStored(tribe.id, ResourceType.Clay) > 10 || this.world.feature.some((feature) => feature === FeatureType.ClayDeposit), "Clay Works");
+    unlock(this.hasFeatureInTerritory(tribe.id, FeatureType.Trench), "Defensive Ditches");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Shrine), "Shrines");
+
+    unlock(this.hasBuilt(tribe.id, BuildingType.Mine), "Deep Mining");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Workshop), "Workshops", "Wheelwrighting");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Warehouse), "Warehouses", "Storehouse Logistics");
+    unlock(this.hasBuilt(tribe.id, BuildingType.School), "Schools");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Tavern), "Taverns");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Barracks), "Bronze Arms", "Barracks Training");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Armory), "Bronze Mail");
+    unlock(this.resourceStored(tribe.id, ResourceType.Livestock) >= 4, "Livestock Breeding");
+    unlock(this.buildingCount(tribe.id, BuildingType.TunnelEntrance) > 0, "Tunnel Mapping", "Dungeon Delving");
+    unlock(this.hasFeatureInTerritory(tribe.id, FeatureType.IrrigationCanal), "Canal Keeping");
+
+    unlock(this.hasBuilt(tribe.id, BuildingType.Smithy), "Iron Smithing", "Reinforced Tools");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Armory), "Heavy Armor", "Militia Drills");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Watchtower), "Watchtowers");
+    unlock(this.hasBuilt(tribe.id, BuildingType.DeepMine), "Deep Mines", "Deep Delves", "Delve Salvage");
+    unlock(this.hasBuilt(tribe.id, BuildingType.TunnelEntrance), "Tunnel Works", "Underway Patrols");
+    unlock(this.resourceStored(tribe.id, ResourceType.Horses) > 0 || this.hasBuilt(tribe.id, BuildingType.Stable), "Horse Taming");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Stable), "Mounted Patrols");
+    unlock(this.hasFeatureInTerritory(tribe.id, FeatureType.StoneWall), "Stone Forts", "Wall Masonry");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Workshop), "Guild Craft");
+    unlock(this.hasBuilt(tribe.id, BuildingType.MageTower) || this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum), "Rune Etching");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Infirmary), "Battle Surgery", "Herbal Clinics");
+    unlock(this.wagons.some((wagon) => wagon.tribeId === tribe.id), "Supply Wagons");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Cistern), "Reservoir Discipline");
+
+    unlock(this.hasBuilt(tribe.id, BuildingType.Castle), "Castle Engineering", "Knight Orders", "Fortified Gates");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Dock), "Docks", "Fishing Fleets");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Fishery), "Fisheries");
+    unlock(this.tradePartnerCount(tribe.id) > 0, "Trade Ledgers");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.Trebuchet), "Trebuchets");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.BatteringRam), "Battering Rams");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.Ballista), "Ballistae");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.SiegeTower), "Siege Towers");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Shrine), "War Banners");
+    unlock(this.dungeons.some((dungeon) => dungeon.exploredBy === tribe.id), "Relic Forging");
+    unlock(this.hasBuilt(tribe.id, BuildingType.School), "Grand Archives");
+    unlock(this.hasBuilt(tribe.id, BuildingType.MageTower), "Arcane Towers");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Infirmary), "Field Hospitals");
+    unlock(this.roadTilesForTribe(tribe.id) > 18, "Long Roads");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Warehouse), "Granary Seals");
+
+    unlock(this.hasBuilt(tribe.id, BuildingType.Foundry), "Foundries", "Gun Casting", "Bastion Guns");
+    unlock(this.resourceStored(tribe.id, ResourceType.Charcoal) > 8, "Powder Drill", "Charcoal Burning");
+    unlock(this.resourceStored(tribe.id, ResourceType.Bricks) > 6, "Brick Kilns");
+    unlock(this.wagons.some((wagon) => wagon.tribeId === tribe.id), "Shot Wagons");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.Cannon), "Smoke Screens");
+
+    unlock(this.hasBuilt(tribe.id, BuildingType.Factory), "Factories", "Machine Shops", "Mass Logistics");
+    unlock(this.hasBuilt(tribe.id, BuildingType.RailDepot), "Rail Depots", "Steel Harness");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.Mortar), "Mortar Batteries");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Infirmary), "Industrial Clinics");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Factory), "Repeater Arms");
+
+    unlock(this.hasBuilt(tribe.id, BuildingType.PowerPlant), "Power Grids", "Searchlights", "Field Radios");
+    unlock(this.hasBuilt(tribe.id, BuildingType.Airfield), "Airfields", "Aerial Recon");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.Tank), "Armored Columns", "Motorized Hauling");
+    unlock(this.siegeEngines.some((engine) => engine.tribeId === tribe.id && engine.type === SiegeEngineType.Zeppelin), "Signal Corps");
+    unlock(this.hasBuilt(tribe.id, BuildingType.PowerPlant) && this.hasBuilt(tribe.id, BuildingType.Factory), "Modern Logistics");
+
+    if (tribe.race.type === RaceType.Elves) {
+      unlock(tribe.age >= AgeType.Stone, "Grove Magic", "Living Timber", "Leaf Weaving");
+      unlock(tribe.age >= AgeType.Iron, "Moon Arrows", "Spirit Wards", "Star Gardens");
+      unlock(this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum), "Sunfire Circles", "Archmage Conclaves");
+      unlock(tribe.age >= AgeType.Modern, "Skyglass Lenses", "Canopy Beacons");
     }
-    if (tribe.age >= AgeType.Bronze) {
-      techs.push(
-        "Deep Mining",
-        "Workshops",
-        "Warehouses",
-        "Schools",
-        "Taverns",
-        "Bronze Arms",
-        "Bronze Mail",
-        "Barracks Training",
-        "Storehouse Logistics",
-        "Wheelwrighting",
-        "Livestock Breeding",
-        "Siege Timbering",
-        "Dungeon Delving",
-        "Tunnel Mapping",
-        "Canal Keeping",
-      );
+    if (tribe.race.type === RaceType.Darkfolk) {
+      unlock(tribe.age >= AgeType.Stone, "Shadow Rites", "Ash Sorcery", "Blood Oaths", "Underpaths");
+      unlock(tribe.age >= AgeType.Iron, "Dread Wards", "Nightfire", "Hex Libraries");
+      unlock(this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum), "Void Lenses", "Night Cataclysms", "Umbral Coils");
+      unlock(tribe.age >= AgeType.Modern, "Black Lantern Flight");
     }
-    if (tribe.age >= AgeType.Iron) {
-      techs.push(
-        "Iron Smithing",
-        "Heavy Armor",
-        "Watchtowers",
-        "Armories",
-        "Deep Mines",
-        "Tunnel Works",
-        "Horse Taming",
-        "Mounted Patrols",
-        "Stone Forts",
-        "Reinforced Tools",
-        "Guild Craft",
-        "Deep Delves",
-        "Delve Salvage",
-        "Underway Patrols",
-        "Rune Etching",
-        "Battle Surgery",
-        "Herbal Clinics",
-        "Supply Wagons",
-        "Militia Drills",
-        "Wall Masonry",
-        "Reservoir Discipline",
-      );
+    if (tribe.race.type === RaceType.Dwarves) {
+      unlock(tribe.age >= AgeType.Stone, "Deep Masonry", "Vault Locks", "Hall Carving");
+      unlock(tribe.age >= AgeType.Iron, "Runed Plate", "Tunnel Warfare", "Mountain Clinics", "Bolt Throwers");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Foundry), "Thunder Forges", "Breach Guns");
+      unlock(this.hasBuilt(tribe.id, BuildingType.RailDepot), "Steam Hammers", "Tunnel Rails", "Rail Carbines");
+      unlock(tribe.age >= AgeType.Modern, "Sky Dockyards");
     }
-    if (tribe.age >= AgeType.Medieval) {
-      techs.push(
-        "Castle Engineering",
-        "Fishing Fleets",
-        "Docks",
-        "Fisheries",
-        "Trade Ledgers",
-        "Trebuchets",
-        "Battering Rams",
-        "Ballistae",
-        "Siege Towers",
-        "Knight Orders",
-        "War Banners",
-        "Relic Forging",
-        "Grand Archives",
-        "Arcane Towers",
-        "Field Hospitals",
-        "Long Roads",
-        "Fortified Gates",
-        "Granary Seals",
-      );
+    if (tribe.race.type === RaceType.Orcs) {
+      unlock(tribe.age >= AgeType.Stone, "War Drums", "Brutal Charges");
+      unlock(tribe.age >= AgeType.Iron, "Ash Steel", "Siege Rush");
+      unlock(this.resourceStored(tribe.id, ResourceType.Livestock) >= 6, "War Breeding");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Smithy), "Blood Smithing");
     }
-    if (tribe.age >= AgeType.Gunpowder) {
-      techs.push(
-        "Foundries",
-        "Gun Casting",
-        "Powder Drill",
-        "Bastion Guns",
-        "Brick Kilns",
-        "Charcoal Burning",
-        "Shot Wagons",
-        "Smoke Screens",
-      );
+    if (tribe.race.type === RaceType.Humans) {
+      unlock(tribe.age >= AgeType.Stone, "Charters", "Banner Diplomacy", "Road Levies");
+      unlock(this.tradePartnerCount(tribe.id) > 0, "Civic Markets", "Mercenary Bands");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Infirmary), "Stone Hospices");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Foundry), "Arquebusiers", "Powder Trains");
+      unlock(this.hasBuilt(tribe.id, BuildingType.RailDepot), "Iron Rails", "Factory Charters", "Rifle Columns");
+      unlock(this.hasBuilt(tribe.id, BuildingType.PowerPlant), "Electric Dispatch");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Airfield), "Air Marshals");
     }
-    if (tribe.age >= AgeType.Industrial) {
-      techs.push(
-        "Factories",
-        "Rail Depots",
-        "Machine Shops",
-        "Repeater Arms",
-        "Steel Harness",
-        "Mortar Batteries",
-        "Industrial Clinics",
-        "Mass Logistics",
-      );
+    if (tribe.race.type === RaceType.Halflings) {
+      unlock(tribe.age >= AgeType.Stone, "Herbal Tonic", "Seed Banks", "Hearth Feasts");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Stable), "Pony Carts");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Orchard), "Cider Pressing");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Infirmary), "Hedgerow Medicine");
     }
-    if (tribe.age >= AgeType.Modern) {
-      techs.push(
-        "Power Grids",
-        "Airfields",
-        "Armored Columns",
-        "Signal Corps",
-        "Aerial Recon",
-        "Motorized Hauling",
-        "Searchlights",
-        "Field Radios",
-        "Modern Logistics",
-      );
+    if (tribe.race.type === RaceType.Nomads) {
+      unlock(tribe.age >= AgeType.Stone, "Dune Paths", "Water Finding", "Leatherwork");
+      unlock(this.resourceStored(tribe.id, ResourceType.Horses) > 0 || this.hasBuilt(tribe.id, BuildingType.Stable), "Skirmish Riding");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Infirmary), "Field Triage");
+      unlock(tribe.age >= AgeType.Modern, "Sky Watch");
     }
-    if (tribe.race.type === RaceType.Elves) techs.push("Grove Magic", "Moon Arrows", "Living Timber", "Spirit Wards", "Star Gardens", "Leaf Weaving", "Sunfire Circles", "Archmage Conclaves", "Skyglass Lenses", "Canopy Beacons");
-    if (tribe.race.type === RaceType.Darkfolk) techs.push("Shadow Rites", "Ash Sorcery", "Blood Oaths", "Dread Wards", "Nightfire", "Hex Libraries", "Void Lenses", "Night Cataclysms", "Umbral Coils", "Black Lantern Flight");
-    if (tribe.race.type === RaceType.Dwarves) techs.push("Deep Masonry", "Vault Locks", "Runed Plate", "Tunnel Warfare", "Mountain Clinics", "Bolt Throwers", "Hall Carving", "Thunder Forges", "Breach Guns", "Steam Hammers", "Tunnel Rails", "Rail Carbines", "Sky Dockyards");
-    if (tribe.race.type === RaceType.Darkfolk) techs.push("Underpaths");
-    if (tribe.race.type === RaceType.Orcs) techs.push("War Drums", "Brutal Charges", "Ash Steel", "Siege Rush", "War Breeding", "Blood Smithing");
-    if (tribe.race.type === RaceType.Humans) techs.push("Charters", "Civic Markets", "Mercenary Bands", "Banner Diplomacy", "Stone Hospices", "Road Levies", "Arquebusiers", "Powder Trains", "Iron Rails", "Factory Charters", "Rifle Columns", "Electric Dispatch", "Air Marshals");
-    if (tribe.race.type === RaceType.Halflings) techs.push("Herbal Tonic", "Seed Banks", "Hearth Feasts", "Pony Carts", "Cider Pressing", "Hedgerow Medicine");
-    if (tribe.race.type === RaceType.Nomads) techs.push("Dune Paths", "Skirmish Riding", "Water Finding", "Leatherwork", "Field Triage", "Sky Watch");
-    if (tribe.race.type === RaceType.Goblins) techs.push("Scrap Craft", "Trap Pits", "Night Raids", "Burrow Stores", "Sting Bows", "Rope Towers", "Spark Powder", "Crank Guns", "Smoke Mills");
-    return techs;
+    if (tribe.race.type === RaceType.Goblins) {
+      unlock(tribe.age >= AgeType.Stone, "Scrap Craft", "Trap Pits", "Night Raids");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Warehouse), "Burrow Stores");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Barracks), "Sting Bows", "Rope Towers");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Foundry), "Spark Powder", "Crank Guns", "Smoke Mills");
+    }
+
+    return Array.from(techs);
   }
 
   private scoreBuildingSite(tribe: TribeState, type: BuildingType, x: number, y: number): number {
@@ -5293,6 +5370,30 @@ export class Simulation {
 
   private hasBuilt(tribeId: number, type: BuildingType): boolean {
     return this.buildingCount(tribeId, type) > 0;
+  }
+
+  private resourceStored(tribeId: number, type: ResourceType): number {
+    return this.tribes[tribeId]?.resources[type] ?? 0;
+  }
+
+  private hasFeatureInTerritory(tribeId: number, feature: FeatureType): boolean {
+    for (let i = 0; i < this.world.feature.length; i += 1) {
+      if (this.world.owner[i] !== tribeId) continue;
+      if (this.world.feature[i] === feature) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private roadTilesForTribe(tribeId: number): number {
+    let count = 0;
+    for (let i = 0; i < this.world.road.length; i += 1) {
+      if (this.world.owner[i] === tribeId && this.world.road[i] > 0) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   private populationOf(tribeId: number): number {

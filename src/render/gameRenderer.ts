@@ -233,6 +233,7 @@ export class GameRenderer {
   readonly sidebarTabs = document.createElement("div");
   readonly sidebarBody = document.createElement("div");
   readonly minimap = document.createElement("canvas");
+  readonly minimapBackdrop = document.createElement("canvas");
   readonly loadingOverlay = document.createElement("div");
 
   readonly worldContainer = new Container();
@@ -244,6 +245,8 @@ export class GameRenderer {
   readonly selectionGraphics = new Graphics();
   readonly labelLayer = new Container();
   readonly labelSprites = new Map<number, Text>();
+  readonly labelStyleCache = new Map<string, TextStyle>();
+  readonly labelStyleKeyByAgentId = new Map<number, string>();
 
   readonly state: RenderState = {
     world: null,
@@ -312,6 +315,7 @@ export class GameRenderer {
     world: 0,
   };
   minimapDirty = true;
+  minimapTerrainDirty = true;
   lastMinimapDrawAt = 0;
   lastMinimapCameraX = Number.NaN;
   lastMinimapCameraY = Number.NaN;
@@ -331,6 +335,8 @@ export class GameRenderer {
     this.minimap.width = 360;
     this.minimap.height = 360;
     this.minimap.className = "minimap";
+    this.minimapBackdrop.width = this.minimap.width;
+    this.minimapBackdrop.height = this.minimap.height;
     this.loadingOverlay.className = "loading-overlay";
     this.loadingOverlay.innerHTML = `
       <div class="loading-overlay__panel">
@@ -368,6 +374,9 @@ export class GameRenderer {
     this.root.appendChild(this.shell);
 
     this.attachInput();
+    this.sidebarBody.addEventListener("scroll", () => {
+      this.sidebarScrollTopByTab[this.sidebarTab] = this.sidebarBody.scrollTop;
+    });
     this.sidebar.addEventListener("click", (event) => {
       const target = event.target as HTMLElement | null;
       const button = target?.closest<HTMLButtonElement>("[data-tribe-id]");
@@ -391,6 +400,7 @@ export class GameRenderer {
       const target = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-view-mode]");
       if (!target) return;
       this.viewMode = target.dataset.viewMode as ViewMode;
+      this.minimapTerrainDirty = true;
       this.updateHud();
       this.drawMinimap();
     });
@@ -412,6 +422,7 @@ export class GameRenderer {
       }
       if (event.key.toLowerCase() === "g") {
         this.viewMode = this.viewMode === "surface" ? "underground" : "surface";
+        this.minimapTerrainDirty = true;
       }
       this.updateHud();
       this.drawMinimap();
@@ -476,6 +487,7 @@ export class GameRenderer {
     this.cameraY = world.height * TILE_SIZE * 0.42;
     this.staticSceneDirty = true;
     this.minimapDirty = true;
+    this.minimapTerrainDirty = true;
     this.updateHud();
     this.drawMinimap();
   }
@@ -510,6 +522,7 @@ export class GameRenderer {
       this.labelLayer.removeChild(label);
       label.destroy();
       this.labelSprites.delete(id);
+      this.labelStyleKeyByAgentId.delete(id);
     }
 
     if (this.state.world && this.state.terrain && this.state.feature && this.state.surfaceWater && this.state.undergroundTerrain && this.state.undergroundFeature && this.state.undergroundResourceType && this.state.undergroundResourceAmount && this.state.road && this.state.owner && this.state.resourceType && this.state.resourceAmount) {
@@ -532,6 +545,7 @@ export class GameRenderer {
     this.staticSceneDirty = this.staticSceneDirty || snapshot.tileUpdates.length > 0;
     if (snapshot.tileUpdates.length > 0 || this.state.tick % 8 === 0) {
       this.minimapDirty = true;
+      this.minimapTerrainDirty = this.minimapTerrainDirty || snapshot.tileUpdates.length > 0;
     }
     this.updateHud(false);
     this.drawMinimap(false);
@@ -652,6 +666,7 @@ export class GameRenderer {
     }
 
     const alpha = clamp((performance.now() - this.lastSnapshotAt) / ((1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS), 0, 1);
+    const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
     if (this.followSelectedUnit && this.selectedUnitId !== null) {
       const followed = this.state.agents.find((agent) => agent.id === this.selectedUnitId);
       if (followed && (this.viewMode === "surface" || followed.underground)) {
@@ -674,7 +689,7 @@ export class GameRenderer {
     const redrawStaticScene =
       this.staticSceneDirty ||
       this.lastStaticViewportSignature !== staticViewportSignature ||
-      now - this.lastStaticRenderAt > 180;
+      (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.2 && now - this.lastStaticRenderAt > 850);
 
     this.worldContainer.scale.set(this.zoom);
     this.worldContainer.position.set(-this.cameraX * this.zoom, -this.cameraY * this.zoom);
@@ -717,7 +732,7 @@ export class GameRenderer {
 
           const owner = this.state.owner[index];
           if (owner >= 0 && this.viewMode === "surface") {
-            const tribe = this.state.tribes.find((entry) => entry.id === owner);
+            const tribe = tribeById.get(owner);
             if (tribe) {
               drawPixelRect(this.overlayGraphics, px, py, TILE_SIZE * lodStep, TILE_SIZE * lodStep, tribe.color, lodStep > 1 ? 0.06 : 0.08);
             }
@@ -740,7 +755,7 @@ export class GameRenderer {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        const tribe = this.state.tribes.find((entry) => entry.id === building.tribeId);
+        const tribe = tribeById.get(building.tribeId);
         this.drawBuilding(building, tribe);
       }
       this.staticSceneDirty = false;
@@ -777,7 +792,7 @@ export class GameRenderer {
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
-      const tribe = this.state.tribes.find((entry) => entry.id === boat.tribeId);
+      const tribe = tribeById.get(boat.tribeId);
       if (lodStep > 1) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
       } else {
@@ -791,7 +806,7 @@ export class GameRenderer {
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
-      const tribe = this.state.tribes.find((entry) => entry.id === wagon.tribeId);
+      const tribe = tribeById.get(wagon.tribeId);
       if (lodStep > 1) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
@@ -806,7 +821,7 @@ export class GameRenderer {
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
-      const tribe = this.state.tribes.find((entry) => entry.id === caravan.tribeId);
+      const tribe = tribeById.get(caravan.tribeId);
       this.drawCaravan(caravan, tribe?.color ?? 0xffffff, position.x, position.y);
     }
 
@@ -814,7 +829,7 @@ export class GameRenderer {
       if (engine.x < minTileX || engine.y < minTileY || engine.x > maxTileX || engine.y > maxTileY) {
         continue;
       }
-      const tribe = this.state.tribes.find((entry) => entry.id === engine.tribeId);
+      const tribe = tribeById.get(engine.tribeId);
       this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff);
     }
 
@@ -848,7 +863,7 @@ export class GameRenderer {
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
-      const tribe = this.state.tribes.find((entry) => entry.id === agent.tribeId);
+      const tribe = tribeById.get(agent.tribeId);
       if (lodStep > 1) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
       } else {
@@ -942,10 +957,6 @@ export class GameRenderer {
       case TerrainType.Ashland:
         drawPixelRect(this.terrainGraphics, px + 3, py + 10, 9, 2, 0x2b2525, 0.5);
         break;
-      case TerrainType.Lava:
-        drawPixelRect(this.terrainGraphics, px + 2, py + 6, 10, 2, 0xffaf57, 0.5);
-        drawPixelRect(this.terrainGraphics, px + 6, py + 3, 4, 9, 0xff7b41, 0.4);
-        break;
       default:
         break;
     }
@@ -979,10 +990,10 @@ export class GameRenderer {
       drawPixelRect(this.terrainGraphics, px + 4, py + 11 - ripple * 0.5, 7, 1, 0xb9e6ff, 0.14);
       drawPixelRect(this.terrainGraphics, px + 2, py + 2 + ripple * 0.3, 5, 1, 0xf4fbff, 0.08);
     } else if (terrain === TerrainType.Lava) {
-      const pulse = (Math.sin((px - py) * 0.04 + this.state.tick * 0.22) + 1) * 0.5;
-      drawPixelRect(this.terrainGraphics, px + 2, py + 4, 12, 2, lighten(0xdb5c2f, Math.floor(24 * pulse)), 0.18 + pulse * 0.1);
-      drawPixelRect(this.terrainGraphics, px + 5, py + 9, 8, 2, 0xffd272, 0.08 + pulse * 0.12);
-      drawPixelRect(this.terrainGraphics, px + 4, py + 2, 9, 1, 0xffd8a1, 0.05 + pulse * 0.08);
+      const ripple = Math.sin((px + py) * 0.04 + this.state.tick * 0.18);
+      drawPixelRect(this.terrainGraphics, px + 1, py + 5 + ripple, 13, 1, 0xffbf73, 0.18);
+      drawPixelRect(this.terrainGraphics, px + 4, py + 11 - ripple * 0.5, 7, 1, 0xff9648, 0.2);
+      drawPixelRect(this.terrainGraphics, px + 2, py + 2 + ripple * 0.3, 5, 1, 0xffe0ae, 0.12);
     }
 
     if (terrain !== TerrainType.WaterDeep && terrain !== TerrainType.WaterShallow && terrain !== TerrainType.River && terrain !== TerrainType.Lava && surfaceWater > 6) {
@@ -1049,16 +1060,27 @@ export class GameRenderer {
   }
 
   private drawCloudShadowOverlay(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number): void {
-    const viewportCenterX = (minTileX + maxTileX) * 0.5;
-    const viewportCenterY = (minTileY + maxTileY) * 0.5;
-    const radiusX = (maxTileX - minTileX) * TILE_SIZE;
-    const radiusY = (maxTileY - minTileY) * TILE_SIZE;
-    for (let i = 0; i < 5; i += 1) {
-      const drift = this.state.tick * (0.22 + i * 0.04);
-      const cx = (viewportCenterX * TILE_SIZE) + Math.sin(drift * 0.011 + i * 1.7) * radiusX * 0.44;
-      const cy = (viewportCenterY * TILE_SIZE) + Math.cos(drift * 0.008 + i * 2.1) * radiusY * 0.38;
+    const world = this.state.world;
+    if (!world) {
+      return;
+    }
+    const minPxX = minTileX * TILE_SIZE;
+    const minPxY = minTileY * TILE_SIZE;
+    const maxPxX = (maxTileX + 1) * TILE_SIZE;
+    const maxPxY = (maxTileY + 1) * TILE_SIZE;
+    const worldPxWidth = world.width * TILE_SIZE;
+    const worldPxHeight = world.height * TILE_SIZE;
+    for (let i = 0; i < 10; i += 1) {
+      const drift = this.state.tick * (10 + i * 1.7);
+      const bandY = worldPxHeight * (0.12 + (((i * 241) % 1000) / 1000) * 0.74);
+      const baseX = (((i * 977) % 4096) / 4096) * (worldPxWidth + 520);
+      const cx = (baseX + drift) % (worldPxWidth + 520) - 260;
+      const cy = bandY + Math.sin(this.state.tick * 0.005 + i * 1.43) * 36;
       const rx = 90 + i * 28;
       const ry = 44 + i * 15;
+      if (cx + rx < minPxX || cy + ry < minPxY || cx - rx > maxPxX || cy - ry > maxPxY) {
+        continue;
+      }
       const alpha = 0.02 + i * 0.004;
       this.atmosphereGraphics.beginFill(0x000000, alpha);
       this.atmosphereGraphics.drawEllipse(cx - rx * 0.32, cy + 4, rx * 0.62, ry * 0.7);
@@ -1623,22 +1645,31 @@ export class GameRenderer {
       return;
     }
     const ctx = this.minimap.getContext("2d");
+    const backdropCtx = this.minimapBackdrop.getContext("2d");
     if (!ctx) return;
     const scaleX = this.minimap.width / world.width;
     const scaleY = this.minimap.height / world.height;
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, this.minimap.width, this.minimap.height);
-    for (let y = 0; y < this.minimap.height; y += 1) {
-      for (let x = 0; x < this.minimap.width; x += 1) {
-        const worldX = Math.floor((x / this.minimap.width) * world.width);
-        const worldY = Math.floor((y / this.minimap.height) * world.height);
-        const tile = terrain[indexOf(worldX, worldY, world.width)]!;
-        const color = this.viewMode === "surface"
-          ? (TERRAIN_COLORS[tile as TerrainType] ?? 0)
-          : (UNDERGROUND_TERRAIN_COLORS[tile as UndergroundTerrainType] ?? 0);
-        ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
-        ctx.fillRect(x, y, 1, 1);
+    if (this.minimapTerrainDirty && backdropCtx) {
+      backdropCtx.imageSmoothingEnabled = false;
+      backdropCtx.clearRect(0, 0, this.minimapBackdrop.width, this.minimapBackdrop.height);
+      for (let y = 0; y < this.minimap.height; y += 1) {
+        for (let x = 0; x < this.minimap.width; x += 1) {
+          const worldX = Math.floor((x / this.minimap.width) * world.width);
+          const worldY = Math.floor((y / this.minimap.height) * world.height);
+          const tile = terrain[indexOf(worldX, worldY, world.width)]!;
+          const color = this.viewMode === "surface"
+            ? (TERRAIN_COLORS[tile as TerrainType] ?? 0)
+            : (UNDERGROUND_TERRAIN_COLORS[tile as UndergroundTerrainType] ?? 0);
+          backdropCtx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+          backdropCtx.fillRect(x, y, 1, 1);
+        }
       }
+      this.minimapTerrainDirty = false;
+    }
+    ctx.clearRect(0, 0, this.minimap.width, this.minimap.height);
+    if (backdropCtx) {
+      ctx.drawImage(this.minimapBackdrop, 0, 0);
     }
     for (const tribe of this.state.tribes) {
       ctx.fillStyle = `#${tribe.color.toString(16).padStart(6, "0")}`;
@@ -1943,12 +1974,26 @@ export class GameRenderer {
     };
   }
 
+  private labelStyleKeyForAgent(agent: AgentSnapshot): string {
+    return `${this.selectedUnitId === agent.id ? "selected" : "normal"}:${agent.hero ? "hero" : "unit"}:${agent.role}:${agent.blessed ? 1 : 0}`;
+  }
+
+  private cachedLabelStyleForAgent(agent: AgentSnapshot): TextStyle {
+    const key = this.labelStyleKeyForAgent(agent);
+    let style = this.labelStyleCache.get(key);
+    if (!style) {
+      style = new TextStyle(this.labelStyleForAgent(agent));
+      this.labelStyleCache.set(key, style);
+    }
+    return style;
+  }
+
   private labelSpriteForAgent(agent: AgentSnapshot): Text {
     let sprite = this.labelSprites.get(agent.id);
     if (!sprite) {
       sprite = new Text({
         text: "",
-        style: new TextStyle(this.labelStyleForAgent(agent)),
+        style: this.cachedLabelStyleForAgent(agent),
       });
       sprite.resolution = 2;
       sprite.eventMode = "none";
@@ -1964,8 +2009,14 @@ export class GameRenderer {
     }
     const label = agent.title ? `${agent.name} ${agent.title}` : agent.name;
     const text = this.labelSpriteForAgent(agent);
-    text.text = label;
-    text.style = new TextStyle(this.labelStyleForAgent(agent));
+    if (text.text !== label) {
+      text.text = label;
+    }
+    const styleKey = this.labelStyleKeyForAgent(agent);
+    if (this.labelStyleKeyByAgentId.get(agent.id) !== styleKey) {
+      text.style = this.cachedLabelStyleForAgent(agent);
+      this.labelStyleKeyByAgentId.set(agent.id, styleKey);
+    }
     text.x = tileX * TILE_SIZE - 1;
     text.y = tileY * TILE_SIZE - 14;
     text.visible = true;
@@ -2024,11 +2075,12 @@ export class GameRenderer {
     const totalAirfields = this.state.tribes.reduce((sum, tribe) => sum + (tribe.airfields ?? 0), 0);
     const totalTradePacts = this.state.tribes.reduce((sum, tribe) => sum + (tribe.tradePartners ?? 0), 0) / 2;
     const activeWars = this.state.tribes.flatMap((tribe) => tribe.diplomacy).filter((entry) => entry >= 4).length;
-    const selectedTribe = this.state.tribes.find((tribe) => tribe.id === this.selectedTribeId) ?? this.state.tribes[0];
+    const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
+    const selectedTribe = (this.selectedTribeId !== null ? tribeById.get(this.selectedTribeId) : undefined) ?? this.state.tribes[0];
     const selectedUnit = this.state.agents.find((agent) => agent.id === this.selectedUnitId)
       ?? (this.selection ? this.state.agents.find((agent) => Math.round(agent.x) === this.selection!.x && Math.round(agent.y) === this.selection!.y) : undefined);
     const tributeOverlord = selectedTribe?.tributeTo !== null && selectedTribe?.tributeTo !== undefined
-      ? this.state.tribes.find((tribe) => tribe.id === selectedTribe.tributeTo)
+      ? tribeById.get(selectedTribe.tributeTo)
       : null;
     const alliedNames = selectedTribe
       ? this.state.tribes
@@ -2280,10 +2332,15 @@ export class GameRenderer {
       this.lastSidebarTabsMarkup = sidebarTabsMarkup;
     }
     if (bodyMarkup !== this.lastSidebarBodyMarkup) {
+      const preservedScroll = this.sidebarTab === this.renderedSidebarTab
+        ? this.sidebarBody.scrollTop
+        : (this.sidebarScrollTopByTab[this.sidebarTab] ?? 0);
       this.sidebarBody.innerHTML = bodyMarkup;
       this.lastSidebarBodyMarkup = bodyMarkup;
-      this.sidebarBody.scrollTop = this.sidebarScrollTopByTab[this.sidebarTab] ?? 0;
       this.renderedSidebarTab = this.sidebarTab;
+      requestAnimationFrame(() => {
+        this.sidebarBody.scrollTop = preservedScroll;
+      });
     }
   }
 
