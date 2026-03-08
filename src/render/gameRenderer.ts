@@ -860,6 +860,15 @@ export class GameRenderer {
       this.lastAtmosphereViewportSignature = atmosphereViewportSignature;
     }
 
+    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.08) {
+      for (const building of this.state.buildings) {
+        if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
+          continue;
+        }
+        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.12);
+      }
+    }
+
     for (const animal of this.state.animals) {
       if (this.viewMode === "underground") continue;
       const position = entityPosition(this.animalMotion, animal.id, animal.x, animal.y, alpha);
