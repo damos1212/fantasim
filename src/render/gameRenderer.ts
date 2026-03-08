@@ -354,6 +354,9 @@ export class GameRenderer {
   staticSceneDirty = true;
   lastStaticViewportSignature = "";
   lastStaticRenderAt = 0;
+  atmosphereDirty = true;
+  lastAtmosphereRenderAt = 0;
+  lastAtmosphereViewportSignature = "";
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -560,6 +563,7 @@ export class GameRenderer {
     this.state.events = snapshot.events;
     this.state.creatures = snapshot.creatures;
     this.state.dungeons = snapshot.dungeons;
+    this.atmosphereDirty = true;
 
     const liveAgentIds = new Set(snapshot.agents.map((agent) => agent.id));
     for (const [id, label] of this.labelSprites.entries()) {
@@ -748,11 +752,16 @@ export class GameRenderer {
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
     const lodStep = this.zoom < 0.58 ? 4 : this.zoom < 1.08 ? 2 : 1;
     const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
+    const atmosphereViewportSignature = `${this.viewMode}:${Math.floor(minTileX / 8)}:${Math.floor(minTileY / 8)}:${Math.floor(maxTileX / 8)}:${Math.floor(maxTileY / 8)}:${this.zoom > 1.24 ? 1 : 0}:${this.zoom > 0.92 ? 1 : 0}`;
     const now = performance.now();
     const redrawStaticScene =
       this.staticSceneDirty ||
       this.lastStaticViewportSignature !== staticViewportSignature ||
       (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.35 && now - this.lastStaticRenderAt > 1100);
+    const redrawAtmosphere =
+      this.atmosphereDirty ||
+      this.lastAtmosphereViewportSignature !== atmosphereViewportSignature ||
+      now - this.lastAtmosphereRenderAt > 140;
 
     this.worldContainer.scale.set(this.zoom);
     this.worldContainer.position.set(-this.cameraX * this.zoom, -this.cameraY * this.zoom);
@@ -760,9 +769,10 @@ export class GameRenderer {
     if (redrawStaticScene) {
       this.terrainGraphics.clear();
       this.overlayGraphics.clear();
-      this.buildingGraphics.clear();
     }
-    this.atmosphereGraphics.clear();
+    if (redrawAtmosphere) {
+      this.atmosphereGraphics.clear();
+    }
     this.unitGraphics.clear();
     this.selectionGraphics.clear();
     for (const label of this.labelSprites.values()) {
@@ -771,28 +781,22 @@ export class GameRenderer {
 
     if (redrawStaticScene) {
       this.renderVisibleStaticChunks(minTileX, minTileY, maxTileX, maxTileY, lodStep, tribeById);
-
-      for (const building of this.state.buildings) {
-        if (this.viewMode === "underground" && building.type !== BuildingType.MountainHall && building.type !== BuildingType.TunnelEntrance && building.type !== BuildingType.DeepMine) {
-          continue;
-        }
-        if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
-          continue;
-        }
-        const tribe = tribeById.get(building.tribeId);
-        this.drawBuilding(building, tribe, this.zoom > 1.12);
-      }
       this.staticSceneDirty = false;
       this.lastStaticViewportSignature = staticViewportSignature;
       this.lastStaticRenderAt = now;
     }
 
-    if (this.viewMode === "surface" && this.zoom > 0.92 && lodStep <= 2) {
-      this.drawCloudShadowOverlay(minTileX, minTileY, maxTileX, maxTileY);
-    }
+    if (redrawAtmosphere) {
+      if (this.viewMode === "surface" && this.zoom > 0.92 && lodStep <= 2) {
+        this.drawCloudShadowOverlay(minTileX, minTileY, maxTileX, maxTileY);
+      }
 
-    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.24) {
-      this.drawWeatherOverlay(minTileX, minTileY, maxTileX, maxTileY);
+      if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.24) {
+        this.drawWeatherOverlay(minTileX, minTileY, maxTileX, maxTileY);
+      }
+      this.atmosphereDirty = false;
+      this.lastAtmosphereRenderAt = now;
+      this.lastAtmosphereViewportSignature = atmosphereViewportSignature;
     }
 
     for (const animal of this.state.animals) {
@@ -817,7 +821,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(boat.tribeId);
-      if (lodStep > 1) {
+      if (lodStep > 1 || this.zoom <= 1.22) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
       } else {
         this.drawBoat(boat, tribe?.color ?? 0xffffff, position.x, position.y);
@@ -831,7 +835,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(wagon.tribeId);
-      if (lodStep > 1) {
+      if (lodStep > 1 || this.zoom <= 1.22) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
       } else {
@@ -846,7 +850,12 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(caravan.tribeId);
-      this.drawCaravan(caravan, tribe?.color ?? 0xffffff, position.x, position.y);
+      if (lodStep > 1 || this.zoom <= 1.18) {
+        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
+        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
+      } else {
+        this.drawCaravan(caravan, tribe?.color ?? 0xffffff, position.x, position.y);
+      }
     }
 
     for (const engine of this.state.siegeEngines) {
@@ -854,7 +863,11 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(engine.tribeId);
-      this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff);
+      if (lodStep > 1 || this.zoom <= 1.18) {
+        drawPixelRect(this.unitGraphics, engine.x * TILE_SIZE + 3, engine.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
+      } else {
+        this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff);
+      }
     }
 
     for (const dungeon of this.state.dungeons) {
@@ -876,7 +889,11 @@ export class GameRenderer {
       if (creature.x < minTileX || creature.y < minTileY || creature.x > maxTileX || creature.y > maxTileY) {
         continue;
       }
-      this.drawLegendaryCreature(creature);
+      if (lodStep > 1 || this.zoom <= 1.12) {
+        drawPixelRect(this.unitGraphics, creature.x * TILE_SIZE + 3, creature.y * TILE_SIZE + 5, 10, 8, 0xd06b48, 0.85);
+      } else {
+        this.drawLegendaryCreature(creature);
+      }
     }
 
     for (const agent of this.state.agents) {
@@ -888,8 +905,11 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(agent.tribeId);
-      if (lodStep > 1) {
+      if (lodStep > 1 || this.zoom <= 1.28) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
+        if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
+          drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
+        }
       } else {
         this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.12);
         this.drawAgentLabel(agent, position.x, position.y);
@@ -1119,6 +1139,25 @@ export class GameRenderer {
     const minChunkY = Math.floor(minTileY / chunkTileSpan);
     const maxChunkX = Math.floor(maxTileX / chunkTileSpan);
     const maxChunkY = Math.floor(maxTileY / chunkTileSpan);
+    const chunkedBuildings = new Map<string, BuildingSnapshot[]>();
+
+    for (const building of this.state.buildings) {
+      if (this.viewMode === "underground" && building.type !== BuildingType.MountainHall && building.type !== BuildingType.TunnelEntrance && building.type !== BuildingType.DeepMine) {
+        continue;
+      }
+      const buildingMinChunkX = Math.floor(building.x / chunkTileSpan);
+      const buildingMinChunkY = Math.floor(building.y / chunkTileSpan);
+      const buildingMaxChunkX = Math.floor((building.x + building.width - 1) / chunkTileSpan);
+      const buildingMaxChunkY = Math.floor((building.y + building.height - 1) / chunkTileSpan);
+      for (let chunkY = buildingMinChunkY; chunkY <= buildingMaxChunkY; chunkY += 1) {
+        for (let chunkX = buildingMinChunkX; chunkX <= buildingMaxChunkX; chunkX += 1) {
+          const key = this.chunkKey(chunkX, chunkY, lodStep, this.viewMode);
+          const list = chunkedBuildings.get(key);
+          if (list) list.push(building);
+          else chunkedBuildings.set(key, [building]);
+        }
+      }
+    }
 
     for (let chunkY = minChunkY; chunkY <= maxChunkY; chunkY += 1) {
       for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
@@ -1174,6 +1213,12 @@ export class GameRenderer {
               );
             }
           }
+        }
+
+        const buildingList = chunkedBuildings.get(chunk.key) ?? [];
+        for (const building of buildingList) {
+          const tribe = tribeById.get(building.tribeId);
+          this.drawBuilding(terrainCtx, building, tribe, this.zoom > 1.12, chunk.sprite.x, chunk.sprite.y);
         }
 
         chunk.texture.update();
@@ -1339,9 +1384,9 @@ export class GameRenderer {
 
   }
 
-  private drawBuilding(building: BuildingSnapshot, tribe?: TribeSummary, detail = true): void {
-    const px = building.x * TILE_SIZE;
-    const py = building.y * TILE_SIZE;
+  private drawBuilding(target: PixelTarget, building: BuildingSnapshot, tribe?: TribeSummary, detail = true, offsetX = 0, offsetY = 0): void {
+    const px = building.x * TILE_SIZE - offsetX;
+    const py = building.y * TILE_SIZE - offsetY;
     const w = building.width * TILE_SIZE;
     const h = building.height * TILE_SIZE;
     const tribeColor = tribe?.color ?? 0xffffff;
@@ -1357,222 +1402,222 @@ export class GameRenderer {
         : materials.roof;
 
     if (!detail) {
-      drawPixelRect(this.buildingGraphics, px + 2, py + h - 1, w - 1, 2, 0x000000, this.viewMode === "surface" ? 0.1 : 0.08);
-      drawPixelRect(this.buildingGraphics, px + 1, py + 2, w - 2, h - 3, wall, 0.94);
-      drawPixelRect(this.buildingGraphics, px + 2, py + 1, w - 4, Math.max(2, Math.floor(h * 0.22)), roof, 0.96);
+      drawPixelRect(target, px + 2, py + h - 1, w - 1, 2, 0x000000, this.viewMode === "surface" ? 0.1 : 0.08);
+      drawPixelRect(target, px + 1, py + 2, w - 2, h - 3, wall, 0.94);
+      drawPixelRect(target, px + 2, py + 1, w - 4, Math.max(2, Math.floor(h * 0.22)), roof, 0.96);
       return;
     }
 
-    drawPixelRect(this.buildingGraphics, px + 2, py + h - 1, w - 1, 3, 0x000000, this.viewMode === "surface" ? 0.16 : 0.1);
+    drawPixelRect(target, px + 2, py + h - 1, w - 1, 3, 0x000000, this.viewMode === "surface" ? 0.16 : 0.1);
     if (this.viewMode === "surface" && (building.type === BuildingType.MageTower || building.type === BuildingType.ArcaneSanctum || building.type === BuildingType.Foundry || building.type === BuildingType.Factory || building.type === BuildingType.PowerPlant || building.type === BuildingType.Airfield)) {
       const glowColor =
         building.type === BuildingType.MageTower || building.type === BuildingType.ArcaneSanctum ? 0x8da7ff
         : building.type === BuildingType.PowerPlant ? 0x88d4ef
         : building.type === BuildingType.Airfield ? 0xf2ddb2
         : 0xf0ae62;
-      drawPixelRect(this.buildingGraphics, px, py + h - 2, w, 2, glowColor, 0.08);
-      drawPixelRect(this.buildingGraphics, px + 1, py + h - 4, w - 2, 2, glowColor, 0.05);
+      drawPixelRect(target, px, py + h - 2, w, 2, glowColor, 0.08);
+      drawPixelRect(target, px + 1, py + h - 4, w - 2, 2, glowColor, 0.05);
     }
-    drawPixelRect(this.buildingGraphics, px + 1, py + 3, w - 2, h - 4, wall, 0.96);
-    drawPixelRect(this.buildingGraphics, px + 2, py + 1, w - 4, Math.max(3, Math.floor(h * 0.28)), roof, 0.98);
-    drawPixelRect(this.buildingGraphics, px + 3, py + h - 6, w - 6, 2, trim, 0.45);
+    drawPixelRect(target, px + 1, py + 3, w - 2, h - 4, wall, 0.96);
+    drawPixelRect(target, px + 2, py + 1, w - 4, Math.max(3, Math.floor(h * 0.28)), roof, 0.98);
+    drawPixelRect(target, px + 3, py + h - 6, w - 6, 2, trim, 0.45);
 
     if (race === RaceType.Elves) {
-      drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 1, 2, Math.max(4, Math.floor(h * 0.22)), trim, 0.6);
-      drawPixelRect(this.buildingGraphics, px + 4, py + 4, w - 8, 1, materials.banner, 0.4);
+      drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 1, 2, Math.max(4, Math.floor(h * 0.22)), trim, 0.6);
+      drawPixelRect(target, px + 4, py + 4, w - 8, 1, materials.banner, 0.4);
     } else if (race === RaceType.Dwarves) {
-      drawPixelRect(this.buildingGraphics, px + 1, py + h - 4, w - 2, 2, 0x4a4f58, 0.65);
-      drawPixelRect(this.buildingGraphics, px + 2, py + 2, w - 4, 1, 0xd8dee4, 0.25);
+      drawPixelRect(target, px + 1, py + h - 4, w - 2, 2, 0x4a4f58, 0.65);
+      drawPixelRect(target, px + 2, py + 2, w - 4, 1, 0xd8dee4, 0.25);
     } else if (race === RaceType.Orcs) {
       for (let spike = 3; spike < w - 2; spike += 4) {
-        drawPixelRect(this.buildingGraphics, px + spike, py + 1, 1, 3, 0xc58c51, 0.9);
+        drawPixelRect(target, px + spike, py + 1, 1, 3, 0xc58c51, 0.9);
       }
     } else if (race === RaceType.Goblins) {
-      drawPixelRect(this.buildingGraphics, px + 2, py + 5, 3, 2, 0x8f9478, 0.7);
-      drawPixelRect(this.buildingGraphics, px + w - 7, py + 3, 4, 1, 0xb8ab76, 0.65);
+      drawPixelRect(target, px + 2, py + 5, 3, 2, 0x8f9478, 0.7);
+      drawPixelRect(target, px + w - 7, py + 3, 4, 1, 0xb8ab76, 0.65);
     } else if (race === RaceType.Halflings) {
-      drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + h - 7, 4, 4, 0x6c4125);
-      drawPixelRect(this.buildingGraphics, px + 3, py + 7, 2, 2, 0xffe7a9, 0.82);
-      drawPixelRect(this.buildingGraphics, px + w - 5, py + 7, 2, 2, 0xffe7a9, 0.82);
+      drawPixelRect(target, px + Math.floor(w / 2) - 2, py + h - 7, 4, 4, 0x6c4125);
+      drawPixelRect(target, px + 3, py + 7, 2, 2, 0xffe7a9, 0.82);
+      drawPixelRect(target, px + w - 5, py + 7, 2, 2, 0xffe7a9, 0.82);
     } else if (race === RaceType.Nomads) {
-      drawPixelRect(this.buildingGraphics, px + 2, py + 2, w - 4, 2, 0xe1c491, 0.42);
-      drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2), py + 3, 1, h - 6, materials.banner, 0.6);
+      drawPixelRect(target, px + 2, py + 2, w - 4, 2, 0xe1c491, 0.42);
+      drawPixelRect(target, px + Math.floor(w / 2), py + 3, 1, h - 6, materials.banner, 0.6);
     } else if (race === RaceType.Darkfolk) {
-      drawPixelRect(this.buildingGraphics, px + 3, py + 2, w - 6, 1, 0x9d87d7, 0.65);
-      drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 4, 2, h - 8, 0x46385c, 0.55);
+      drawPixelRect(target, px + 3, py + 2, w - 6, 1, 0x9d87d7, 0.65);
+      drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 4, 2, h - 8, 0x46385c, 0.55);
     } else {
-      drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2), py + 3, 1, h - 6, materials.banner, 0.55);
+      drawPixelRect(target, px + Math.floor(w / 2), py + 3, 1, h - 6, materials.banner, 0.55);
     }
 
     switch (building.type) {
       case BuildingType.House:
-        drawPixelRect(this.buildingGraphics, px + 5, py + h - 7, 4, 5, 0x2b1b14);
-        drawPixelRect(this.buildingGraphics, px + 2, py + 7, 3, 3, 0xffdf97, 0.72);
+        drawPixelRect(target, px + 5, py + h - 7, 4, 5, 0x2b1b14);
+        drawPixelRect(target, px + 2, py + 7, 3, 3, 0xffdf97, 0.72);
         break;
       case BuildingType.Farm:
       case BuildingType.Orchard:
-        drawPixelRect(this.buildingGraphics, px + 1, py + 1, w - 2, h - 2, 0x6f8f3a, 0.55);
-        drawPixelRect(this.buildingGraphics, px + 3, py + 5, w - 6, 1, 0x5c4d29, 0.72);
-        drawPixelRect(this.buildingGraphics, px + 3, py + 9, w - 6, 1, 0x5c4d29, 0.72);
+        drawPixelRect(target, px + 1, py + 1, w - 2, h - 2, 0x6f8f3a, 0.55);
+        drawPixelRect(target, px + 3, py + 5, w - 6, 1, 0x5c4d29, 0.72);
+        drawPixelRect(target, px + 3, py + 9, w - 6, 1, 0x5c4d29, 0.72);
         if (building.type === BuildingType.Orchard) {
-          drawPixelRect(this.buildingGraphics, px + 4, py + 4, 3, 3, 0x2b6836);
-          drawPixelRect(this.buildingGraphics, px + w - 7, py + h - 7, 3, 3, 0x2b6836);
+          drawPixelRect(target, px + 4, py + 4, 3, 3, 0x2b6836);
+          drawPixelRect(target, px + w - 7, py + h - 7, 3, 3, 0x2b6836);
         }
         break;
       case BuildingType.LumberCamp:
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 8, w - 6, 3, 0x855a37);
+        drawPixelRect(target, px + 3, py + h - 8, w - 6, 3, 0x855a37);
         break;
       case BuildingType.Quarry:
       case BuildingType.Mine:
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 7, w - 6, 4, 0x9098a0);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + 6, 4, 6, 0x1f2430);
+        drawPixelRect(target, px + 3, py + h - 7, w - 6, 4, 0x9098a0);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + 6, 4, 6, 0x1f2430);
         break;
       case BuildingType.Workshop:
       case BuildingType.School:
       case BuildingType.Smithy:
       case BuildingType.Armory:
-        drawPixelRect(this.buildingGraphics, px + 3, py + 5, 5, 6, 0x3a404c);
-        drawPixelRect(this.buildingGraphics, px + 5, py + 3, 2, 4, age >= AgeType.Iron ? 0xc8d2db : 0xb78c62);
+        drawPixelRect(target, px + 3, py + 5, 5, 6, 0x3a404c);
+        drawPixelRect(target, px + 5, py + 3, 2, 4, age >= AgeType.Iron ? 0xc8d2db : 0xb78c62);
         if (building.type === BuildingType.School) {
-          drawPixelRect(this.buildingGraphics, px + w - 7, py + 4, 3, 4, 0xe6e0c7, 0.85);
+          drawPixelRect(target, px + w - 7, py + 4, 3, 4, 0xe6e0c7, 0.85);
         }
         if (building.type === BuildingType.Armory) {
-          drawPixelRect(this.buildingGraphics, px + w - 7, py + 4, 3, 5, 0xb64d46, 0.85);
-          drawPixelRect(this.buildingGraphics, px + w - 6, py + 5, 1, 4, 0xe8e4d6, 0.85);
+          drawPixelRect(target, px + w - 7, py + 4, 3, 5, 0xb64d46, 0.85);
+          drawPixelRect(target, px + w - 6, py + 5, 1, 4, 0xe8e4d6, 0.85);
         }
         if (building.type === BuildingType.Smithy || building.type === BuildingType.Armory) {
-          drawPixelRect(this.buildingGraphics, px + w - 6, py + h - 6, 2, 2, 0xffc57e, 0.5);
+          drawPixelRect(target, px + w - 6, py + h - 6, 2, 2, 0xffc57e, 0.5);
         }
         break;
       case BuildingType.Dock:
       case BuildingType.FishingHut:
       case BuildingType.Fishery:
-        drawPixelRect(this.buildingGraphics, px + 2, py + h - 5, w - 4, 3, 0x6b4f34);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2), py + 2, 1, h - 4, trim);
+        drawPixelRect(target, px + 2, py + h - 5, w - 4, 3, 0x6b4f34);
+        drawPixelRect(target, px + Math.floor(w / 2), py + 2, 1, h - 4, trim);
         if (building.type === BuildingType.Fishery) {
-          drawPixelRect(this.buildingGraphics, px + 3, py + 4, w - 6, 2, 0xa7d7eb, 0.7);
+          drawPixelRect(target, px + 3, py + 4, w - 6, 2, 0xa7d7eb, 0.7);
         }
         break;
       case BuildingType.Warehouse:
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 8, w - 6, 5, 0x936b40);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 5, 4, 3, 0xc9b07a, 0.85);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 5, 4, 3, 0xc9b07a, 0.85);
+        drawPixelRect(target, px + 3, py + h - 8, w - 6, 5, 0x936b40);
+        drawPixelRect(target, px + 4, py + 5, 4, 3, 0xc9b07a, 0.85);
+        drawPixelRect(target, px + w - 8, py + 5, 4, 3, 0xc9b07a, 0.85);
         break;
       case BuildingType.Cistern:
-        drawPixelRect(this.buildingGraphics, px + 3, py + 5, w - 6, h - 7, 0x6f7d88, 0.9);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 6, w - 8, h - 9, 0x4b94b7, 0.85);
-        drawPixelRect(this.buildingGraphics, px + 5, py + 7, w - 10, 1, 0xa7dbef, 0.65);
+        drawPixelRect(target, px + 3, py + 5, w - 6, h - 7, 0x6f7d88, 0.9);
+        drawPixelRect(target, px + 4, py + 6, w - 8, h - 9, 0x4b94b7, 0.85);
+        drawPixelRect(target, px + 5, py + 7, w - 10, 1, 0xa7dbef, 0.65);
         break;
       case BuildingType.Stable:
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 8, w - 6, 5, 0x7e5b36);
+        drawPixelRect(target, px + 3, py + h - 8, w - 6, 5, 0x7e5b36);
         break;
       case BuildingType.Barracks:
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 4, 2, h - 8, materials.banner);
-        drawPixelRect(this.buildingGraphics, px + w - 6, py + 5, 3, 3, 0xf6efe5, 0.68);
+        drawPixelRect(target, px + w - 8, py + 4, 2, h - 8, materials.banner);
+        drawPixelRect(target, px + w - 6, py + 5, 3, 3, 0xf6efe5, 0.68);
         break;
       case BuildingType.Watchtower:
-        drawPixelRect(this.buildingGraphics, px + 4, py + 4, w - 8, h - 8, 0xd7dee7, 0.75);
+        drawPixelRect(target, px + 4, py + 4, w - 8, h - 8, 0xd7dee7, 0.75);
         break;
       case BuildingType.MountainHall:
-        drawPixelRect(this.buildingGraphics, px + 1, py + 3, w - 2, h - 3, 0x5d646b, 0.96);
-        drawPixelRect(this.buildingGraphics, px + 3, py + 5, w - 6, h - 7, 0x30353b, 0.9);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + h - 6, 4, 4, 0x1a1e23, 0.95);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 3, py + h - 8, 6, 2, materials.banner, 0.75);
-        drawPixelRect(this.buildingGraphics, px + 2, py + 2, w - 4, 1, 0xcfd6dd, 0.35);
+        drawPixelRect(target, px + 1, py + 3, w - 2, h - 3, 0x5d646b, 0.96);
+        drawPixelRect(target, px + 3, py + 5, w - 6, h - 7, 0x30353b, 0.9);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + h - 6, 4, 4, 0x1a1e23, 0.95);
+        drawPixelRect(target, px + Math.floor(w / 2) - 3, py + h - 8, 6, 2, materials.banner, 0.75);
+        drawPixelRect(target, px + 2, py + 2, w - 4, 1, 0xcfd6dd, 0.35);
         break;
       case BuildingType.DeepMine:
-        drawPixelRect(this.buildingGraphics, px + 2, py + 4, w - 4, h - 4, 0x545b61, 0.95);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + 4, 4, h - 5, 0x1a1f24, 0.95);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 2, 2, 3, 0xc9b07a, 0.85);
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 4, w - 6, 1, 0x8f98a0, 0.45);
+        drawPixelRect(target, px + 2, py + 4, w - 4, h - 4, 0x545b61, 0.95);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + 4, 4, h - 5, 0x1a1f24, 0.95);
+        drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 2, 2, 3, 0xc9b07a, 0.85);
+        drawPixelRect(target, px + 3, py + h - 4, w - 6, 1, 0x8f98a0, 0.45);
         break;
       case BuildingType.TunnelEntrance:
-        drawPixelRect(this.buildingGraphics, px + 2, py + 5, w - 4, h - 5, 0x5d646b, 0.92);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 7, w - 8, h - 8, 0x171b20, 0.95);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 3, py + 4, 6, 2, materials.banner, 0.75);
-        drawPixelRect(this.buildingGraphics, px + 3, py + 3, w - 6, 1, 0xcfd6dd, 0.35);
+        drawPixelRect(target, px + 2, py + 5, w - 4, h - 5, 0x5d646b, 0.92);
+        drawPixelRect(target, px + 4, py + 7, w - 8, h - 8, 0x171b20, 0.95);
+        drawPixelRect(target, px + Math.floor(w / 2) - 3, py + 4, 6, 2, materials.banner, 0.75);
+        drawPixelRect(target, px + 3, py + 3, w - 6, 1, 0xcfd6dd, 0.35);
         break;
       case BuildingType.Shrine:
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + 4, 4, h - 8, 0xe6dfd0, 0.85);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2), py + 2, 1, h - 4, 0xd3b364, 0.85);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 3, py + 5, 6, 1, 0xd3b364, 0.85);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + 4, 4, h - 8, 0xe6dfd0, 0.85);
+        drawPixelRect(target, px + Math.floor(w / 2), py + 2, 1, h - 4, 0xd3b364, 0.85);
+        drawPixelRect(target, px + Math.floor(w / 2) - 3, py + 5, 6, 1, 0xd3b364, 0.85);
         break;
       case BuildingType.Tavern:
-        drawPixelRect(this.buildingGraphics, px + 4, py + 4, w - 8, h - 8, 0x6c4125, 0.8);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 3, py + 3, 6, 2, 0xb23c30, 0.9);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + 4, 4, 1, 0xf5e5c0, 0.7);
+        drawPixelRect(target, px + 4, py + 4, w - 8, h - 8, 0x6c4125, 0.8);
+        drawPixelRect(target, px + Math.floor(w / 2) - 3, py + 3, 6, 2, 0xb23c30, 0.9);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + 4, 4, 1, 0xf5e5c0, 0.7);
         break;
       case BuildingType.Infirmary:
-        drawPixelRect(this.buildingGraphics, px + 4, py + 4, w - 8, h - 8, 0xf0e7dc, 0.8);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 4, 2, h - 8, 0xc84f54, 0.92);
-        drawPixelRect(this.buildingGraphics, px + 4, py + Math.floor(h / 2) - 1, w - 8, 2, 0xc84f54, 0.92);
+        drawPixelRect(target, px + 4, py + 4, w - 8, h - 8, 0xf0e7dc, 0.8);
+        drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 4, 2, h - 8, 0xc84f54, 0.92);
+        drawPixelRect(target, px + 4, py + Math.floor(h / 2) - 1, w - 8, 2, 0xc84f54, 0.92);
         break;
       case BuildingType.MageTower:
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 3, py + 3, 6, h - 6, 0x3b3552, 0.92);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 1, 2, 3, 0x9fb7ff, 0.95);
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 6, w - 6, 2, 0x8b73c8, 0.8);
+        drawPixelRect(target, px + Math.floor(w / 2) - 3, py + 3, 6, h - 6, 0x3b3552, 0.92);
+        drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 1, 2, 3, 0x9fb7ff, 0.95);
+        drawPixelRect(target, px + 3, py + h - 6, w - 6, 2, 0x8b73c8, 0.8);
         break;
       case BuildingType.ArcaneSanctum:
-        drawPixelRect(this.buildingGraphics, px + 3, py + 4, w - 6, h - 6, 0x312b48, 0.95);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 4, py + 2, 8, 2, 0x8da7ff, 0.92);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + 5, 4, h - 10, 0x5c4fa0, 0.92);
-        drawPixelRect(this.buildingGraphics, px + 4, py + h - 6, w - 8, 2, 0xb58cff, 0.75);
-        drawPixelRect(this.buildingGraphics, px + 5, py + 5, 2, 2, 0xe9efff, 0.8);
-        drawPixelRect(this.buildingGraphics, px + w - 7, py + 5, 2, 2, 0xe9efff, 0.8);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 1, 2, h - 2, 0xc9d6ff, 0.12);
+        drawPixelRect(target, px + 3, py + 4, w - 6, h - 6, 0x312b48, 0.95);
+        drawPixelRect(target, px + Math.floor(w / 2) - 4, py + 2, 8, 2, 0x8da7ff, 0.92);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + 5, 4, h - 10, 0x5c4fa0, 0.92);
+        drawPixelRect(target, px + 4, py + h - 6, w - 8, 2, 0xb58cff, 0.75);
+        drawPixelRect(target, px + 5, py + 5, 2, 2, 0xe9efff, 0.8);
+        drawPixelRect(target, px + w - 7, py + 5, 2, 2, 0xe9efff, 0.8);
+        drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 1, 2, h - 2, 0xc9d6ff, 0.12);
         break;
       case BuildingType.Foundry:
-        drawPixelRect(this.buildingGraphics, px + 3, py + 5, w - 6, h - 6, 0x4c4640, 0.95);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 3, 4, 5, 0x8f989f, 0.88);
-        drawPixelRect(this.buildingGraphics, px + w - 7, py + 3, 3, 6, 0x40372e, 0.92);
-        drawPixelRect(this.buildingGraphics, px + w - 7, py + 2, 3, 2, 0xb44e36, 0.9);
-        drawPixelRect(this.buildingGraphics, px + 4, py + h - 5, w - 8, 1, 0xd29a54, 0.65);
+        drawPixelRect(target, px + 3, py + 5, w - 6, h - 6, 0x4c4640, 0.95);
+        drawPixelRect(target, px + 4, py + 3, 4, 5, 0x8f989f, 0.88);
+        drawPixelRect(target, px + w - 7, py + 3, 3, 6, 0x40372e, 0.92);
+        drawPixelRect(target, px + w - 7, py + 2, 3, 2, 0xb44e36, 0.9);
+        drawPixelRect(target, px + 4, py + h - 5, w - 8, 1, 0xd29a54, 0.65);
         break;
       case BuildingType.Factory:
-        drawPixelRect(this.buildingGraphics, px + 2, py + 5, w - 4, h - 5, 0x55504a, 0.96);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 3, 4, 6, 0x737d86, 0.9);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 3, 4, 7, 0x3a332d, 0.92);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 2, 4, 2, 0xcf6d43, 0.9);
-        drawPixelRect(this.buildingGraphics, px + 4, py + h - 6, w - 8, 2, 0xd5a45a, 0.75);
-        drawPixelRect(this.buildingGraphics, px + 5, py + 7, 3, 2, 0xcfd8e0, 0.75);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 8, 3, 2, 0xcfd8e0, 0.75);
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 8, w - 6, 1, 0xffd28d, 0.18);
+        drawPixelRect(target, px + 2, py + 5, w - 4, h - 5, 0x55504a, 0.96);
+        drawPixelRect(target, px + 4, py + 3, 4, 6, 0x737d86, 0.9);
+        drawPixelRect(target, px + w - 8, py + 3, 4, 7, 0x3a332d, 0.92);
+        drawPixelRect(target, px + w - 8, py + 2, 4, 2, 0xcf6d43, 0.9);
+        drawPixelRect(target, px + 4, py + h - 6, w - 8, 2, 0xd5a45a, 0.75);
+        drawPixelRect(target, px + 5, py + 7, 3, 2, 0xcfd8e0, 0.75);
+        drawPixelRect(target, px + w - 8, py + 8, 3, 2, 0xcfd8e0, 0.75);
+        drawPixelRect(target, px + 3, py + h - 8, w - 6, 1, 0xffd28d, 0.18);
         break;
       case BuildingType.RailDepot:
-        drawPixelRect(this.buildingGraphics, px + 2, py + 6, w - 4, h - 6, 0x6a5641, 0.95);
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 5, w - 6, 2, 0x45484f, 0.92);
-        drawPixelRect(this.buildingGraphics, px + 4, py + h - 7, w - 8, 1, 0xb8c1ca, 0.75);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 4, 4, 3, tribeColor, 0.78);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 4, 4, 3, 0xd9bf84, 0.85);
+        drawPixelRect(target, px + 2, py + 6, w - 4, h - 6, 0x6a5641, 0.95);
+        drawPixelRect(target, px + 3, py + h - 5, w - 6, 2, 0x45484f, 0.92);
+        drawPixelRect(target, px + 4, py + h - 7, w - 8, 1, 0xb8c1ca, 0.75);
+        drawPixelRect(target, px + 4, py + 4, 4, 3, tribeColor, 0.78);
+        drawPixelRect(target, px + w - 8, py + 4, 4, 3, 0xd9bf84, 0.85);
         break;
       case BuildingType.PowerPlant:
-        drawPixelRect(this.buildingGraphics, px + 2, py + 5, w - 4, h - 5, 0x4d5258, 0.96);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 2, 4, 7, 0x7f8992, 0.92);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 1, 4, 8, 0x6e757d, 0.92);
-        drawPixelRect(this.buildingGraphics, px + 5, py + 3, 2, 2, 0xcfd8e0, 0.82);
-        drawPixelRect(this.buildingGraphics, px + w - 7, py + 2, 2, 2, 0xcfd8e0, 0.82);
-        drawPixelRect(this.buildingGraphics, px + 4, py + h - 6, w - 8, 2, 0x89d2f5, 0.72);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 2, py + h - 9, 4, 2, 0xf1dc89, 0.78);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 1, 4, 2, 0xdce8f0, 0.22);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py, 4, 2, 0xdce8f0, 0.18);
+        drawPixelRect(target, px + 2, py + 5, w - 4, h - 5, 0x4d5258, 0.96);
+        drawPixelRect(target, px + 4, py + 2, 4, 7, 0x7f8992, 0.92);
+        drawPixelRect(target, px + w - 8, py + 1, 4, 8, 0x6e757d, 0.92);
+        drawPixelRect(target, px + 5, py + 3, 2, 2, 0xcfd8e0, 0.82);
+        drawPixelRect(target, px + w - 7, py + 2, 2, 2, 0xcfd8e0, 0.82);
+        drawPixelRect(target, px + 4, py + h - 6, w - 8, 2, 0x89d2f5, 0.72);
+        drawPixelRect(target, px + Math.floor(w / 2) - 2, py + h - 9, 4, 2, 0xf1dc89, 0.78);
+        drawPixelRect(target, px + 4, py + 1, 4, 2, 0xdce8f0, 0.22);
+        drawPixelRect(target, px + w - 8, py, 4, 2, 0xdce8f0, 0.18);
         break;
       case BuildingType.Airfield:
-        drawPixelRect(this.buildingGraphics, px + 2, py + h - 7, w - 4, 4, 0x626d76, 0.94);
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 6, w - 6, 2, 0x89939b, 0.78);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 5, py + 4, 10, 4, 0xb7c1ca, 0.9);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 2, 2, 8, tribeColor, 0.8);
-        drawPixelRect(this.buildingGraphics, px + 4, py + 5, 4, 1, 0xe7eef4, 0.88);
-        drawPixelRect(this.buildingGraphics, px + w - 8, py + 5, 4, 1, 0xe7eef4, 0.88);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 6, py + h - 8, 12, 1, 0xf5ead0, 0.5);
-        drawPixelRect(this.buildingGraphics, px + 3, py + h - 5, 2, 1, 0xf6f0cf, 0.6);
-        drawPixelRect(this.buildingGraphics, px + w - 5, py + h - 5, 2, 1, 0xf6f0cf, 0.6);
+        drawPixelRect(target, px + 2, py + h - 7, w - 4, 4, 0x626d76, 0.94);
+        drawPixelRect(target, px + 3, py + h - 6, w - 6, 2, 0x89939b, 0.78);
+        drawPixelRect(target, px + Math.floor(w / 2) - 5, py + 4, 10, 4, 0xb7c1ca, 0.9);
+        drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 2, 2, 8, tribeColor, 0.8);
+        drawPixelRect(target, px + 4, py + 5, 4, 1, 0xe7eef4, 0.88);
+        drawPixelRect(target, px + w - 8, py + 5, 4, 1, 0xe7eef4, 0.88);
+        drawPixelRect(target, px + Math.floor(w / 2) - 6, py + h - 8, 12, 1, 0xf5ead0, 0.5);
+        drawPixelRect(target, px + 3, py + h - 5, 2, 1, 0xf6f0cf, 0.6);
+        drawPixelRect(target, px + w - 5, py + h - 5, 2, 1, 0xf6f0cf, 0.6);
         break;
       case BuildingType.Castle:
-        drawPixelRect(this.buildingGraphics, px + 2, py + 2, 5, 5, 0xc7d0d8);
-        drawPixelRect(this.buildingGraphics, px + w - 7, py + 2, 5, 5, 0xc7d0d8);
-        drawPixelRect(this.buildingGraphics, px + 2, py + h - 7, 5, 5, 0xc7d0d8);
-        drawPixelRect(this.buildingGraphics, px + w - 7, py + h - 7, 5, 5, 0xc7d0d8);
-        drawPixelRect(this.buildingGraphics, px + Math.floor(w / 2) - 1, py + 5, 2, h - 10, materials.banner, 0.7);
+        drawPixelRect(target, px + 2, py + 2, 5, 5, 0xc7d0d8);
+        drawPixelRect(target, px + w - 7, py + 2, 5, 5, 0xc7d0d8);
+        drawPixelRect(target, px + 2, py + h - 7, 5, 5, 0xc7d0d8);
+        drawPixelRect(target, px + w - 7, py + h - 7, 5, 5, 0xc7d0d8);
+        drawPixelRect(target, px + Math.floor(w / 2) - 1, py + 5, 2, h - 10, materials.banner, 0.7);
         break;
       default:
         break;
