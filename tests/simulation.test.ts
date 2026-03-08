@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createSimulation } from "../src/sim/simulation";
 import { INITIAL_AGENTS_PER_TRIBE, INITIAL_TRIBE_COUNT } from "../src/shared/config";
-import { AgentRole, AgeType, BuildingType } from "../src/shared/gameTypes";
+import { AgentRole, AgeType, BuildingType, ResourceType } from "../src/shared/gameTypes";
 
 describe("simulation", () => {
   test("seeds tribes, buildings, and agents", () => {
@@ -29,6 +29,13 @@ describe("simulation", () => {
     expect(snapshot.tribes.every((tribe) =>
       snapshot.animals.some((animal) => Math.abs(animal.x - tribe.capitalX) + Math.abs(animal.y - tribe.capitalY) <= 18),
     )).toBe(true);
+    expect(sim.tribes.every((tribe) =>
+      tribe.water >= 30 &&
+      tribe.resources[ResourceType.Clay] >= 10 &&
+      tribe.resources[ResourceType.StoneTools] >= 10 &&
+      tribe.resources[ResourceType.BasicWeapons] >= 10 &&
+      tribe.resources[ResourceType.BasicArmor] >= 8,
+    )).toBe(true);
   });
 
   test("primitive tribes start with a workable specialist mix and starter gear", () => {
@@ -50,6 +57,19 @@ describe("simulation", () => {
       expect(roleCounts.get(AgentRole.Soldier) ?? 0).toBeGreaterThanOrEqual(2);
       expect(tribeAgents.every((agent) => agent.gear.weapon.length > 0 && agent.gear.armor.length > 0)).toBe(true);
     }
+  });
+
+  test("construction is staged and does not complete instantly", () => {
+    const sim = createSimulation("construction-pacing", { width: 768, height: 768 });
+    const initialBuildingCount = sim.buildings.length;
+
+    for (let i = 0; i < 25; i += 1) {
+      sim.tick();
+    }
+
+    const activeBuildJobs = sim.jobs.filter((job) => job.kind === "build");
+    expect(activeBuildJobs.length).toBeGreaterThan(0);
+    expect(sim.buildings.length).toBeLessThan(initialBuildingCount + INITIAL_TRIBE_COUNT * 3);
   });
 
   test("remains stable across extended ticks and progresses technology", { timeout: 20000 }, () => {

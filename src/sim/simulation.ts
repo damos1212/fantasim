@@ -592,6 +592,13 @@ function buildingCenter(building: BuildingState): { x: number; y: number } {
   };
 }
 
+function buildingWorkTicks(type: BuildingType): number {
+  const def = getBuildingDef(type);
+  const footprint = def.size[0] * def.size[1];
+  const costWeight = Object.values(def.cost).reduce((sum, value) => sum + (value ?? 0), 0);
+  return Math.max(16, Math.round(10 + footprint * 1.6 + costWeight * 0.18));
+}
+
 export class Simulation {
   readonly seed: string;
   readonly random: () => number;
@@ -763,10 +770,14 @@ export class Simulation {
 
       tribe.resources[ResourceType.Wood] = 90;
       tribe.resources[ResourceType.Stone] = 55;
+      tribe.resources[ResourceType.Grain] = 36;
       tribe.resources[ResourceType.Clay] = 10;
       tribe.resources[ResourceType.Rations] = 120;
       tribe.resources[ResourceType.Berries] = 45;
       tribe.resources[ResourceType.Meat] = 35;
+      tribe.resources[ResourceType.StoneTools] = 10;
+      tribe.resources[ResourceType.BasicWeapons] = 10;
+      tribe.resources[ResourceType.BasicArmor] = 8;
 
       this.tribes.push(tribe);
 
@@ -2537,7 +2548,7 @@ export class Simulation {
             kind: "build",
             targetX: job.x,
             targetY: job.y,
-            workLeft: 14,
+            workLeft: buildingWorkTicks((job.payload as BuildPayload).buildingType),
             payload: job.payload as BuildPayload,
           };
         case "earthwork":

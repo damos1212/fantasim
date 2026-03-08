@@ -1,5 +1,6 @@
 import { DEFAULT_WORLD_SEED } from "../shared/config";
 import { InitMessage, WorldMessage } from "../shared/gameTypes";
+import { createRuntimeSeed } from "../shared/seed";
 import { GameRenderer } from "../render/gameRenderer";
 
 export async function boot(): Promise<void> {
@@ -28,7 +29,7 @@ export async function boot(): Promise<void> {
 
   const initMessage: InitMessage = {
     type: "init",
-    seed: DEFAULT_WORLD_SEED,
+    seed: createRuntimeSeed() || DEFAULT_WORLD_SEED,
   };
   worker.postMessage(initMessage);
 }
