@@ -134,6 +134,11 @@ type StaticChunkCache = {
   dirty: boolean;
 };
 
+type IconSpriteState = {
+  sprite: Sprite;
+  textureKey: string;
+};
+
 type RenderState = {
   world: StaticWorldData | null;
   terrain: Uint8Array | null;
@@ -271,6 +276,7 @@ export class GameRenderer {
   readonly overlayGraphics = new Graphics();
   readonly buildingGraphics = new Graphics();
   readonly atmosphereGraphics = new Graphics();
+  readonly iconLayer = new Container();
   readonly unitGraphics = new Graphics();
   readonly selectionGraphics = new Graphics();
   readonly labelLayer = new Container();
@@ -278,6 +284,8 @@ export class GameRenderer {
   readonly labelStyleCache = new Map<string, TextStyle>();
   readonly labelStyleKeyByAgentId = new Map<number, string>();
   readonly staticChunks = new Map<string, StaticChunkCache>();
+  readonly iconTextures = new Map<string, Texture>();
+  readonly iconSprites = new Map<string, IconSpriteState>();
 
   readonly state: RenderState = {
     world: null,
@@ -396,6 +404,7 @@ export class GameRenderer {
     this.worldContainer.addChild(this.overlayGraphics);
     this.worldContainer.addChild(this.buildingGraphics);
     this.worldContainer.addChild(this.atmosphereGraphics);
+    this.worldContainer.addChild(this.iconLayer);
     this.worldContainer.addChild(this.unitGraphics);
     this.worldContainer.addChild(this.selectionGraphics);
     this.worldContainer.addChild(this.labelLayer);
@@ -504,6 +513,7 @@ export class GameRenderer {
 
   setWorld(world: StaticWorldData, tribes: TribeSummary[]): void {
     this.clearStaticChunks();
+    this.clearIconSprites();
     this.state.world = world;
     this.state.terrain = world.terrain.slice();
     this.state.elevation = world.elevation.slice();
@@ -624,6 +634,18 @@ export class GameRenderer {
       chunk.texture.destroy(true);
     }
     this.staticChunks.clear();
+  }
+
+  private clearIconSprites(): void {
+    for (const state of this.iconSprites.values()) {
+      this.iconLayer.removeChild(state.sprite);
+      state.sprite.destroy();
+    }
+    this.iconSprites.clear();
+    for (const texture of this.iconTextures.values()) {
+      texture.destroy(true);
+    }
+    this.iconTextures.clear();
   }
 
   private markAllStaticChunksDirty(): void {
@@ -1096,8 +1118,8 @@ export class GameRenderer {
     return `${viewMode}:${lodStep}:${chunkX}:${chunkY}`;
   }
 
-  private chunkPixelSize(): number {
-    return STATIC_CHUNK_TILES * TILE_SIZE;
+  private chunkPixelSize(lodStep = 1): number {
+    return STATIC_CHUNK_TILES * TILE_SIZE * lodStep;
   }
 
   private staticChunkFor(chunkX: number, chunkY: number, lodStep: number, viewMode: ViewMode): StaticChunkCache {
@@ -1107,8 +1129,8 @@ export class GameRenderer {
       return existing;
     }
     const canvas = document.createElement("canvas");
-    canvas.width = this.chunkPixelSize();
-    canvas.height = this.chunkPixelSize();
+    canvas.width = this.chunkPixelSize(lodStep);
+    canvas.height = this.chunkPixelSize(lodStep);
     const context = canvas.getContext("2d");
     if (!context) {
       throw new Error("Failed to create static chunk render context");
@@ -1116,8 +1138,8 @@ export class GameRenderer {
     context.imageSmoothingEnabled = false;
     const texture = Texture.from(canvas);
     const sprite = new Sprite(texture);
-    sprite.x = chunkX * this.chunkPixelSize();
-    sprite.y = chunkY * this.chunkPixelSize();
+    sprite.x = chunkX * this.chunkPixelSize(lodStep);
+    sprite.y = chunkY * this.chunkPixelSize(lodStep);
     const created: StaticChunkCache = { key, chunkX, chunkY, lodStep, viewMode, canvas, context, texture, sprite, dirty: true };
     this.staticChunks.set(key, created);
     this.staticChunkLayer.addChild(sprite);
