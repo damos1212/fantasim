@@ -736,6 +736,7 @@ export class Simulation {
       this.placeBuilding(tribeId, BuildingType.House, best.x, best.y + 4);
       this.placeBuilding(tribeId, BuildingType.House, best.x + 4, best.y + 4);
       this.placeBuilding(tribeId, BuildingType.House, best.x - 4, best.y + 4);
+      this.placeBuilding(tribeId, BuildingType.House, best.x + 8, best.y);
 
       const tribe: TribeState = {
         id: tribeId,
@@ -745,7 +746,7 @@ export class Simulation {
         age: AgeType.Primitive,
         research: 0,
         faith: 0,
-        water: 26,
+        water: 34,
         resources: resourceArray(),
         morale: 82,
         capitalBuildingId: capital.id,
@@ -762,6 +763,7 @@ export class Simulation {
 
       tribe.resources[ResourceType.Wood] = 90;
       tribe.resources[ResourceType.Stone] = 55;
+      tribe.resources[ResourceType.Clay] = 10;
       tribe.resources[ResourceType.Rations] = 120;
       tribe.resources[ResourceType.Berries] = 45;
       tribe.resources[ResourceType.Meat] = 35;
@@ -807,6 +809,7 @@ export class Simulation {
       }
 
       this.claimTerritory(tribeId, best.x, best.y, TRIBE_TERRITORY_RADIUS);
+      this.ensureBootstrapFeaturesNearStart(tribe);
 
       if ((race.type === RaceType.Dwarves || race.type === RaceType.Darkfolk) && this.random() > 0.3) {
         const hallDef = getBuildingDef(BuildingType.MountainHall);
@@ -828,6 +831,64 @@ export class Simulation {
           this.tribes[i]!.relations[j] = clamp((raceDiff + (this.random() - 0.5) * 40) | 0, -45, 35);
         }
       }
+    }
+  }
+
+  private ensureBootstrapFeaturesNearStart(tribe: TribeState): void {
+    const placeFeature = (predicate: (terrain: TerrainType) => boolean, feature: FeatureType, resourceType: ResourceType, amount: number, preferredRadius = 10): boolean => {
+      for (let radius = 2; radius <= preferredRadius; radius += 1) {
+        for (let dy = -radius; dy <= radius; dy += 1) {
+          for (let dx = -radius; dx <= radius; dx += 1) {
+            const x = tribe.capitalX + dx;
+            const y = tribe.capitalY + dy;
+            if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+            const index = indexOf(x, y, this.world.width);
+            const terrain = this.world.terrain[index] as TerrainType;
+            if (!predicate(terrain)) continue;
+            if (this.world.buildingByTile[index] >= 0) continue;
+            if (this.world.feature[index] !== FeatureType.None && this.world.feature[index] !== FeatureType.BerryPatch) continue;
+            this.world.feature[index] = feature;
+            this.world.resourceType[index] = resourceType;
+            this.world.resourceAmount[index] = amount;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.Trees, 10) > 5) {
+      placeFeature(
+        (terrain) => terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Snow || terrain === TerrainType.Desert,
+        FeatureType.Trees,
+        ResourceType.Wood,
+        160,
+      );
+    }
+    if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.StoneOutcrop, 10) > 6) {
+      placeFeature(
+        (terrain) => terrain === TerrainType.Rocky || terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Snow || terrain === TerrainType.Desert,
+        FeatureType.StoneOutcrop,
+        ResourceType.Stone,
+        140,
+      );
+    }
+    if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.ClayDeposit, 10) > 6) {
+      placeFeature(
+        (terrain) => terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Marsh || terrain === TerrainType.Beach || terrain === TerrainType.Snow,
+        FeatureType.ClayDeposit,
+        ResourceType.Clay,
+        120,
+      );
+    }
+    if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.BerryPatch, 8) > 5) {
+      placeFeature(
+        (terrain) => terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Snow,
+        FeatureType.BerryPatch,
+        ResourceType.Berries,
+        120,
+        8,
+      );
     }
   }
 
@@ -3390,11 +3451,11 @@ export class Simulation {
 
       const fertilityRate = tribe.race.type === RaceType.Orcs ? 1.2 : tribe.race.type === RaceType.Halflings ? 1.1 : 1;
       if (
-        this.tickCount % Math.max(54, Math.floor((YEAR_TICKS / 2.6) / fertilityRate)) === 0
+        this.tickCount % Math.max(48, Math.floor((YEAR_TICKS / 12.5) / fertilityRate)) === 0
         && population < housing
         && population < MAX_AGENTS_PER_TRIBE
-        && tribe.resources[ResourceType.Rations] > population * 4
-        && tribe.water > Math.max(8, population * 0.45)
+        && tribe.resources[ResourceType.Rations] > population * 3.6
+        && tribe.water > Math.max(6, population * 0.3)
         && tribe.morale > 52
       ) {
         this.spawnAgent(tribe.id, tribe.capitalX + randInt(this.random, -2, 2), tribe.capitalY + randInt(this.random, -2, 2));
@@ -3529,7 +3590,8 @@ export class Simulation {
       const scholarBonus = tribeAgents.filter((agent) => agent.role === AgentRole.Scholar).length * 0.9;
       const heroBonus = tribeAgents.filter((agent) => agent.hero).length * 0.35;
       const tunnelEntrances = this.buildingCount(tribe.id, BuildingType.TunnelEntrance);
-      const gain = pop * 0.04 + workshops * 0.8 + schools * 1.1 + smithies * 0.9 + armories * 0.4 + castles * 1.2 + mageTowers * 1.8 + sanctums * 2.4 + infirmaries * 0.4 + foundries * 1.4 + factories * 2.2 + railDepots * 1.1 + powerPlants * 2.5 + airfields * 1.6 + tunnelEntrances * 0.6 + mageBonus + scholarBonus + heroBonus + tribe.race.buildBias * 0.08;
+      const primitiveBootstrap = tribe.age === AgeType.Primitive ? 1.35 + pop * 0.02 : 0;
+      const gain = pop * 0.04 + workshops * 0.8 + schools * 1.1 + smithies * 0.9 + armories * 0.4 + castles * 1.2 + mageTowers * 1.8 + sanctums * 2.4 + infirmaries * 0.4 + foundries * 1.4 + factories * 2.2 + railDepots * 1.1 + powerPlants * 2.5 + airfields * 1.6 + tunnelEntrances * 0.6 + mageBonus + scholarBonus + heroBonus + tribe.race.buildBias * 0.08 + primitiveBootstrap;
       tribe.research += gain;
       const currentAgeIndex = tribe.age;
       if (currentAgeIndex < AgeType.Modern && tribe.research >= TECH_THRESHOLDS[currentAgeIndex + 1]!) {
@@ -3548,24 +3610,46 @@ export class Simulation {
   }
 
   private runTribeStrategy(): void {
-    const claimedJobs = this.jobs.filter((job) => job.claimedBy !== null);
+    const carriedJobs = this.jobs.filter((job) => this.shouldPersistJob(job));
     this.jobs.length = 0;
-    this.jobs.push(...claimedJobs);
+    this.jobs.push(...carriedJobs);
     for (const tribe of this.tribes) {
+      const bootstrap = this.isBootstrapPhase(tribe);
       this.updateDiplomacy(tribe);
       this.assignRolesForTribe(tribe);
-      this.generateEconomyJobs(tribe);
+      this.generateEconomyJobs(tribe, bootstrap);
       this.generateBuildingPlans(tribe);
-      this.generateEarthworkPlans(tribe);
-      this.generateCraftingPlans(tribe);
-      this.generateMilitaryPlans(tribe);
-      this.generateAdventurePlans(tribe);
-      this.generateDelvePlans(tribe);
-      this.ensureBoatsForTribe(tribe);
-      this.ensureWagonsForTribe(tribe);
-      this.ensureCaravansForTribe(tribe);
-      this.ensureSiegeForTribe(tribe);
+      if (!bootstrap) {
+        this.generateEarthworkPlans(tribe);
+        this.generateCraftingPlans(tribe);
+        this.generateMilitaryPlans(tribe);
+        this.generateAdventurePlans(tribe);
+        this.generateDelvePlans(tribe);
+        this.ensureBoatsForTribe(tribe);
+        this.ensureWagonsForTribe(tribe);
+        this.ensureCaravansForTribe(tribe);
+        this.ensureSiegeForTribe(tribe);
+      }
     }
+  }
+
+  private shouldPersistJob(job: JobState): boolean {
+    if (job.claimedBy !== null) return true;
+    return job.kind === "build" || job.kind === "haul" || job.kind === "craft" || job.kind === "earthwork";
+  }
+
+  private isBootstrapPhase(tribe: TribeState): boolean {
+    const population = this.populationOf(tribe.id);
+    const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
+    return (
+      !this.hasBuilt(tribe.id, BuildingType.Farm) ||
+      !this.hasBuilt(tribe.id, BuildingType.LumberCamp) ||
+      !this.hasBuilt(tribe.id, BuildingType.Stockpile) ||
+      !this.hasBuilt(tribe.id, BuildingType.Cistern) ||
+      tribe.resources[ResourceType.Rations] < foodNeed ||
+      tribe.resources[ResourceType.Wood] < 70 ||
+      tribe.water < Math.max(14, population * 0.5)
+    );
   }
 
   private updateDiplomacy(tribe: TribeState): void {
@@ -3650,39 +3734,46 @@ export class Simulation {
     }
   }
 
-  private generateEconomyJobs(tribe: TribeState): void {
+  private generateEconomyJobs(tribe: TribeState, bootstrap = false): void {
     const foodNeed = this.populationOf(tribe.id) * (tribe.age >= AgeType.Bronze ? 6 : 5);
     const lowFood = tribe.resources[ResourceType.Rations] < foodNeed;
     const lowWood = tribe.resources[ResourceType.Wood] < 90;
-    const lowStone = tribe.resources[ResourceType.Stone] < 70;
+    const lowStone = tribe.resources[ResourceType.Stone] < (bootstrap ? 24 : 70);
+    const lowClay = tribe.resources[ResourceType.Clay] < 6;
     const lowOre = tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Ore] < 60;
+    const economyRadius = bootstrap ? 12 : 18;
+    const huntRadius = bootstrap ? 12 : 16;
 
     if (lowFood) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.BerryPatch, "gather", 18, 6);
-      this.enqueueAnimalJobs(tribe, [AnimalType.Deer, AnimalType.Boar, AnimalType.Sheep], "hunt", 16, 4);
+      this.enqueueNearbyFeatureJobs(tribe, FeatureType.BerryPatch, "gather", economyRadius, bootstrap ? 8 : 6);
+      this.enqueueAnimalJobs(tribe, [AnimalType.Deer, AnimalType.Boar, AnimalType.Sheep], "hunt", huntRadius, bootstrap ? 5 : 4);
     }
 
-    if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.Horses] < 4) {
+    if (!bootstrap && tribe.age >= AgeType.Iron && tribe.resources[ResourceType.Horses] < 4) {
       this.enqueueAnimalJobs(tribe, [AnimalType.Horse], "tame_horse", 22, 2);
     }
-    if (tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Livestock] < 6) {
+    if (!bootstrap && tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Livestock] < 6) {
       this.enqueueAnimalJobs(tribe, [AnimalType.Sheep], "tame_livestock", 18, 2);
     }
 
     if (lowWood) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.Trees, "cut_tree", 18, 6);
+      this.enqueueNearbyFeatureJobs(tribe, FeatureType.Trees, "cut_tree", economyRadius, bootstrap ? 8 : 6);
     }
 
     if (lowStone) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.StoneOutcrop, "quarry", 18, 4);
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.ClayDeposit, "quarry", 18, 2);
+      this.enqueueNearbyFeatureJobs(tribe, FeatureType.StoneOutcrop, "quarry", economyRadius, bootstrap ? 5 : 4);
+      this.enqueueNearbyFeatureJobs(tribe, FeatureType.ClayDeposit, "quarry", economyRadius, bootstrap ? 3 : 2);
     }
 
-    if (lowOre) {
+    if (tribe.age >= AgeType.Stone && (!this.hasBuilt(tribe.id, BuildingType.Cistern) || tribe.water < Math.max(14, this.populationOf(tribe.id) * 0.5)) && lowClay) {
+      this.enqueueNearbyFeatureJobs(tribe, FeatureType.ClayDeposit, "quarry", economyRadius, bootstrap ? 7 : 5);
+    }
+
+    if (!bootstrap && lowOre) {
       this.enqueueNearbyFeatureJobs(tribe, FeatureType.OreVein, "mine", 20, 4);
     }
 
-    if (tribe.race.personality.ecology > 0.7 && this.tickCount % (STRATEGY_TICKS * 2) === 1) {
+    if (!bootstrap && tribe.race.personality.ecology > 0.7 && this.tickCount % (STRATEGY_TICKS * 2) === 1) {
       this.enqueueReplantJobs(tribe, 2);
     }
   }
@@ -3694,7 +3785,7 @@ export class Simulation {
     const lowFood = tribe.resources[ResourceType.Rations] < foodNeed;
     const lowWater = tribe.water < Math.max(14, population * 0.5);
     const lowWood = tribe.resources[ResourceType.Wood] < 70;
-    const lowStone = tribe.resources[ResourceType.Stone] < 48;
+    const lowStone = tribe.resources[ResourceType.Stone] < 28;
     const infrastructureStable = !lowFood && !lowWater && !lowWood && !lowStone;
     const missingBootstrap =
       !this.hasBuilt(tribe.id, BuildingType.Farm)
@@ -4814,9 +4905,10 @@ export class Simulation {
   }
 
   private findBuildingSite(tribe: TribeState, def: { type: BuildingType; size: [number, number] }): { x: number; y: number } | null {
+    const radius = this.siteSearchRadius(tribe, def.type);
     let best: { x: number; y: number; score: number } | null = null;
-    for (let dy = -MAX_JOB_RADIUS; dy <= MAX_JOB_RADIUS; dy += 1) {
-      for (let dx = -MAX_JOB_RADIUS; dx <= MAX_JOB_RADIUS; dx += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
         const x = tribe.capitalX + dx;
         const y = tribe.capitalY + dy;
         if (!this.canPlaceBuilding(def.type, x, y, def.size[0], def.size[1])) continue;
@@ -4827,6 +4919,16 @@ export class Simulation {
       }
     }
     return best ? { x: best.x, y: best.y } : null;
+  }
+
+  private siteSearchRadius(tribe: TribeState, type: BuildingType): number {
+    if (this.isBootstrapPhase(tribe)) {
+      if (type === BuildingType.Farm || type === BuildingType.Orchard) return 12;
+      if (type === BuildingType.LumberCamp || type === BuildingType.Quarry) return 14;
+      if (type === BuildingType.Cistern || type === BuildingType.Stockpile || type === BuildingType.House) return 10;
+    }
+    if (type === BuildingType.Dock || type === BuildingType.FishingHut || type === BuildingType.Fishery) return Math.min(MAX_JOB_RADIUS, 24);
+    return MAX_JOB_RADIUS;
   }
 
   private findBuildingSiteForSeed(tribeId: number, def: { type: BuildingType; size: [number, number] }): { x: number; y: number } | null {
@@ -4862,7 +4964,7 @@ export class Simulation {
             return false;
           }
         } else if (type === BuildingType.Cistern) {
-          if (!hasAdjacentWater(this.world, tx, ty, 7) && this.world.moisture[index] < 150) {
+          if (!hasAdjacentWater(this.world, tx, ty, 7) && this.world.moisture[index] < 120 && this.world.owner[index] < 0) {
             return false;
           }
         } else if (type === BuildingType.Mine) {
@@ -5142,17 +5244,17 @@ export class Simulation {
     if (type === BuildingType.Farm || type === BuildingType.Orchard) {
       score += this.world.fertility[index] * 0.45 + (hasAdjacentWater(this.world, x, y, 5) ? 14 : 0);
       if (this.world.terrain[index] === TerrainType.Grass || this.world.terrain[index] === TerrainType.ForestFloor) score += 40;
-      score += Math.max(0, centerDistance - 7) * 1.4;
+      score += 28 - Math.abs(centerDistance - 9) * 2.8;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Farm, x, y, 10) * 8;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Orchard, x, y, 10) * 6;
     }
     if (type === BuildingType.LumberCamp) {
       score -= distanceToNearestFeature(this.world, x, y, (feature) => feature === FeatureType.Trees, 14) * 3;
-      score += Math.max(0, centerDistance - 10) * 0.8;
+      score += 24 - Math.abs(centerDistance - 10) * 2.2;
     }
     if (type === BuildingType.Quarry) {
       score -= distanceToNearestFeature(this.world, x, y, (feature) => feature === FeatureType.StoneOutcrop || feature === FeatureType.ClayDeposit, 14) * 3;
-      score += Math.max(0, centerDistance - 12) * 0.7;
+      score += 20 - Math.abs(centerDistance - 11) * 2.1;
     }
     if (type === BuildingType.Mine) {
       score -= distanceToNearestFeature(this.world, x, y, (feature) => feature === FeatureType.OreVein, 16) * 4;
@@ -5196,6 +5298,7 @@ export class Simulation {
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Orchard, x, y, 10) * 6;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.House, x, y, 10) * 4;
       score += this.nearbyRoadScore(x, y, 3) * 1.2;
+      score += 26 - Math.abs(centerDistance - 7) * 2.4;
     }
     if (type === BuildingType.Stable) {
       score += this.animals.some((animal) => animal.type === AnimalType.Horse && manhattan(animal.x, animal.y, x, y) < 18) ? 60 : -60;

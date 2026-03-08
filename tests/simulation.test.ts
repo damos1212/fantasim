@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createSimulation } from "../src/sim/simulation";
 import { INITIAL_AGENTS_PER_TRIBE, INITIAL_TRIBE_COUNT } from "../src/shared/config";
-import { AgentRole, AgeType } from "../src/shared/gameTypes";
+import { AgentRole, AgeType, BuildingType } from "../src/shared/gameTypes";
 
 describe("simulation", () => {
   test("seeds tribes, buildings, and agents", () => {
@@ -122,5 +122,33 @@ describe("simulation", () => {
     const elapsed = Date.now() - start;
 
     expect(elapsed).toBeLessThan(4500);
+  });
+
+  test("early game prioritizes bootstrap infrastructure and population growth", () => {
+    const sim = createSimulation("bootstrap-focus", { width: 768, height: 768 });
+    const startingPopulations = sim.snapshotNow().tribes.map((tribe) => tribe.population);
+
+    let lastSnapshot = sim.snapshotNow();
+    for (let i = 0; i < 150; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    let fullyBootstrapped = 0;
+    for (const tribe of lastSnapshot.tribes) {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const hasFarm = tribeBuildings.some((building) => building.type === BuildingType.Farm);
+      const hasLumber = tribeBuildings.some((building) => building.type === BuildingType.LumberCamp);
+      const hasStockpile = tribeBuildings.some((building) => building.type === BuildingType.Stockpile);
+      const hasCistern = tribeBuildings.some((building) => building.type === BuildingType.Cistern);
+      if (hasFarm && hasLumber && hasStockpile && hasCistern) {
+        fullyBootstrapped += 1;
+      }
+    }
+
+    expect(fullyBootstrapped).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
+    expect(lastSnapshot.tribes.some((tribe, index) => tribe.population > startingPopulations[index]!)).toBe(true);
   });
 });
