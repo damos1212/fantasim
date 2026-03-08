@@ -267,7 +267,7 @@ type ResourceJobPayload = {
 
 type AgentTask =
   | {
-      kind: "gather" | "hunt" | "fish" | "mine" | "quarry" | "cut_tree" | "tame_horse" | "tame_livestock" | "replant_tree" | "dungeon" | "delve";
+      kind: "gather" | "farm" | "hunt" | "fish" | "mine" | "quarry" | "cut_tree" | "tame_horse" | "tame_livestock" | "replant_tree" | "dungeon" | "delve";
       targetX: number;
       targetY: number;
       stage: "toTarget" | "return";
@@ -364,6 +364,7 @@ type AgentState = {
 
 type JobKind =
   | "gather"
+  | "farm"
   | "cut_tree"
   | "quarry"
   | "mine"
@@ -779,11 +780,11 @@ export class Simulation {
 
       tribe.resources[ResourceType.Wood] = 32;
       tribe.resources[ResourceType.Stone] = 22;
-      tribe.resources[ResourceType.Grain] = 12;
+      tribe.resources[ResourceType.Grain] = 8;
       tribe.resources[ResourceType.Clay] = 8;
-      tribe.resources[ResourceType.Rations] = 44;
-      tribe.resources[ResourceType.Berries] = 12;
-      tribe.resources[ResourceType.Meat] = 8;
+      tribe.resources[ResourceType.Rations] = 28;
+      tribe.resources[ResourceType.Berries] = 8;
+      tribe.resources[ResourceType.Meat] = 4;
       tribe.resources[ResourceType.StoneTools] = 8;
       tribe.resources[ResourceType.BasicWeapons] = 5;
       tribe.resources[ResourceType.BasicArmor] = 4;
@@ -2466,6 +2467,7 @@ export class Simulation {
     if (agent.task.kind === "attack") return agent.role === AgentRole.Mage ? "Casting into battle" : "Fighting";
     if (agent.task.kind === "patrol") return "Patrolling";
     if (agent.task.kind === "hunt") return "Hunting";
+    if (agent.task.kind === "farm") return "Working the fields";
     if (agent.task.kind === "dungeon") return "Exploring ruins";
     if (agent.task.kind === "delve") return "Working the deep tunnels";
     if (agent.task.kind === "tame_horse" || agent.task.kind === "tame_livestock") return "Herding";
@@ -2753,7 +2755,7 @@ export class Simulation {
 
     let score = job.priority * 10;
 
-    if (job.kind === "gather" || job.kind === "hunt" || job.kind === "fish") {
+    if (job.kind === "gather" || job.kind === "farm" || job.kind === "hunt" || job.kind === "fish") {
       score += lowFood ? 80 : 12;
     }
     if (job.kind === "cut_tree") {
@@ -2817,6 +2819,7 @@ export class Simulation {
     if (kind === "mine" || kind === "quarry") return role === AgentRole.Miner || role === AgentRole.Worker;
     if (kind === "cut_tree") return role === AgentRole.Woodcutter || role === AgentRole.Worker;
     if (kind === "replant_tree") return role === AgentRole.Farmer || role === AgentRole.Worker;
+    if (kind === "farm") return role === AgentRole.Farmer || role === AgentRole.Worker;
     if (kind === "gather" || kind === "hunt" || kind === "tame_horse" || kind === "tame_livestock") return role !== AgentRole.Soldier;
     return true;
   }
@@ -2829,6 +2832,8 @@ export class Simulation {
         return ResourceType.Stone;
       case "mine":
         return ResourceType.Ore;
+      case "farm":
+        return ResourceType.Grain;
       case "fish":
         return ResourceType.Fish;
       case "hunt":
@@ -2853,7 +2858,7 @@ export class Simulation {
     const atTarget = agent.x === task.targetX && agent.y === task.targetY;
     const workRate = this.taskWorkRate(agent, tribe);
 
-    if ((task.kind === "gather" || task.kind === "cut_tree" || task.kind === "quarry" || task.kind === "mine" || task.kind === "fish" || task.kind === "hunt" || task.kind === "tame_horse" || task.kind === "tame_livestock" || task.kind === "replant_tree" || task.kind === "dungeon" || task.kind === "delve")) {
+    if ((task.kind === "gather" || task.kind === "farm" || task.kind === "cut_tree" || task.kind === "quarry" || task.kind === "mine" || task.kind === "fish" || task.kind === "hunt" || task.kind === "tame_horse" || task.kind === "tame_livestock" || task.kind === "replant_tree" || task.kind === "dungeon" || task.kind === "delve")) {
       if (task.stage === "toTarget" && !atTarget) {
         return;
       }
@@ -2863,7 +2868,7 @@ export class Simulation {
           this.finishTask(agent);
           return;
         }
-        const storageSite = this.findNearestStorageSite(tribe.id, agent.x, agent.y, task.resourceType);
+        const storageSite = this.findResourceDropSite(tribe.id, agent.x, agent.y, task.resourceType);
         task.stage = "return";
         task.targetX = storageSite.x;
         task.targetY = storageSite.y;
@@ -3126,10 +3131,41 @@ export class Simulation {
     return site ? buildingCenter(site) : { x: this.tribes[tribeId]!.capitalX, y: this.tribes[tribeId]!.capitalY };
   }
 
+  private findResourceDropSite(tribeId: number, originX: number, originY: number, resourceType: ResourceType): { x: number; y: number } {
+    const preferredTypes =
+      resourceType === ResourceType.Wood
+        ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+        : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay
+          ? [BuildingType.Quarry, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+          : resourceType === ResourceType.Ore
+            ? [BuildingType.DeepMine, BuildingType.Mine, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+            : resourceType === ResourceType.Fish
+              ? [BuildingType.Fishery, BuildingType.FishingHut, BuildingType.Dock, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+              : resourceType === ResourceType.Berries || resourceType === ResourceType.Grain || resourceType === ResourceType.Meat || resourceType === ResourceType.Rations
+                ? [BuildingType.Farm, BuildingType.Orchard, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+                : resourceType === ResourceType.Horses || resourceType === ResourceType.Livestock || resourceType === ResourceType.Hides
+                  ? [BuildingType.Stable, BuildingType.Farm, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+                  : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
+    const candidates = this.buildingsForTribe(tribeId)
+      .filter((building) => preferredTypes.includes(building.type))
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        const typeBiasA = Math.max(0, 10 - preferredTypes.indexOf(a.type) * 2);
+        const typeBiasB = Math.max(0, 10 - preferredTypes.indexOf(b.type) * 2);
+        return (
+          (typeBiasB * 8 - manhattan(originX, originY, centerB.x, centerB.y) * 1.35)
+          - (typeBiasA * 8 - manhattan(originX, originY, centerA.x, centerA.y) * 1.35)
+        );
+      });
+    const site = candidates[0];
+    return site ? buildingCenter(site) : this.findNearestStorageSite(tribeId, originX, originY, resourceType);
+  }
+
   private performResourceTask(
     tribe: TribeState,
     agent: AgentState,
-    task: Extract<AgentTask, { kind: "gather" | "cut_tree" | "quarry" | "mine" | "fish" | "hunt" | "tame_horse" | "tame_livestock" | "replant_tree" | "dungeon" | "delve" }>,
+    task: Extract<AgentTask, { kind: "gather" | "farm" | "cut_tree" | "quarry" | "mine" | "fish" | "hunt" | "tame_horse" | "tame_livestock" | "replant_tree" | "dungeon" | "delve" }>,
   ): boolean {
     const targetIndex = indexOf(task.targetX, task.targetY, this.world.width);
     if (task.kind === "replant_tree") {
@@ -3288,6 +3324,56 @@ export class Simulation {
       if (deepSite && this.random() > 0.7) {
         tribe.resources[ResourceType.Stone] += 1;
       }
+      return true;
+    }
+
+    if (task.kind === "farm") {
+      const site = this.buildings.find((building) =>
+        building.tribeId === tribe.id &&
+        (building.type === BuildingType.Farm || building.type === BuildingType.Orchard) &&
+        task.targetX >= building.x &&
+        task.targetX < building.x + building.width &&
+        task.targetY >= building.y &&
+        task.targetY < building.y + building.height,
+      );
+      if (!site) {
+        return false;
+      }
+      let nearbyPlots = 0;
+      for (let dy = -4; dy <= 4; dy += 1) {
+        for (let dx = -4; dx <= 4; dx += 1) {
+          const x = task.targetX + dx;
+          const y = task.targetY + dy;
+          if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+          const index = indexOf(x, y, this.world.width);
+          if (this.world.terrain[index] === TerrainType.Farmland) {
+            nearbyPlots += 1;
+          }
+        }
+      }
+      const waterSupport = Math.floor(this.surfaceWaterFarmSupportForTribe(tribe.id) * 0.45);
+      const flooded = this.floodedFarmCountForTribe(tribe.id);
+      const orchard = site.type === BuildingType.Orchard;
+      let harvest = orchard ? 4 : 6;
+      harvest += Math.min(4, Math.floor(nearbyPlots / 10));
+      harvest += waterSupport;
+      if (this.season === SeasonType.Winter) {
+        harvest = orchard ? 1 : Math.max(2, harvest - 3);
+      }
+      if (flooded > 0) {
+        harvest = Math.max(1, harvest - Math.min(3, flooded));
+      }
+      const efficiency =
+        agent.condition === AgentConditionType.Inspired ? 1.2
+        : agent.condition === AgentConditionType.Exhausted ? 0.72
+        : agent.condition === AgentConditionType.Feverish ? 0.6
+        : agent.condition === AgentConditionType.Sick ? 0.78
+        : agent.condition === AgentConditionType.Weary ? 0.88
+        : 1;
+      harvest = Math.max(1, Math.floor(harvest * efficiency));
+      tribe.research += this.researchFromFieldWork("gather", tribe) * 0.8;
+      agent.carrying = orchard ? ResourceType.Berries : ResourceType.Grain;
+      agent.carryingAmount = harvest;
       return true;
     }
 
@@ -3620,8 +3706,6 @@ export class Simulation {
         const runoffBonus = this.surfaceWaterFarmSupportForTribe(tribe.id);
         const floodedFields = this.floodedFarmCountForTribe(tribe.id);
         const cisternBonus = this.cisternBonusForTribe(tribe.id);
-        const deepMineYield = this.buildingCount(tribe.id, BuildingType.DeepMine);
-        const delveYield = this.buildingCount(tribe.id, BuildingType.TunnelEntrance);
         const weatherFactor = weather === WeatherKind.Heatwave ? 0.6 : weather === WeatherKind.Rain ? 1.15 : weather === WeatherKind.Blizzard ? 0.7 : weather === WeatherKind.Storm ? 0.85 : 1;
         const passiveFood = Math.floor((this.buildingCount(tribe.id, BuildingType.Farm) * (this.season === SeasonType.Winter ? 1 : 2) * tribe.race.foodBias * weatherFactor + horseBonus + irrigationBonus + runoffBonus + cisternBonus + powerPlants * 0.6 - floodedFields * 1.4) * waterFactor);
         const orchardFood = Math.floor((this.buildingCount(tribe.id, BuildingType.Orchard) * (this.season === SeasonType.Winter ? 0 : 1.5) + runoffBonus * 0.35 - floodedFields * 0.4) * waterFactor);
@@ -3631,16 +3715,6 @@ export class Simulation {
         if (rationGain > 0) {
           tribe.resources[ResourceType.Grain] += passiveFood;
           tribe.resources[ResourceType.Rations] += rationGain;
-        }
-        if (deepMineYield > 0) {
-          tribe.resources[ResourceType.Ore] += deepMineYield * (2 + powerPlants);
-          tribe.resources[ResourceType.Stone] += deepMineYield;
-        }
-        if (delveYield > 0) {
-          tribe.resources[ResourceType.Stone] += delveYield;
-          if (this.tickCount % (SIM_TICKS_PER_SECOND * 18) === 0) {
-            tribe.resources[ResourceType.Ore] += Math.max(1, Math.floor(delveYield / 2));
-          }
         }
         if (this.buildingCount(tribe.id, BuildingType.Stable) > 0 && tribe.resources[ResourceType.Horses] > 0 && this.tickCount % (YEAR_TICKS / 3) === 0) {
           tribe.resources[ResourceType.Horses] += Math.max(1, Math.floor(this.buildingCount(tribe.id, BuildingType.Stable) / 2));
@@ -3857,7 +3931,7 @@ export class Simulation {
     const primitiveBonus = tribe.age === AgeType.Primitive ? 0.16 : tribe.age === AgeType.Stone ? 0.08 : 0.03;
     if (kind === "quarry" || kind === "mine") return 0.22 + primitiveBonus;
     if (kind === "cut_tree" || kind === "replant_tree") return 0.18 + primitiveBonus;
-    if (kind === "gather" || kind === "hunt" || kind === "fish") return 0.14 + primitiveBonus;
+    if (kind === "gather" || kind === "farm" || kind === "hunt" || kind === "fish") return 0.14 + primitiveBonus;
     if (kind === "tame_horse" || kind === "tame_livestock") return 0.12 + primitiveBonus * 0.5;
     return 0.1;
   }
@@ -4259,9 +4333,76 @@ export class Simulation {
     const missingLumber = !this.hasBuilt(tribe.id, BuildingType.LumberCamp);
     const missingQuarry = !this.hasBuilt(tribe.id, BuildingType.Quarry);
     const missingCistern = !this.hasBuilt(tribe.id, BuildingType.Cistern);
+    const farms = this.buildingsForTribe(tribe.id).filter((building) => building.type === BuildingType.Farm || building.type === BuildingType.Orchard);
+    const lumberCamps = this.buildingsForTribe(tribe.id).filter((building) => building.type === BuildingType.LumberCamp);
+    const quarries = this.buildingsForTribe(tribe.id).filter((building) => building.type === BuildingType.Quarry);
+    const mines = this.buildingsForTribe(tribe.id).filter((building) => building.type === BuildingType.Mine || building.type === BuildingType.DeepMine);
+    const docks = this.buildingsForTribe(tribe.id).filter((building) =>
+      building.type === BuildingType.Dock || building.type === BuildingType.FishingHut || building.type === BuildingType.Fishery,
+    );
+
+    if (farms.length > 0) {
+      let activeFarmJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "farm").length;
+      for (const farm of farms) {
+        if (activeFarmJobs >= Math.min(3, farms.length)) break;
+        const center = buildingCenter(farm);
+        if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "farm" && job.x === center.x && job.y === center.y)) continue;
+        this.jobs.push({
+          id: this.nextJobId++,
+          tribeId: tribe.id,
+          kind: "farm",
+          x: center.x,
+          y: center.y,
+          priority: lowFood ? 6 : 4,
+          claimedBy: null,
+          payload: { resourceType: farm.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain },
+        });
+        activeFarmJobs += 1;
+      }
+    }
+
+    if (docks.length > 0) {
+      let activeFishJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "fish").length;
+      for (const dock of docks) {
+        if (activeFishJobs >= Math.min(3, docks.length + 1)) break;
+        const center = buildingCenter(dock);
+        activeFishJobs += this.enqueueWaterJobsAround(tribe, center.x, center.y, "fish", 10, lowFood ? 2 : 1);
+      }
+    }
+
+    if (lumberCamps.length > 0) {
+      for (const camp of lumberCamps) {
+        const center = buildingCenter(camp);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.Trees, "cut_tree", 9, lowWood ? 2 : 1);
+      }
+    }
+
+    if (quarries.length > 0) {
+      for (const quarry of quarries) {
+        const center = buildingCenter(quarry);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 9, lowStone ? 2 : 1);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, missingCistern || lowClay ? 2 : 1);
+      }
+    }
+
+    if (mines.length > 0) {
+      for (const mine of mines) {
+        const center = buildingCenter(mine);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.OreVein, "mine", 10, lowOre ? 2 : 1);
+      }
+    }
 
     if (lowFood || bootstrap || missingFarm) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.BerryPatch, "gather", economyRadius, bootstrap ? 10 : 6);
+      let queuedFood = 0;
+      for (const farm of farms) {
+        if (queuedFood >= (bootstrap ? 5 : 3)) break;
+        const center = buildingCenter(farm);
+        queuedFood += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.BerryPatch, "gather", 8, 2);
+        queuedFood += this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Berries, ResourceType.Grain], "gather", 7, 1);
+      }
+      if (queuedFood < (bootstrap ? 10 : 6)) {
+        this.enqueueNearbyFeatureJobs(tribe, FeatureType.BerryPatch, "gather", economyRadius, (bootstrap ? 10 : 6) - queuedFood);
+      }
       this.enqueueNearbyResourceJobs(tribe, [ResourceType.Berries, ResourceType.Grain], "gather", economyRadius, bootstrap ? 8 : 4);
       this.enqueueAnimalJobs(tribe, [AnimalType.Deer, AnimalType.Boar, AnimalType.Sheep, AnimalType.Goat], "hunt", huntRadius, bootstrap ? 6 : 4);
     }
@@ -4274,23 +4415,55 @@ export class Simulation {
     }
 
     if (lowWood || bootstrap || missingLumber) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.Trees, "cut_tree", economyRadius, bootstrap ? 10 : 6);
+      let queuedWood = 0;
+      for (const camp of lumberCamps) {
+        if (queuedWood >= (bootstrap ? 8 : 5)) break;
+        const center = buildingCenter(camp);
+        queuedWood += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.Trees, "cut_tree", 9, bootstrap ? 4 : 3);
+        queuedWood += this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Wood], "cut_tree", 8, bootstrap ? 2 : 1);
+      }
+      if (queuedWood < (bootstrap ? 10 : 6)) {
+        this.enqueueNearbyFeatureJobs(tribe, FeatureType.Trees, "cut_tree", economyRadius, (bootstrap ? 10 : 6) - queuedWood);
+      }
       this.enqueueNearbyResourceJobs(tribe, [ResourceType.Wood], "cut_tree", economyRadius, bootstrap ? 8 : 3);
     }
 
     if (lowStone || bootstrap || missingQuarry || missingCistern) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.StoneOutcrop, "quarry", economyRadius, bootstrap ? 6 : 4);
+      let queuedStone = 0;
+      for (const quarry of quarries) {
+        if (queuedStone >= (bootstrap ? 5 : 3)) break;
+        const center = buildingCenter(quarry);
+        queuedStone += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 9, bootstrap ? 3 : 2);
+        queuedStone += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, 1);
+        queuedStone += this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Stone, ResourceType.Clay], "quarry", 8, 1);
+      }
+      if (queuedStone < (bootstrap ? 6 : 4)) {
+        this.enqueueNearbyFeatureJobs(tribe, FeatureType.StoneOutcrop, "quarry", economyRadius, (bootstrap ? 6 : 4) - queuedStone);
+      }
       this.enqueueNearbyFeatureJobs(tribe, FeatureType.ClayDeposit, "quarry", economyRadius, bootstrap ? 4 : 2);
       this.enqueueNearbyResourceJobs(tribe, [ResourceType.Stone, ResourceType.Clay], "quarry", economyRadius, bootstrap ? 6 : 3);
     }
 
     if ((missingCistern || tribe.water < Math.max(18, this.populationOf(tribe.id) * 0.6)) && (lowClay || bootstrap)) {
+      for (const quarry of quarries) {
+        const center = buildingCenter(quarry);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 8, 2);
+        this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Clay], "quarry", 7, 1);
+      }
       this.enqueueNearbyFeatureJobs(tribe, FeatureType.ClayDeposit, "quarry", economyRadius, bootstrap ? 8 : 5);
       this.enqueueNearbyResourceJobs(tribe, [ResourceType.Clay], "quarry", economyRadius, bootstrap ? 5 : 2);
     }
 
     if ((tribe.age >= AgeType.Bronze && !bootstrap && lowOre) || (tribe.age >= AgeType.Bronze && !this.hasBuilt(tribe.id, BuildingType.Mine))) {
-      this.enqueueNearbyFeatureJobs(tribe, FeatureType.OreVein, "mine", 20, 4);
+      let queuedOre = 0;
+      for (const mine of mines) {
+        if (queuedOre >= 4) break;
+        const center = buildingCenter(mine);
+        queuedOre += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.OreVein, "mine", 10, 2);
+      }
+      if (queuedOre < 4) {
+        this.enqueueNearbyFeatureJobs(tribe, FeatureType.OreVein, "mine", 20, 4 - queuedOre);
+      }
     }
 
     if (!bootstrap && tribe.race.personality.ecology > 0.7 && this.tickCount % (STRATEGY_TICKS * 2) === 1) {
@@ -5550,11 +5723,23 @@ export class Simulation {
   }
 
   private enqueueNearbyFeatureJobs(tribe: TribeState, feature: FeatureType, kind: JobKind, radius: number, limit: number): void {
+    this.enqueueFeatureJobsAround(tribe, tribe.capitalX, tribe.capitalY, feature, kind, radius, limit);
+  }
+
+  private enqueueFeatureJobsAround(
+    tribe: TribeState,
+    originX: number,
+    originY: number,
+    feature: FeatureType,
+    kind: JobKind,
+    radius: number,
+    limit: number,
+  ): number {
     let count = 0;
     for (let dy = -radius; dy <= radius && count < limit; dy += 1) {
       for (let dx = -radius; dx <= radius && count < limit; dx += 1) {
-        const x = tribe.capitalX + dx;
-        const y = tribe.capitalY + dy;
+        const x = originX + dx;
+        const y = originY + dy;
         if (!inBounds(x, y, this.world.width, this.world.height)) continue;
         const index = indexOf(x, y, this.world.width);
         if (this.world.feature[index] !== feature) continue;
@@ -5565,20 +5750,33 @@ export class Simulation {
           kind,
           x,
           y,
-          priority: 4 + Math.max(0, radius - manhattan(tribe.capitalX, tribe.capitalY, x, y)) * 0.1,
+          priority: 4 + Math.max(0, radius - manhattan(originX, originY, x, y)) * 0.1,
           claimedBy: null,
         });
         count += 1;
       }
     }
+    return count;
   }
 
   private enqueueNearbyResourceJobs(tribe: TribeState, resourceTypes: ResourceType[], kind: JobKind, radius: number, limit: number): void {
+    this.enqueueResourceJobsAround(tribe, tribe.capitalX, tribe.capitalY, resourceTypes, kind, radius, limit);
+  }
+
+  private enqueueResourceJobsAround(
+    tribe: TribeState,
+    originX: number,
+    originY: number,
+    resourceTypes: ResourceType[],
+    kind: JobKind,
+    radius: number,
+    limit: number,
+  ): number {
     let count = 0;
     for (let dy = -radius; dy <= radius && count < limit; dy += 1) {
       for (let dx = -radius; dx <= radius && count < limit; dx += 1) {
-        const x = tribe.capitalX + dx;
-        const y = tribe.capitalY + dy;
+        const x = originX + dx;
+        const y = originY + dy;
         if (!inBounds(x, y, this.world.width, this.world.height)) continue;
         const index = indexOf(x, y, this.world.width);
         const resourceType = this.world.resourceType[index] as ResourceType;
@@ -5590,7 +5788,7 @@ export class Simulation {
           kind,
           x,
           y,
-          priority: 4.5 + Math.max(0, radius - manhattan(tribe.capitalX, tribe.capitalY, x, y)) * 0.12,
+          priority: 4.5 + Math.max(0, radius - manhattan(originX, originY, x, y)) * 0.12,
           claimedBy: null,
           payload: {
             resourceType,
@@ -5599,14 +5797,19 @@ export class Simulation {
         count += 1;
       }
     }
+    return count;
   }
 
   private enqueueNearbyWaterJobs(tribe: TribeState, kind: JobKind, limit: number): void {
+    this.enqueueWaterJobsAround(tribe, tribe.capitalX, tribe.capitalY, kind, MAX_JOB_RADIUS, limit);
+  }
+
+  private enqueueWaterJobsAround(tribe: TribeState, originX: number, originY: number, kind: JobKind, radius: number, limit: number): number {
     let count = 0;
-    for (let dy = -MAX_JOB_RADIUS; dy <= MAX_JOB_RADIUS && count < limit; dy += 1) {
-      for (let dx = -MAX_JOB_RADIUS; dx <= MAX_JOB_RADIUS && count < limit; dx += 1) {
-        const x = tribe.capitalX + dx;
-        const y = tribe.capitalY + dy;
+    for (let dy = -radius; dy <= radius && count < limit; dy += 1) {
+      for (let dx = -radius; dx <= radius && count < limit; dx += 1) {
+        const x = originX + dx;
+        const y = originY + dy;
         if (!inBounds(x, y, this.world.width, this.world.height)) continue;
         const index = indexOf(x, y, this.world.width);
         if (!isWaterTerrain(this.world.terrain[index])) continue;
@@ -5617,12 +5820,13 @@ export class Simulation {
           kind,
           x,
           y,
-          priority: 4,
+          priority: 4 + Math.max(0, radius - manhattan(originX, originY, x, y)) * 0.08,
           claimedBy: null,
         });
         count += 1;
       }
     }
+    return count;
   }
 
   private enqueueAnimalJobs(tribe: TribeState, types: AnimalType[], kind: JobKind, radius: number, limit: number): void {

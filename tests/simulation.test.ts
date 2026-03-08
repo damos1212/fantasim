@@ -235,6 +235,22 @@ describe("simulation", () => {
     expect(new Set(lastSnapshot.buildings.map((building) => `${building.tribeId}:${building.type}:${building.x}:${building.y}`)).size).toBe(lastSnapshot.buildings.length);
   });
 
+  test("deep mines do not generate passive resources without active labor", () => {
+    const sim = createSimulation("deep-mine-passive", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    tribe.age = AgeType.Iron;
+    const oreBefore = tribe.resources[ResourceType.Ore];
+    const stoneBefore = tribe.resources[ResourceType.Stone];
+    sim.placeBuilding(tribe.id, BuildingType.DeepMine, tribe.capitalX + 10, tribe.capitalY);
+
+    for (let i = 0; i < 48; i += 1) {
+      sim.tick();
+    }
+
+    expect(tribe.resources[ResourceType.Ore]).toBeLessThanOrEqual(oreBefore + 2);
+    expect(tribe.resources[ResourceType.Stone]).toBeLessThanOrEqual(stoneBefore + 2);
+  });
+
   test("stable stone-age tribes begin primitive industry before bronze", { timeout: 30000 }, () => {
     const sim = createSimulation("stone-industry", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();

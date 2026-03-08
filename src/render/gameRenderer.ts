@@ -915,7 +915,7 @@ export class GameRenderer {
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
     const lodStep = this.zoom < 0.58 ? 4 : this.zoom < 1.08 ? 2 : 1;
     const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
-    const atmosphereViewportSignature = `${this.viewMode}:${Math.floor(minTileX / 8)}:${Math.floor(minTileY / 8)}:${Math.floor(maxTileX / 8)}:${Math.floor(maxTileY / 8)}:${this.zoom > 1.24 ? 1 : 0}:${this.zoom > 0.92 ? 1 : 0}`;
+    const atmosphereViewportSignature = `${this.viewMode}:${Math.floor(minTileX / 8)}:${Math.floor(minTileY / 8)}:${Math.floor(maxTileX / 8)}:${Math.floor(maxTileY / 8)}:${lodStep === 1 ? 1 : 0}:${this.zoom > 0.92 ? 1 : 0}`;
     const now = nowMs;
     const redrawStaticScene =
       this.staticSceneDirty ||
@@ -954,7 +954,7 @@ export class GameRenderer {
         this.drawCloudShadowOverlay(minTileX, minTileY, maxTileX, maxTileY);
       }
 
-      if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.24) {
+      if (this.viewMode === "surface" && lodStep === 1) {
         this.drawWeatherOverlay(minTileX, minTileY, maxTileX, maxTileY);
       }
       this.atmosphereDirty = false;
@@ -962,12 +962,12 @@ export class GameRenderer {
       this.lastAtmosphereViewportSignature = atmosphereViewportSignature;
     }
 
-    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.08) {
+    if (this.viewMode === "surface" && lodStep === 1) {
       for (const building of this.state.buildings) {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.55);
+        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.22);
       }
     }
 
@@ -994,7 +994,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(boat.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.22) {
+      if (lodStep > 1 || this.zoom <= 1.08) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
       } else {
         this.drawBoat(boat, tribe?.color ?? 0xffffff, position.x, position.y);
@@ -1009,7 +1009,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(wagon.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.22) {
+      if (lodStep > 1 || this.zoom <= 1.08) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
       } else {
@@ -1025,7 +1025,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(caravan.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.18) {
+      if (lodStep > 1 || this.zoom <= 1.06) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
       } else {
@@ -1039,14 +1039,14 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(engine.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.18) {
+      if (lodStep > 1 || this.zoom <= 1.06) {
         drawPixelRect(this.unitGraphics, engine.x * TILE_SIZE + 3, engine.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
       } else {
         this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff);
       }
     }
 
-    if (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.14) {
+    if (this.viewMode === "surface" && lodStep === 1) {
       for (const site of this.state.plannedSites) {
         if (site.x + site.width < minTileX || site.y + site.height < minTileY || site.x > maxTileX || site.y > maxTileY) {
           continue;
@@ -1075,7 +1075,7 @@ export class GameRenderer {
       if (creature.x < minTileX || creature.y < minTileY || creature.x > maxTileX || creature.y > maxTileY) {
         continue;
       }
-      if (lodStep > 1 || this.zoom <= 1.12) {
+      if (lodStep > 1 || this.zoom <= 1.02) {
         drawPixelRect(this.unitGraphics, creature.x * TILE_SIZE + 3, creature.y * TILE_SIZE + 5, 10, 8, 0xd06b48, 0.85);
       } else {
         this.drawLegendaryCreature(creature);
@@ -1100,7 +1100,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(agent.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.28) {
+      if (lodStep > 1 || this.zoom <= 1.06) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
         if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
           drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
@@ -1382,7 +1382,7 @@ export class GameRenderer {
             if (this.viewMode === "surface") {
               const resourceType = this.state.resourceType![index] as ResourceType;
               const resourceAmount = this.state.resourceAmount![index] ?? 0;
-              this.drawTerrainTile(terrainCtx, localPx, localPy, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater[index] ?? 0, lodStep, this.zoom > 1.22);
+              this.drawTerrainTile(terrainCtx, localPx, localPy, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater[index] ?? 0, lodStep, lodStep === 1);
               const owner = this.state.owner[index];
               if (owner >= 0) {
                 const tribe = tribeById.get(owner);
@@ -1390,13 +1390,13 @@ export class GameRenderer {
                   drawPixelRect(terrainCtx, localPx, localPy, TILE_SIZE * lodStep, TILE_SIZE * lodStep, tribe.color, lodStep > 1 ? 0.06 : 0.08);
                 }
               }
-              if (this.state.road[index] > 0 && lodStep === 1 && this.zoom > 1.18) {
+              if (this.state.road[index] > 0 && lodStep === 1) {
                 this.drawRoadTile(terrainCtx, localPx, localPy);
               }
-              if (lodStep === 1 && this.zoom > 1.28) {
+              if (lodStep === 1) {
                 this.drawFeature(terrainCtx, this.state.feature[index] as FeatureType, localPx, localPy, terrain);
               }
-              if (lodStep === 1 && this.zoom > 1.18) {
+              if (lodStep === 1) {
                 this.drawResourcePile(
                   terrainCtx,
                   localPx,
@@ -1417,7 +1417,7 @@ export class GameRenderer {
                 this.state.undergroundFeature[index] as UndergroundFeatureType,
                 this.state.undergroundResourceAmount[index] ?? 0,
                 lodStep,
-                this.zoom > 1.18,
+                lodStep === 1,
               );
             }
           }
@@ -1426,7 +1426,7 @@ export class GameRenderer {
         const buildingList = chunkedBuildings.get(chunk.key) ?? [];
         for (const building of buildingList) {
           const tribe = tribeById.get(building.tribeId);
-          this.drawBuilding(terrainCtx, building, tribe, this.zoom > 1.55, chunk.sprite.x, chunk.sprite.y);
+          this.drawBuilding(terrainCtx, building, tribe, lodStep === 1, chunk.sprite.x, chunk.sprite.y);
         }
 
         chunk.texture.update();
@@ -2314,10 +2314,18 @@ export class GameRenderer {
     }
     if (agent.carrying !== ResourceType.None) {
       const carryColor = resourceVisualColor(agent.carrying);
-      drawPixelRect(this.unitGraphics, px + 10, py + 9, 4, 4, carryColor, 0.95);
-      drawPixelRect(this.unitGraphics, px + 11, py + 8, 2, 1, lighten(carryColor, 18), 0.72);
+      drawPixelRect(this.unitGraphics, px + 9, py + 8, 5, 5, carryColor, 0.95);
+      drawPixelRect(this.unitGraphics, px + 10, py + 7, 3, 1, lighten(carryColor, 18), 0.72);
+      drawPixelRect(this.unitGraphics, px + 8, py + 10, 1, 3, darken(carryColor, 18), 0.82);
       if (agent.carryingAmount > 6) {
-        drawPixelRect(this.unitGraphics, px + 9, py + 10, 1, 3, darken(carryColor, 14), 0.85);
+        drawPixelRect(this.unitGraphics, px + 13, py + 10, 2, 3, darken(carryColor, 14), 0.88);
+      }
+      if (agent.carrying === ResourceType.Wood || agent.carrying === ResourceType.Planks) {
+        drawPixelRect(this.unitGraphics, px + 9, py + 13, 6, 1, 0x6b4a2d, 0.88);
+      } else if (agent.carrying === ResourceType.Stone || agent.carrying === ResourceType.Clay || agent.carrying === ResourceType.Ore) {
+        drawPixelRect(this.unitGraphics, px + 10, py + 13, 4, 1, 0xd7dde3, 0.7);
+      } else if (agent.carrying === ResourceType.Berries || agent.carrying === ResourceType.Grain || agent.carrying === ResourceType.Fish || agent.carrying === ResourceType.Meat) {
+        drawPixelRect(this.unitGraphics, px + 10, py + 13, 4, 1, 0xf2ddb2, 0.72);
       }
     }
     if (this.zoom > 1.18 || this.selectedUnitId === agent.id || agent.hero) {
@@ -2371,6 +2379,11 @@ export class GameRenderer {
       drawPixelRect(this.unitGraphics, px + 13, py + 6, 1, 2, 0xe3b76f, 0.85);
       return;
     }
+    if (agent.task === "farm") {
+      drawPixelRect(this.unitGraphics, effectX, effectY + 1, 4, 1, 0xe3d27a, 0.9);
+      drawPixelRect(this.unitGraphics, effectX + 1, effectY - 1, 1, 4, 0x8d6d40, 0.82);
+      return;
+    }
     if (agent.task === "cut_tree") {
       drawPixelRect(this.unitGraphics, effectX, effectY, 2, 2, 0xe1c7a0, 0.85);
       drawPixelRect(this.unitGraphics, effectX + 2, effectY + 1, 1, 2, 0x7d5c40, 0.9);
@@ -2422,6 +2435,7 @@ export class GameRenderer {
     let color = 0xffffff;
     if (task === "build") color = 0xe7be68;
     if (task === "hunt" || task === "attack" || task === "patrol") color = 0xde6c62;
+    if (task === "farm") color = 0xb9d760;
     if (task === "fish") color = 0x76cee0;
     if (task === "mine" || task === "quarry") color = 0xb0c7d7;
     if (task === "cut_tree" || task === "replant_tree") color = 0x6ac16c;
@@ -2436,6 +2450,9 @@ export class GameRenderer {
     }
     if (task === "build") {
       drawPixelRect(this.unitGraphics, px + 7, py - 1, 1, 3, 0xfff2bf, 0.9);
+    }
+    if (task === "farm") {
+      drawPixelRect(this.unitGraphics, px + 5, py - 1, 6, 1, 0xcadd72, 0.95);
     }
     if (task === "haul") {
       drawPixelRect(this.unitGraphics, px + 5, py - 1, 6, 1, 0xf4d36c, 0.9);
