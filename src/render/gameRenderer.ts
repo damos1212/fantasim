@@ -483,8 +483,15 @@ export class GameRenderer {
     this.state.resourceType = new Uint8Array(world.width * world.height);
     this.state.resourceAmount = new Uint16Array(world.width * world.height);
     this.state.tribes = tribes;
-    this.cameraX = world.width * TILE_SIZE * 0.42;
-    this.cameraY = world.height * TILE_SIZE * 0.42;
+    const defaultTribe = tribes.find((tribe) => tribe.race === RaceType.Humans) ?? tribes[0];
+    this.selectedTribeId = defaultTribe?.id ?? null;
+    if (defaultTribe) {
+      this.cameraX = defaultTribe.capitalX * TILE_SIZE - this.app.renderer.width / this.zoom / 2;
+      this.cameraY = defaultTribe.capitalY * TILE_SIZE - this.app.renderer.height / this.zoom / 2;
+    } else {
+      this.cameraX = world.width * TILE_SIZE * 0.42;
+      this.cameraY = world.height * TILE_SIZE * 0.42;
+    }
     this.staticSceneDirty = true;
     this.minimapDirty = true;
     this.minimapTerrainDirty = true;
@@ -718,7 +725,7 @@ export class GameRenderer {
           const px = x * TILE_SIZE;
           const py = y * TILE_SIZE;
           if (this.viewMode === "surface") {
-            this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep);
+            this.drawTerrainTile(px, py, terrain, biome, elevation, eastElevation, southElevation, this.state.surfaceWater?.[index] ?? 0, lodStep, this.zoom > 1.12);
           } else {
             this.drawUndergroundTile(
               px,
@@ -727,6 +734,7 @@ export class GameRenderer {
               this.state.undergroundFeature[index] as UndergroundFeatureType,
               this.state.undergroundResourceAmount[index] ?? 0,
               lodStep,
+              this.zoom > 1.08,
             );
           }
 
@@ -738,11 +746,11 @@ export class GameRenderer {
             }
           }
 
-          if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface") {
+          if (this.state.road[index] > 0 && lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.08) {
             this.drawRoadTile(px, py);
           }
 
-          if (lodStep === 1 && this.viewMode === "surface") {
+          if (lodStep === 1 && this.viewMode === "surface" && this.zoom > 1.16) {
             this.drawFeature(this.state.feature[index] as FeatureType, px, py, terrain);
           }
         }
@@ -756,7 +764,7 @@ export class GameRenderer {
           continue;
         }
         const tribe = tribeById.get(building.tribeId);
-        this.drawBuilding(building, tribe);
+        this.drawBuilding(building, tribe, this.zoom > 1.05);
       }
       this.staticSceneDirty = false;
       this.lastStaticViewportSignature = staticViewportSignature;
@@ -867,7 +875,7 @@ export class GameRenderer {
       if (lodStep > 1) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
       } else {
-        this.drawAgent(agent, position.x, position.y, tribe);
+        this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.02);
         this.drawAgentLabel(agent, position.x, position.y);
       }
     }
@@ -886,14 +894,19 @@ export class GameRenderer {
     }
   }
 
-  private drawTerrainTile(px: number, py: number, terrain: TerrainType, biome: BiomeType, elevation: number, eastElevation: number, southElevation: number, surfaceWater: number, lodStep = 1): void {
+  private drawTerrainTile(px: number, py: number, terrain: TerrainType, biome: BiomeType, elevation: number, eastElevation: number, southElevation: number, surfaceWater: number, lodStep = 1, detail = true): void {
     const color = TERRAIN_COLORS[terrain] ?? 0xff00ff;
     const size = TILE_SIZE * lodStep;
     const elevatedColor = elevation > 170 ? lighten(color, Math.floor((elevation - 170) * 0.12)) : elevation < 96 ? darken(color, Math.floor((96 - elevation) * 0.08)) : color;
     drawPixelRect(this.terrainGraphics, px, py, size, size, elevatedColor);
-    if (lodStep > 1) {
+    if (lodStep > 1 || !detail) {
       if (elevation > 190) {
         drawPixelRect(this.terrainGraphics, px, py, size, Math.max(1, Math.floor(size * 0.18)), lighten(elevatedColor, 12), 0.35);
+      }
+      if (!detail && terrain !== TerrainType.WaterDeep && terrain !== TerrainType.WaterShallow && terrain !== TerrainType.River && terrain !== TerrainType.Lava && surfaceWater > 18) {
+        const alpha = surfaceWater >= 96 ? 0.42 : surfaceWater >= 48 ? 0.24 : 0.14;
+        const fill = surfaceWater >= 96 ? 0x76c2ea : surfaceWater >= 48 ? 0x5ea9d6 : 0x4d93c0;
+        drawPixelRect(this.terrainGraphics, px + 1, py + 1, size - 2, size - 2, fill, alpha);
       }
       return;
     }
@@ -1008,11 +1021,11 @@ export class GameRenderer {
     }
   }
 
-  private drawUndergroundTile(px: number, py: number, terrain: UndergroundTerrainType, feature: UndergroundFeatureType, resourceAmount: number, lodStep = 1): void {
+  private drawUndergroundTile(px: number, py: number, terrain: UndergroundTerrainType, feature: UndergroundFeatureType, resourceAmount: number, lodStep = 1, detail = true): void {
     const color = UNDERGROUND_TERRAIN_COLORS[terrain] ?? 0xff00ff;
     const size = TILE_SIZE * lodStep;
     drawPixelRect(this.terrainGraphics, px, py, size, size, color, 1);
-    if (lodStep > 1) {
+    if (lodStep > 1 || !detail) {
       if (terrain === UndergroundTerrainType.Tunnel || terrain === UndergroundTerrainType.Cavern || terrain === UndergroundTerrainType.Ruins) {
         drawPixelRect(this.terrainGraphics, px + 1, py + 1, size - 2, 2, lighten(color, 10), 0.25);
       }
@@ -1216,7 +1229,7 @@ export class GameRenderer {
 
   }
 
-  private drawBuilding(building: BuildingSnapshot, tribe?: TribeSummary): void {
+  private drawBuilding(building: BuildingSnapshot, tribe?: TribeSummary, detail = true): void {
     const px = building.x * TILE_SIZE;
     const py = building.y * TILE_SIZE;
     const w = building.width * TILE_SIZE;
@@ -1232,6 +1245,13 @@ export class GameRenderer {
       : building.type === BuildingType.Dock
         ? 0x6b4f34
         : materials.roof;
+
+    if (!detail) {
+      drawPixelRect(this.buildingGraphics, px + 2, py + h - 1, w - 1, 2, 0x000000, this.viewMode === "surface" ? 0.1 : 0.08);
+      drawPixelRect(this.buildingGraphics, px + 1, py + 2, w - 2, h - 3, wall, 0.94);
+      drawPixelRect(this.buildingGraphics, px + 2, py + 1, w - 4, Math.max(2, Math.floor(h * 0.22)), roof, 0.96);
+      return;
+    }
 
     drawPixelRect(this.buildingGraphics, px + 2, py + h - 1, w - 1, 3, 0x000000, this.viewMode === "surface" ? 0.16 : 0.1);
     if (this.viewMode === "surface" && (building.type === BuildingType.MageTower || building.type === BuildingType.ArcaneSanctum || building.type === BuildingType.Foundry || building.type === BuildingType.Factory || building.type === BuildingType.PowerPlant || building.type === BuildingType.Airfield)) {
@@ -1686,7 +1706,7 @@ export class GameRenderer {
     this.lastMinimapZoom = this.zoom;
   }
 
-  private drawAgent(agent: AgentSnapshot, tileX: number, tileY: number, tribe?: TribeSummary): void {
+  private drawAgent(agent: AgentSnapshot, tileX: number, tileY: number, tribe?: TribeSummary, detail = true): void {
     const race = tribe?.race ?? RaceType.Humans;
     const tribeColor = tribe?.color ?? 0xffffff;
     const accent = ROLE_ACCENTS[agent.role];
@@ -1746,6 +1766,14 @@ export class GameRenderer {
     drawPixelRect(this.unitGraphics, px + 4, py + 13, 2, 1 + stride, darken(tribeColor, 26));
     drawPixelRect(this.unitGraphics, px + 10, py + 13, 2, 1 + (1 - stride), darken(tribeColor, 26));
     drawPixelRect(this.unitGraphics, px + 6, py + 8, 4, 2, accent, 0.92);
+
+    if (!detail) {
+      drawPixelRect(this.unitGraphics, px + 4, py + 7, 8, 6, tribeColor, 0.92);
+      if (agent.gear.armor !== "Cloth") {
+        drawPixelRect(this.unitGraphics, px + 4, py + 9, 8, 2, gearColors.armor, 0.68);
+      }
+      return;
+    }
 
     if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider) {
       const ranged = agent.gear.weapon.includes("Bow");
