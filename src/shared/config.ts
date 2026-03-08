@@ -9,7 +9,7 @@ export const INITIAL_ANIMAL_HERDS = 72;
 
 export const SIM_TICKS_PER_SECOND = 8;
 export const SNAPSHOT_TICKS = 2;
-export const STRATEGY_TICKS = 20;
+export const STRATEGY_TICKS = 12;
 export const YEAR_TICKS = 1200;
 export const SEASON_TICKS = 300;
 

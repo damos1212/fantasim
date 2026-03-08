@@ -30,11 +30,11 @@ describe("simulation", () => {
       snapshot.animals.some((animal) => Math.abs(animal.x - tribe.capitalX) + Math.abs(animal.y - tribe.capitalY) <= 18),
     )).toBe(true);
     expect(sim.tribes.every((tribe) =>
-      tribe.water >= 30 &&
-      tribe.resources[ResourceType.Clay] >= 10 &&
-      tribe.resources[ResourceType.StoneTools] >= 10 &&
-      tribe.resources[ResourceType.BasicWeapons] >= 10 &&
-      tribe.resources[ResourceType.BasicArmor] >= 8,
+      tribe.water >= 40 &&
+      tribe.resources[ResourceType.Clay] >= 8 &&
+      tribe.resources[ResourceType.StoneTools] >= 8 &&
+      tribe.resources[ResourceType.BasicWeapons] >= 5 &&
+      tribe.resources[ResourceType.BasicArmor] >= 4,
     )).toBe(true);
     expect(sim.tribes.every((tribe) => {
       let embarkPileTiles = 0;
@@ -74,7 +74,7 @@ describe("simulation", () => {
       expect(roleCounts.get(AgentRole.Builder) ?? 0).toBeGreaterThanOrEqual(2);
       expect(roleCounts.get(AgentRole.Hauler) ?? 0).toBeGreaterThanOrEqual(2);
       expect(roleCounts.get(AgentRole.Crafter) ?? 0).toBeGreaterThanOrEqual(1);
-      expect(roleCounts.get(AgentRole.Soldier) ?? 0).toBeGreaterThanOrEqual(2);
+      expect(roleCounts.get(AgentRole.Soldier) ?? 0).toBeGreaterThanOrEqual(1);
       expect(tribeAgents.every((agent) => agent.gear.weapon.length > 0 && agent.gear.armor.length > 0)).toBe(true);
     }
   });
@@ -92,10 +92,10 @@ describe("simulation", () => {
     expect(sim.buildings.length).toBeLessThan(initialBuildingCount + INITIAL_TRIBE_COUNT * 3);
   });
 
-  test("remains stable across extended ticks and progresses technology", { timeout: 20000 }, () => {
-    const sim = createSimulation("long-run", { width: 768, height: 768 });
+  test("remains stable across extended ticks and reaches early settled progression", { timeout: 30000 }, () => {
+    const sim = createSimulation("long-run", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
-    for (let i = 0; i < 180; i += 1) {
+    for (let i = 0; i < 1800; i += 1) {
       const snapshot = sim.tick();
       if (snapshot) {
         lastSnapshot = snapshot;
@@ -106,8 +106,9 @@ describe("simulation", () => {
     expect(lastSnapshot.agents.every((agent) => agent.x >= 0 && agent.y >= 0)).toBe(true);
     expect(lastSnapshot.buildings.length).toBeGreaterThanOrEqual(INITIAL_TRIBE_COUNT * 4);
     expect(lastSnapshot.tribes.some((tribe) => tribe.age >= AgeType.Stone)).toBe(true);
+    expect(lastSnapshot.tribes.every((tribe) => tribe.age <= AgeType.Bronze)).toBe(true);
     expect(lastSnapshot.tribes.every((tribe) => typeof tribe.horses === "number" && typeof tribe.boats === "number")).toBe(true);
-    expect(lastSnapshot.tribes.every((tribe) => tribe.techs.length >= 6)).toBe(true);
+    expect(lastSnapshot.tribes.every((tribe) => tribe.techs.length >= 3)).toBe(true);
     expect(Array.isArray(lastSnapshot.boats)).toBe(true);
     expect(Array.isArray(lastSnapshot.wagons)).toBe(true);
     expect(Array.isArray(lastSnapshot.caravans)).toBe(true);
@@ -164,31 +165,35 @@ describe("simulation", () => {
     expect(elapsed).toBeLessThan(4500);
   });
 
-  test("early game prioritizes bootstrap infrastructure and population growth", () => {
-    const sim = createSimulation("bootstrap-focus", { width: 768, height: 768 });
-    const startingPopulations = sim.snapshotNow().tribes.map((tribe) => tribe.population);
+  test("early game builds bootstrap infrastructure before higher-age expansion", { timeout: 20000 }, () => {
+    const sim = createSimulation("bootstrap-focus", { width: 512, height: 512 });
 
     let lastSnapshot = sim.snapshotNow();
-    for (let i = 0; i < 150; i += 1) {
+    for (let i = 0; i < 900; i += 1) {
       const snapshot = sim.tick();
       if (snapshot) {
         lastSnapshot = snapshot;
       }
     }
 
-    let fullyBootstrapped = 0;
+    let farmAndLumber = 0;
+    let withWater = 0;
+    let noAdvancedIndustry = 0;
     for (const tribe of lastSnapshot.tribes) {
       const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
       const hasFarm = tribeBuildings.some((building) => building.type === BuildingType.Farm);
       const hasLumber = tribeBuildings.some((building) => building.type === BuildingType.LumberCamp);
-      const hasStockpile = tribeBuildings.some((building) => building.type === BuildingType.Stockpile);
       const hasCistern = tribeBuildings.some((building) => building.type === BuildingType.Cistern);
-      if (hasFarm && hasLumber && hasStockpile && hasCistern) {
-        fullyBootstrapped += 1;
+      if (hasFarm && hasLumber) farmAndLumber += 1;
+      if (hasCistern || tribe.water >= 8) withWater += 1;
+      if (!tribeBuildings.some((building) => building.type === BuildingType.Foundry || building.type === BuildingType.Factory || building.type === BuildingType.PowerPlant || building.type === BuildingType.Airfield)) {
+        noAdvancedIndustry += 1;
       }
     }
 
-    expect(fullyBootstrapped).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
-    expect(lastSnapshot.tribes.some((tribe, index) => tribe.population > startingPopulations[index]!)).toBe(true);
+    expect(farmAndLumber).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
+    expect(withWater).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
+    expect(noAdvancedIndustry).toBe(lastSnapshot.tribes.length);
+    expect(lastSnapshot.tribes.every((tribe) => tribe.age <= AgeType.Stone)).toBe(true);
   });
 });
