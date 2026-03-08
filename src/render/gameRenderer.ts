@@ -967,7 +967,7 @@ export class GameRenderer {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.22);
+        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.22, 0, 0, true);
       }
     }
 
@@ -1636,7 +1636,7 @@ export class GameRenderer {
     }
   }
 
-  private drawBuilding(target: PixelTarget, building: BuildingSnapshot, tribe?: TribeSummary, detail = true, offsetX = 0, offsetY = 0): void {
+  private drawBuilding(target: PixelTarget, building: BuildingSnapshot, tribe?: TribeSummary, detail = true, offsetX = 0, offsetY = 0, showDynamicStock = false): void {
     const px = building.x * TILE_SIZE - offsetX;
     const py = building.y * TILE_SIZE - offsetY;
     const w = building.width * TILE_SIZE;
@@ -1881,6 +1881,23 @@ export class GameRenderer {
         break;
       default:
         break;
+    }
+
+    if (showDynamicStock && building.stockResource !== ResourceType.None && building.stockAmount > 0) {
+      const stockColor = resourceVisualColor(building.stockResource);
+      const pileWidth = building.stockAmount >= 20 ? 6 : building.stockAmount >= 10 ? 5 : 4;
+      const pileHeight = building.stockAmount >= 20 ? 3 : 2;
+      const pileX = px + Math.max(2, w - pileWidth - 3);
+      const pileY = py + h - pileHeight - 3;
+      drawPixelRect(target, pileX, pileY, pileWidth, pileHeight, stockColor, 0.92);
+      drawPixelRect(target, pileX + 1, pileY - 1, Math.max(2, pileWidth - 2), 1, lighten(stockColor, 18), 0.68);
+      if (building.stockResource === ResourceType.Wood || building.stockResource === ResourceType.Planks) {
+        drawPixelRect(target, pileX, pileY + pileHeight, pileWidth, 1, 0x6f4525, 0.82);
+      } else if (building.stockResource === ResourceType.Stone || building.stockResource === ResourceType.Clay || building.stockResource === ResourceType.Ore) {
+        drawPixelRect(target, pileX + 1, pileY + pileHeight, Math.max(2, pileWidth - 2), 1, 0xd7dde3, 0.6);
+      } else if (building.stockResource === ResourceType.Grain || building.stockResource === ResourceType.Berries || building.stockResource === ResourceType.Fish || building.stockResource === ResourceType.Meat) {
+        drawPixelRect(target, pileX + 1, pileY + pileHeight, Math.max(2, pileWidth - 2), 1, 0xf2ddb2, 0.62);
+      }
     }
   }
 

@@ -251,6 +251,20 @@ describe("simulation", () => {
     expect(tribe.resources[ResourceType.Stone]).toBeLessThanOrEqual(stoneBefore + 2);
   });
 
+  test("active settlements accumulate visible local building stocks", { timeout: 30000 }, () => {
+    const sim = createSimulation("local-stocks", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 900; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.buildings.some((building) => building.stockResource !== ResourceType.None && building.stockAmount > 0)).toBe(true);
+  });
+
   test("stable stone-age tribes begin primitive industry before bronze", { timeout: 30000 }, () => {
     const sim = createSimulation("stone-industry", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();

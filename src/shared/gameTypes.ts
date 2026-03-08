@@ -423,6 +423,8 @@ export type BuildingSnapshot = {
   width: number;
   height: number;
   hp: number;
+  stockResource: ResourceType;
+  stockAmount: number;
 };
 
 export type PlannedSiteSnapshot = {

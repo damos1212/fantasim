@@ -94,6 +94,7 @@ type BuildingState = {
   width: number;
   height: number;
   hp: number;
+  stock: number[];
 };
 
 type AnimalState = {
@@ -2881,6 +2882,8 @@ export class Simulation {
         return;
       }
 
+      const dropBuilding = this.findResourceDropBuilding(tribe.id, agent.x, agent.y, agent.carrying);
+      this.addBuildingStock(dropBuilding, agent.carrying, agent.carryingAmount);
       tribe.resources[agent.carrying] += agent.carryingAmount;
       if (agent.carrying === ResourceType.Fish || agent.carrying === ResourceType.Berries || agent.carrying === ResourceType.Meat || agent.carrying === ResourceType.Grain) {
         tribe.resources[ResourceType.Rations] += Math.ceil(agent.carryingAmount * 0.45);
@@ -3160,6 +3163,56 @@ export class Simulation {
       });
     const site = candidates[0];
     return site ? buildingCenter(site) : this.findNearestStorageSite(tribeId, originX, originY, resourceType);
+  }
+
+  private findResourceDropBuilding(tribeId: number, originX: number, originY: number, resourceType: ResourceType): BuildingState | null {
+    const preferredTypes =
+      resourceType === ResourceType.Wood
+        ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+        : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay
+          ? [BuildingType.Quarry, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+          : resourceType === ResourceType.Ore
+            ? [BuildingType.DeepMine, BuildingType.Mine, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+            : resourceType === ResourceType.Fish
+              ? [BuildingType.Fishery, BuildingType.FishingHut, BuildingType.Dock, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+              : resourceType === ResourceType.Berries || resourceType === ResourceType.Grain || resourceType === ResourceType.Meat || resourceType === ResourceType.Rations
+                ? [BuildingType.Farm, BuildingType.Orchard, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+                : resourceType === ResourceType.Horses || resourceType === ResourceType.Livestock || resourceType === ResourceType.Hides
+                  ? [BuildingType.Stable, BuildingType.Farm, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+                  : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
+    const candidates = this.buildingsForTribe(tribeId)
+      .filter((building) => preferredTypes.includes(building.type))
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        const typeBiasA = Math.max(0, 10 - preferredTypes.indexOf(a.type) * 2);
+        const typeBiasB = Math.max(0, 10 - preferredTypes.indexOf(b.type) * 2);
+        return (
+          (typeBiasB * 8 - manhattan(originX, originY, centerB.x, centerB.y) * 1.35)
+          - (typeBiasA * 8 - manhattan(originX, originY, centerA.x, centerA.y) * 1.35)
+        );
+      });
+    return candidates[0] ?? null;
+  }
+
+  private addBuildingStock(building: BuildingState | null, resourceType: ResourceType, amount: number): void {
+    if (!building || resourceType === ResourceType.None || amount <= 0) {
+      return;
+    }
+    building.stock[resourceType] = (building.stock[resourceType] ?? 0) + amount;
+  }
+
+  private topStoredResource(building: BuildingState): { resourceType: ResourceType; amount: number } {
+    let bestType = ResourceType.None;
+    let bestAmount = 0;
+    for (let resource = 0; resource < building.stock.length; resource += 1) {
+      const amount = building.stock[resource] ?? 0;
+      if (amount > bestAmount) {
+        bestAmount = amount;
+        bestType = resource as ResourceType;
+      }
+    }
+    return { resourceType: bestType, amount: bestAmount };
   }
 
   private performResourceTask(
@@ -3502,7 +3555,9 @@ export class Simulation {
     const building = this.buildings.find((entry) => entry.id === payload.buildingId);
     const poweredIndustry = this.buildingCount(tribe.id, BuildingType.PowerPlant) > 0 && (building?.type === BuildingType.Factory || building?.type === BuildingType.Foundry || building?.type === BuildingType.Armory);
     const directModernSite = building?.type === BuildingType.PowerPlant ? 1.35 : building?.type === BuildingType.Airfield ? 1.15 : poweredIndustry ? 1.2 : 1;
-    tribe.resources[payload.output] += Math.max(1, Math.floor(payload.amount * directModernSite));
+    const craftedAmount = Math.max(1, Math.floor(payload.amount * directModernSite));
+    tribe.resources[payload.output] += craftedAmount;
+    this.addBuildingStock(building ?? null, payload.output, craftedAmount);
   }
 
   private applyDamage(target: AgentState, amount: number): boolean {
@@ -6657,6 +6712,7 @@ export class Simulation {
       width: def.size[0],
       height: def.size[1],
       hp: 60 + buildingColorStrength(type) * 40,
+      stock: resourceArray(),
     };
     this.buildings.push(building);
     this.invalidateSummaryCaches();
@@ -7197,6 +7253,8 @@ export class Simulation {
       width: building.width,
       height: building.height,
       hp: Math.max(0, Math.floor(building.hp)),
+      stockResource: this.topStoredResource(building).resourceType,
+      stockAmount: this.topStoredResource(building).amount,
     }));
 
     const plannedSites: PlannedSiteSnapshot[] = this.jobs
