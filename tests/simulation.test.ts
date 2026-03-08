@@ -232,5 +232,24 @@ describe("simulation", () => {
       const warehouses = tribeBuildings.filter((building) => building.type === BuildingType.Warehouse).length;
       return stockpiles >= 2 || warehouses >= 1;
     })).toBe(true);
+    expect(new Set(lastSnapshot.buildings.map((building) => `${building.tribeId}:${building.type}:${building.x}:${building.y}`)).size).toBe(lastSnapshot.buildings.length);
+  });
+
+  test("stable stone-age tribes begin primitive industry before bronze", { timeout: 30000 }, () => {
+    const sim = createSimulation("stone-industry", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.tribes.some((tribe) => {
+      if (tribe.age < AgeType.Stone) return false;
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      return tribeBuildings.some((building) => building.type === BuildingType.Workshop || building.type === BuildingType.Mine);
+    })).toBe(true);
   });
 });

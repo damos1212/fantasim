@@ -760,7 +760,7 @@ export class Simulation {
         age: AgeType.Primitive,
         research: 0,
         faith: 0,
-        water: 60,
+        water: 72,
         resources: resourceArray(),
         morale: 82,
         capitalBuildingId: capital.id,
@@ -3896,7 +3896,11 @@ export class Simulation {
           && this.buildingCount(tribe.id, BuildingType.Farm) >= 2
           && this.hasBuilt(tribe.id, BuildingType.LumberCamp)
           && this.hasBuilt(tribe.id, BuildingType.Cistern)
+          && this.hasBuilt(tribe.id, BuildingType.Workshop)
+          && this.hasBuilt(tribe.id, BuildingType.Mine)
           && tribe.resources[ResourceType.StoneTools] >= 10
+          && tribe.resources[ResourceType.Planks] >= 4
+          && tribe.resources[ResourceType.Ore] >= 6
           && tribe.resources[ResourceType.Wood] >= 60
           && tribe.resources[ResourceType.Stone] >= 48
           && tribe.resources[ResourceType.Rations] >= population * 3.4
@@ -4375,6 +4379,18 @@ export class Simulation {
   private tryPlanBuildingAround(tribe: TribeState, type: BuildingType, priority: number, originX: number, originY: number, radius: number): void {
     const existingPlan = this.jobs.find((job) => job.tribeId === tribe.id && job.kind === "build" && (job.payload as BuildPayload | undefined)?.buildingType === type && manhattan(job.x, job.y, originX, originY) <= radius + 4);
     if (existingPlan) return;
+    if (this.buildingCount(tribe.id, type) >= this.maxBuildingCountForTribe(tribe, type)) return;
+    if (
+      this.hasBuilt(tribe.id, type) &&
+      type !== BuildingType.House &&
+      type !== BuildingType.Watchtower &&
+      type !== BuildingType.Farm &&
+      type !== BuildingType.Orchard &&
+      type !== BuildingType.Stockpile &&
+      type !== BuildingType.Warehouse
+    ) {
+      return;
+    }
 
     const def = getBuildingDef(type);
     if (tribe.age < def.minAge) return;
@@ -4580,8 +4596,17 @@ export class Simulation {
     if (tribe.age >= AgeType.Stone && infrastructureStable && population > 20 && !this.hasBuilt(tribe.id, BuildingType.Shrine)) {
       this.tryPlanBuilding(tribe, BuildingType.Shrine, 5);
     }
-    if (tribe.age >= AgeType.Bronze && infrastructureStable && !this.hasBuilt(tribe.id, BuildingType.Workshop)) {
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population >= 22 && !this.hasBuilt(tribe.id, BuildingType.Workshop)) {
       this.tryPlanBuilding(tribe, BuildingType.Workshop, 7);
+    }
+    if (
+      tribe.age >= AgeType.Stone &&
+      infrastructureStable &&
+      population >= 22 &&
+      !this.hasBuilt(tribe.id, BuildingType.Mine) &&
+      distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.OreVein, 18) <= 12
+    ) {
+      this.tryPlanBuilding(tribe, BuildingType.Mine, 7);
     }
     if (tribe.age >= AgeType.Bronze && infrastructureStable && !this.hasBuilt(tribe.id, BuildingType.School)) {
       this.tryPlanBuilding(tribe, BuildingType.School, 6);
@@ -4589,7 +4614,7 @@ export class Simulation {
     if (tribe.age >= AgeType.Bronze && infrastructureStable && population > 26 && !this.hasBuilt(tribe.id, BuildingType.Tavern)) {
       this.tryPlanBuilding(tribe, BuildingType.Tavern, 5);
     }
-    if (tribe.age >= AgeType.Bronze && !this.hasBuilt(tribe.id, BuildingType.Mine)) {
+    if (tribe.age >= AgeType.Stone && !this.hasBuilt(tribe.id, BuildingType.Mine) && distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.OreVein, 18) <= 12) {
       this.tryPlanBuilding(tribe, BuildingType.Mine, 6);
     }
     if ((tribe.race.type === RaceType.Dwarves || tribe.race.type === RaceType.Darkfolk) && tribe.age >= AgeType.Bronze && this.buildingCount(tribe.id, BuildingType.TunnelEntrance) < 1) {
@@ -5726,7 +5751,16 @@ export class Simulation {
   private tryPlanBuilding(tribe: TribeState, type: BuildingType, priority: number): void {
     const existingPlan = this.jobs.find((job) => job.tribeId === tribe.id && job.kind === "build" && (job.payload as BuildPayload | undefined)?.buildingType === type);
     if (existingPlan) return;
-    if (this.hasBuilt(tribe.id, type) && type !== BuildingType.House && type !== BuildingType.Watchtower && type !== BuildingType.Farm && type !== BuildingType.Orchard) {
+    if (this.buildingCount(tribe.id, type) >= this.maxBuildingCountForTribe(tribe, type)) return;
+    if (
+      this.hasBuilt(tribe.id, type) &&
+      type !== BuildingType.House &&
+      type !== BuildingType.Watchtower &&
+      type !== BuildingType.Farm &&
+      type !== BuildingType.Orchard &&
+      type !== BuildingType.Stockpile &&
+      type !== BuildingType.Warehouse
+    ) {
       return;
     }
 
@@ -5781,6 +5815,23 @@ export class Simulation {
         },
       });
     }
+  }
+
+  private maxBuildingCountForTribe(tribe: TribeState, type: BuildingType): number {
+    const population = this.populationOf(tribe.id);
+    if (type === BuildingType.Stockpile) {
+      return tribe.age === AgeType.Primitive ? 2 : tribe.age === AgeType.Stone ? (population >= 28 ? 3 : 2) : population >= 48 ? 4 : 3;
+    }
+    if (type === BuildingType.Warehouse) {
+      if (tribe.age < AgeType.Bronze) return 0;
+      if (tribe.age < AgeType.Iron) return population >= 34 ? 1 : 0;
+      if (tribe.age < AgeType.Industrial) return population >= 52 ? 2 : 1;
+      return population >= 72 ? 3 : 2;
+    }
+    if (type === BuildingType.Cistern) {
+      return population >= 42 ? 3 : 2;
+    }
+    return Number.POSITIVE_INFINITY;
   }
 
   private constructionHaulPlan(cost: Partial<Record<ResourceType, number>>): Array<{ resourceType: ResourceType; amount: number }> {
@@ -6070,6 +6121,8 @@ export class Simulation {
       unlock(this.hasBuilt(tribe.id, BuildingType.Farm), "Field Farming", "Water Catching");
       unlock(this.hasBuilt(tribe.id, BuildingType.Orchard), "Orchard Keeping");
       unlock(this.hasBuilt(tribe.id, BuildingType.Quarry), "Quarrying");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Mine), "Surface Mining");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Workshop), "Basic Workshops", "Wood Shaping");
       unlock(this.hasBuilt(tribe.id, BuildingType.Cistern), "Cisterns");
       unlock(this.hasBuilt(tribe.id, BuildingType.MountainHall), "Mountain Halls");
       unlock(this.hasBuilt(tribe.id, BuildingType.Stable), "Animal Pens");
@@ -6081,7 +6134,7 @@ export class Simulation {
 
     if (tribe.age >= AgeType.Bronze) {
       unlock(this.hasBuilt(tribe.id, BuildingType.Mine), "Deep Mining");
-      unlock(this.hasBuilt(tribe.id, BuildingType.Workshop), "Workshops", "Wheelwrighting");
+      unlock(this.hasBuilt(tribe.id, BuildingType.Workshop), "Wheelwrighting");
       unlock(this.hasBuilt(tribe.id, BuildingType.Warehouse), "Warehouses", "Storehouse Logistics");
       unlock(this.hasBuilt(tribe.id, BuildingType.School), "Schools");
       unlock(this.hasBuilt(tribe.id, BuildingType.Tavern), "Taverns");
@@ -6754,34 +6807,34 @@ export class Simulation {
     const canals = this.irrigationBonusForTribe(tribeId);
     const wellsOfTown = this.buildingCount(tribeId, BuildingType.CapitalHall) + this.buildingCount(tribeId, BuildingType.Castle);
     const pumps = this.buildingCount(tribeId, BuildingType.PowerPlant);
-    return Math.floor(38 + cisterns * 76 + canals * 6 + wellsOfTown * 24 + pumps * 30 + population * 1.7);
+    return Math.floor(46 + cisterns * 82 + canals * 7 + wellsOfTown * 26 + pumps * 30 + population * 1.9);
   }
 
   private waterIncomeForTribe(tribeId: number, weather: WeatherKind): number {
     const tribe = this.tribes[tribeId]!;
     const cisterns = this.buildingCount(tribeId, BuildingType.Cistern);
-    const townDraw = this.buildingCount(tribeId, BuildingType.CapitalHall) * (tribe.age === AgeType.Primitive ? 7 : 4);
+    const townDraw = this.buildingCount(tribeId, BuildingType.CapitalHall) * (tribe.age === AgeType.Primitive ? 8 : 5);
     const canals = this.irrigationBonusForTribe(tribeId);
     const waterworks = this.waterworksScoreForTribe(tribeId);
     const pumps = this.buildingCount(tribeId, BuildingType.PowerPlant);
     const surfaceRunoff = this.surfaceWaterFarmSupportForTribe(tribeId);
-    const nearbyWater = hasAdjacentWater(this.world, tribe.capitalX, tribe.capitalY, 10) ? 9 : 4;
+    const nearbyWater = hasAdjacentWater(this.world, tribe.capitalX, tribe.capitalY, 10) ? 10 : 6;
     const springMelt = this.season === SeasonType.Spring && (tribe.race.type === RaceType.Dwarves || tribe.race.type === RaceType.Darkfolk) ? 3 : 0;
     const weatherGain =
       weather === WeatherKind.Storm ? 12
       : weather === WeatherKind.Rain ? 8
       : weather === WeatherKind.Blizzard ? 5
       : weather === WeatherKind.Fog ? 2
-      : weather === WeatherKind.Heatwave ? -4
+      : weather === WeatherKind.Heatwave ? -2
       : 0;
-    return Math.max(0, Math.floor(3 + townDraw + cisterns * 3 + canals * 0.7 + waterworks * 0.4 + pumps * 1.8 + surfaceRunoff * 0.45 + nearbyWater + springMelt + weatherGain));
+    return Math.max(0, Math.floor(4 + townDraw + cisterns * 3.5 + canals * 0.8 + waterworks * 0.45 + pumps * 1.8 + surfaceRunoff * 0.45 + nearbyWater + springMelt + weatherGain));
   }
 
   private waterDemandForTribe(tribeId: number, population: number, weather: WeatherKind): number {
     const farms = this.buildingCount(tribeId, BuildingType.Farm);
     const orchards = this.buildingCount(tribeId, BuildingType.Orchard);
     const stables = this.buildingCount(tribeId, BuildingType.Stable);
-    const baseline = population * 0.28 + farms * 1 + orchards * 0.65 + stables * 0.35;
+    const baseline = population * 0.24 + farms * 0.9 + orchards * 0.55 + stables * 0.25;
     const weatherPressure =
       weather === WeatherKind.Heatwave ? 6
       : weather === WeatherKind.Storm || weather === WeatherKind.Rain ? -2

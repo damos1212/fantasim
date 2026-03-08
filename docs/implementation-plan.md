@@ -650,6 +650,7 @@ The following major systems are still not fully implemented and should remain vi
 - diplomacy effects that materially change survival pressure through alliance aid convoys, tribute strain, and tributary morale/rebellion pressure
 - first-contact/discovery gating so kingdoms explore outward and only broaden diplomacy, trade, and war after establishing contact
 - stronger logistics-district growth so expanding resource clusters seed nearby stockpiles and later warehouses instead of hauling everything through the capital forever
+- earlier Stone-age proto-industry so stable tribes can open workshops and surface mines before Bronze while water pressure and storage growth stay better balanced
 - stronger render polish through underground/surface view toggles, animated water and lava shimmer, drifting cloud shadows, and subtler building shadowing
 
 ## Expansion Roadmap
