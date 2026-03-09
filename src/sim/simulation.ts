@@ -1929,6 +1929,7 @@ export class Simulation {
     for (const tribe of this.tribes) {
       const population = this.populationOf(tribe.id);
       const capacity = this.waterCapacityForTribe(tribe.id, population);
+      const reserveFloor = Math.max(20, population * 0.7 + (this.weatherAt(tribe.capitalX, tribe.capitalY) === WeatherKind.Heatwave ? 8 : 0));
       const tribeBuildings = this.buildingsForTribe(tribe.id);
       const cisterns = tribeBuildings.filter((building) => building.type === BuildingType.Cistern);
       const farms = tribeBuildings.filter((building) => building.type === BuildingType.Farm || building.type === BuildingType.Orchard);
@@ -2004,17 +2005,21 @@ export class Simulation {
           }
         }
 
-        if ((cisternNear || connectedWetCanal) && tribe.water > Math.max(8, population * 0.22)) {
+        if ((cisternNear || connectedWetCanal) && tribe.water > reserveFloor) {
           for (let dy = 0; dy < farm.height; dy += 1) {
             for (let dx = 0; dx < farm.width; dx += 1) {
               const index = indexOf(farm.x + dx, farm.y + dy, this.world.width);
               const depth = this.world.surfaceWater[index]!;
               if (depth >= 18) continue;
+              const remaining = tribe.water - reserveFloor;
+              if (remaining <= 0) break;
               const add = Math.min(6, 18 - depth);
               if (add <= 0) continue;
-              this.addSurfaceWater(index, add);
-              tribe.water = Math.max(0, tribe.water - Math.ceil(add * 0.35));
-              released += add;
+              const spend = Math.min(Math.ceil(add * 0.35), Math.max(1, remaining));
+              const added = Math.min(add, spend * 3);
+              this.addSurfaceWater(index, added);
+              tribe.water = Math.max(0, tribe.water - spend);
+              released += added;
             }
           }
         }
@@ -2028,11 +2033,15 @@ export class Simulation {
             this.addSurfaceWater(index, target - depth);
             continue;
           }
-          if ((cisternNear || connectedWetCanal) && tribe.water > Math.max(6, population * 0.12)) {
+          if ((cisternNear || connectedWetCanal) && tribe.water > reserveFloor) {
+            const remaining = tribe.water - reserveFloor;
+            if (remaining <= 0) continue;
             const added = Math.min(target - depth, 5);
-            this.addSurfaceWater(index, added);
-            tribe.water = Math.max(0, tribe.water - Math.ceil(added * 0.45));
-            released += added;
+            const spend = Math.min(Math.ceil(added * 0.45), Math.max(1, remaining));
+            const delivered = Math.min(added, spend * 2);
+            this.addSurfaceWater(index, delivered);
+            tribe.water = Math.max(0, tribe.water - spend);
+            released += delivered;
           }
         }
       }
@@ -4775,6 +4784,34 @@ export class Simulation {
       }
     }
 
+    if (!bootstrap && population >= 18) {
+      for (const farm of farms) {
+        const farmResource = farm.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain;
+        if (!this.siteHasExtractionCapacity(farm, farmResource, false)) continue;
+        const center = buildingCenter(farm);
+        this.enqueueResourceJobsAround(tribe, center.x, center.y, [farmResource], "farm", 7, 1);
+      }
+      for (const camp of lumberCamps) {
+        if (!this.siteHasExtractionCapacity(camp, ResourceType.Wood, false)) continue;
+        const center = buildingCenter(camp);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.Trees, "cut_tree", 8, 1);
+      }
+      for (const quarry of quarries) {
+        const center = buildingCenter(quarry);
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Stone, false)) {
+          this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.StoneOutcrop, "quarry", 8, 1);
+        }
+        if (this.siteHasExtractionCapacity(quarry, ResourceType.Clay, false)) {
+          this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.ClayDeposit, "quarry", 7, 1);
+        }
+      }
+      for (const mine of mines) {
+        if (!this.siteHasExtractionCapacity(mine, ResourceType.Ore, false)) continue;
+        const center = buildingCenter(mine);
+        this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.OreVein, "mine", 9, 1);
+      }
+    }
+
     if (!bootstrap && tribe.race.personality.ecology > 0.7 && this.tickCount % (STRATEGY_TICKS * 2) === 1) {
       this.enqueueReplantJobs(tribe, 2);
     }
@@ -4859,8 +4896,13 @@ export class Simulation {
   }
 
   private tryPlanBuildingAround(tribe: TribeState, type: BuildingType, priority: number, originX: number, originY: number, radius: number): void {
-    const existingPlan = this.jobs.find((job) => job.tribeId === tribe.id && job.kind === "build" && (job.payload as BuildPayload | undefined)?.buildingType === type && manhattan(job.x, job.y, originX, originY) <= radius + 4);
-    if (existingPlan) return;
+    const nearbyPlanCount = this.jobs.filter((job) =>
+      job.tribeId === tribe.id
+      && job.kind === "build"
+      && (job.payload as BuildPayload | undefined)?.buildingType === type
+      && manhattan(job.x, job.y, originX, originY) <= radius + 4,
+    ).length;
+    if (nearbyPlanCount >= this.maxConcurrentBuildingPlans(tribe, type)) return;
     if (this.buildingCount(tribe.id, type) >= this.maxBuildingCountForTribe(tribe, type)) return;
     if (
       this.hasBuilt(tribe.id, type) &&
@@ -4931,7 +4973,7 @@ export class Simulation {
 
   private generateDistrictPlans(tribe: TribeState): void {
     const population = this.populationOf(tribe.id);
-    if (population < 20) {
+    if (population < 16) {
       return;
     }
     const storages = this.buildingsForTribe(tribe.id)
@@ -4968,28 +5010,38 @@ export class Simulation {
       .filter((entry) => entry.storageDistance >= 14)
       .sort((a, b) => b.storageDistance - a.storageDistance);
 
-    const target = remoteCandidates[0];
-    if (!target) {
+    const targets = remoteCandidates.slice(0, population >= 28 ? 2 : 1);
+    if (targets.length === 0) {
       return;
     }
 
-    const nearbyStorage = storages.some((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 7);
-    if (!nearbyStorage && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 7)) {
-      this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 6, target.center.x, target.center.y, 7);
-      return;
+    for (const target of targets) {
+      const nearbyStorage = storages.some((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 7);
+      if (!nearbyStorage && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 7)) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, target.center.x, target.center.y, 7);
+        continue;
+      }
+
+      if (
+        tribe.age >= AgeType.Bronze &&
+        population >= 24 &&
+        target.storageDistance >= 20 &&
+        !storages.some((building) => building.type === BuildingType.Warehouse && manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 8) &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 8)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Warehouse, 8, target.center.x, target.center.y, 8);
+      }
+
+      if (
+        population >= 18 &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 7) < 2 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 7)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.House, 6, target.center.x, target.center.y, 7);
+      }
     }
 
-    if (
-      tribe.age >= AgeType.Bronze &&
-      population >= 30 &&
-      target.storageDistance >= 22 &&
-      !storages.some((building) => building.type === BuildingType.Warehouse && manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 8) &&
-      !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 8)
-    ) {
-      this.tryPlanBuildingAround(tribe, BuildingType.Warehouse, 7, target.center.x, target.center.y, 8);
-    }
-
-    const activeHub = storageHubs.find((hub) => hub.top.resourceType !== ResourceType.None && hub.top.amount >= 64) ?? storageHubs[0];
+    const activeHub = storageHubs.find((hub) => hub.top.resourceType !== ResourceType.None && hub.top.amount >= 40) ?? storageHubs[0];
     if (!activeHub) {
       return;
     }
@@ -5074,11 +5126,23 @@ export class Simulation {
       || !this.hasBuilt(tribe.id, BuildingType.LumberCamp)
       || !this.hasBuilt(tribe.id, BuildingType.Cistern)
       || (!this.hasBuilt(tribe.id, BuildingType.Quarry) && tribe.resources[ResourceType.Stone] < 36);
+    const desiredFarms = population >= 54 ? 4 : population >= 34 ? 3 : 2;
+    const desiredLumber = population >= 46 ? 3 : 2;
+    const desiredQuarries = population >= 52 ? 3 : 2;
+    const desiredStockpiles = population >= 48 ? 3 : 2;
+    const desiredWarehouses = tribe.age >= AgeType.Iron ? (population >= 64 ? 3 : 2) : population >= 34 ? 1 : 0;
+    const activeStorageHubs = this.buildingsForTribe(tribe.id)
+      .filter((building) =>
+        building.type === BuildingType.Stockpile
+        || building.type === BuildingType.Warehouse
+        || building.type === BuildingType.CapitalHall,
+      )
+      .filter((building) => this.topStoredResource(building).amount >= 24);
 
     if (lowWater && this.buildingCount(tribe.id, BuildingType.Cistern) < 2) {
       this.tryPlanBuilding(tribe, BuildingType.Cistern, 9);
     }
-    if (lowFood && this.buildingCount(tribe.id, BuildingType.Farm) < 2) {
+    if (lowFood && this.buildingCount(tribe.id, BuildingType.Farm) < desiredFarms) {
       this.tryPlanBuilding(tribe, BuildingType.Farm, 10);
       if (tribe.race.personality.ecology > 0.55) {
         this.tryPlanBuilding(tribe, BuildingType.Orchard, 8);
@@ -5091,16 +5155,16 @@ export class Simulation {
         this.tryPlanBuilding(tribe, BuildingType.FishingHut, 8);
       }
     }
-    if (lowWood && this.buildingCount(tribe.id, BuildingType.LumberCamp) < 2) {
+    if (lowWood && this.buildingCount(tribe.id, BuildingType.LumberCamp) < desiredLumber) {
       this.tryPlanBuilding(tribe, BuildingType.LumberCamp, 9);
     }
-    if (lowStone && this.buildingCount(tribe.id, BuildingType.Quarry) < 2) {
+    if (lowStone && this.buildingCount(tribe.id, BuildingType.Quarry) < desiredQuarries) {
       this.tryPlanBuilding(tribe, BuildingType.Quarry, 8);
     }
-    if ((lowFood || lowWood || lowStone) && this.buildingCount(tribe.id, BuildingType.Stockpile) < 2) {
+    if ((lowFood || lowWood || lowStone) && this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
       this.tryPlanBuilding(tribe, BuildingType.Stockpile, 8);
     }
-    if (tribe.age >= AgeType.Bronze && (lowFood || lowWood || lowStone || lowWater) && this.buildingCount(tribe.id, BuildingType.Warehouse) < 1) {
+    if (tribe.age >= AgeType.Bronze && (lowFood || lowWood || lowStone || lowWater) && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
       this.tryPlanBuilding(tribe, BuildingType.Warehouse, 9);
     }
 
@@ -5127,10 +5191,10 @@ export class Simulation {
       this.tryPlanBuilding(tribe, BuildingType.House, 8);
     }
 
-    if (population > 18 && this.buildingCount(tribe.id, BuildingType.Stockpile) < 2) {
+    if (population > 16 && this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
       this.tryPlanBuilding(tribe, BuildingType.Stockpile, 6);
     }
-    if (tribe.age >= AgeType.Bronze && population > 28 && this.buildingCount(tribe.id, BuildingType.Warehouse) < 1) {
+    if (tribe.age >= AgeType.Bronze && population > 22 && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
       this.tryPlanBuilding(tribe, BuildingType.Warehouse, 6);
     }
     if (this.buildingCount(tribe.id, BuildingType.Cistern) < 1) {
@@ -5143,8 +5207,11 @@ export class Simulation {
     if (!this.hasBuilt(tribe.id, BuildingType.Farm)) {
       this.tryPlanBuilding(tribe, BuildingType.Farm, 7);
     }
-    if (tribe.age >= AgeType.Stone && population > 22 && this.buildingCount(tribe.id, BuildingType.Farm) < 2) {
+    if (tribe.age >= AgeType.Stone && population > 18 && this.buildingCount(tribe.id, BuildingType.Farm) < desiredFarms) {
       this.tryPlanBuilding(tribe, BuildingType.Farm, 6);
+    }
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 28 && this.buildingCount(tribe.id, BuildingType.Farm) < desiredFarms + 1) {
+      this.tryPlanBuilding(tribe, BuildingType.Farm, 5);
     }
     if (!this.hasBuilt(tribe.id, BuildingType.LumberCamp)) {
       this.tryPlanBuilding(tribe, BuildingType.LumberCamp, 7);
@@ -5157,6 +5224,9 @@ export class Simulation {
     }
     if (tribe.race.personality.ecology > 0.65 && tribe.age >= AgeType.Stone && infrastructureStable && this.buildingCount(tribe.id, BuildingType.Orchard) < 2) {
       this.tryPlanBuilding(tribe, BuildingType.Orchard, 5);
+    }
+    if (infrastructureStable && population > 24 && housing < population + 6) {
+      this.tryPlanBuilding(tribe, BuildingType.House, 6);
     }
     if (tribe.age >= AgeType.Stone && infrastructureStable && population > 20 && !this.hasBuilt(tribe.id, BuildingType.Shrine)) {
       this.tryPlanBuilding(tribe, BuildingType.Shrine, 5);
@@ -5239,6 +5309,18 @@ export class Simulation {
     }
     if (tribe.age >= AgeType.Medieval && population > 42 && contacts > 0 && this.meanHostility(tribe) > 10 && !this.hasBuilt(tribe.id, BuildingType.Castle)) {
       this.tryPlanBuilding(tribe, BuildingType.Castle, 9);
+    }
+
+    if (infrastructureStable && population >= 30) {
+      for (const hub of activeStorageHubs.slice(0, 2)) {
+        const center = buildingCenter(hub);
+        if (this.nearbyBuildingCount(tribe.id, BuildingType.House, center.x, center.y, 8) < 3 && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, center.x, center.y, 8)) {
+          this.tryPlanBuildingAround(tribe, BuildingType.House, 6, center.x, center.y, 9);
+        }
+        if (this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, center.x, center.y, 9) === 0 && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, center.x, center.y, 9)) {
+          this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, center.x, center.y, 9);
+        }
+      }
     }
     if (
       tribe.age >= AgeType.Gunpowder &&
@@ -6449,8 +6531,12 @@ export class Simulation {
   }
 
   private tryPlanBuilding(tribe: TribeState, type: BuildingType, priority: number): void {
-    const existingPlan = this.jobs.find((job) => job.tribeId === tribe.id && job.kind === "build" && (job.payload as BuildPayload | undefined)?.buildingType === type);
-    if (existingPlan) return;
+    const planCount = this.jobs.filter((job) =>
+      job.tribeId === tribe.id
+      && job.kind === "build"
+      && (job.payload as BuildPayload | undefined)?.buildingType === type,
+    ).length;
+    if (planCount >= this.maxConcurrentBuildingPlans(tribe, type)) return;
     if (this.buildingCount(tribe.id, type) >= this.maxBuildingCountForTribe(tribe, type)) return;
     if (
       this.hasBuilt(tribe.id, type) &&
@@ -6534,6 +6620,20 @@ export class Simulation {
       return population >= 42 ? 3 : 2;
     }
     return Number.POSITIVE_INFINITY;
+  }
+
+  private maxConcurrentBuildingPlans(tribe: TribeState, type: BuildingType): number {
+    const population = this.populationOf(tribe.id);
+    if (type === BuildingType.House) {
+      return population >= 40 ? 3 : 2;
+    }
+    if (type === BuildingType.Farm || type === BuildingType.Orchard || type === BuildingType.LumberCamp || type === BuildingType.Quarry) {
+      return population >= 28 ? 2 : 1;
+    }
+    if (type === BuildingType.Stockpile || type === BuildingType.Warehouse) {
+      return population >= 32 ? 2 : 1;
+    }
+    return 1;
   }
 
   private constructionHaulPlan(cost: Partial<Record<ResourceType, number>>): Array<{ resourceType: ResourceType; amount: number }> {
@@ -6628,10 +6728,12 @@ export class Simulation {
   }
 
   private roadExpansionRange(type: BuildingType): number {
-    if (type === BuildingType.Dock || type === BuildingType.FishingHut || type === BuildingType.Fishery) return 18;
-    if (type === BuildingType.Farm || type === BuildingType.Orchard || type === BuildingType.LumberCamp || type === BuildingType.Quarry || type === BuildingType.Mine || type === BuildingType.DeepMine || type === BuildingType.TunnelEntrance) return 16;
-    if (type === BuildingType.Warehouse || type === BuildingType.Stockpile || type === BuildingType.House || type === BuildingType.MountainHall) return 12;
-    return 14;
+    if (type === BuildingType.Dock || type === BuildingType.FishingHut || type === BuildingType.Fishery) return 24;
+    if (type === BuildingType.Farm || type === BuildingType.Orchard) return 22;
+    if (type === BuildingType.LumberCamp || type === BuildingType.Quarry || type === BuildingType.Mine || type === BuildingType.DeepMine || type === BuildingType.TunnelEntrance) return 24;
+    if (type === BuildingType.Warehouse || type === BuildingType.Stockpile) return 18;
+    if (type === BuildingType.House || type === BuildingType.MountainHall) return 16;
+    return 18;
   }
 
   private hasRoadInfluence(tribeId: number, type: BuildingType, x: number, y: number, width: number, height: number): boolean {
@@ -6676,15 +6778,19 @@ export class Simulation {
 
   private findBuildingSite(tribe: TribeState, def: { type: BuildingType; size: [number, number] }): { x: number; y: number } | null {
     const radius = this.siteSearchRadius(tribe, def.type);
+    const anchors = this.siteSearchAnchors(tribe, def.type);
     let best: { x: number; y: number; score: number } | null = null;
-    for (let dy = -radius; dy <= radius; dy += 1) {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        const x = tribe.capitalX + dx;
-        const y = tribe.capitalY + dy;
-        if (!this.canPlaceBuilding(def.type, x, y, def.size[0], def.size[1], tribe.id)) continue;
-        const score = this.scoreBuildingSite(tribe, def.type, x, y);
-        if (!best || score > best.score) {
-          best = { x, y, score };
+    for (const anchor of anchors) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const x = anchor.x + dx;
+          const y = anchor.y + dy;
+          if (!this.canPlaceBuilding(def.type, x, y, def.size[0], def.size[1], tribe.id)) continue;
+          const anchorDistance = manhattan(anchor.x, anchor.y, x, y);
+          const score = this.scoreBuildingSite(tribe, def.type, x, y) - anchorDistance * 0.12 + anchor.weight;
+          if (!best || score > best.score) {
+            best = { x, y, score };
+          }
         }
       }
     }
@@ -6692,13 +6798,70 @@ export class Simulation {
   }
 
   private siteSearchRadius(tribe: TribeState, type: BuildingType): number {
+    const population = this.populationOf(tribe.id);
     if (this.isBootstrapPhase(tribe)) {
       if (type === BuildingType.Farm || type === BuildingType.Orchard) return 12;
       if (type === BuildingType.LumberCamp || type === BuildingType.Quarry) return 14;
       if (type === BuildingType.Cistern || type === BuildingType.Stockpile || type === BuildingType.House) return 10;
     }
-    if (type === BuildingType.Dock || type === BuildingType.FishingHut || type === BuildingType.Fishery) return Math.min(MAX_JOB_RADIUS, 24);
-    return MAX_JOB_RADIUS;
+    if (type === BuildingType.Dock || type === BuildingType.FishingHut || type === BuildingType.Fishery) return Math.min(MAX_JOB_RADIUS, population >= 44 ? 28 : 24);
+    if (type === BuildingType.Farm || type === BuildingType.Orchard || type === BuildingType.LumberCamp || type === BuildingType.Quarry || type === BuildingType.Mine || type === BuildingType.DeepMine || type === BuildingType.TunnelEntrance) {
+      return Math.min(MAX_JOB_RADIUS + 8, population >= 52 ? 34 : population >= 32 ? 28 : 22);
+    }
+    if (type === BuildingType.Stockpile || type === BuildingType.Warehouse || type === BuildingType.House || type === BuildingType.MountainHall) {
+      return Math.min(MAX_JOB_RADIUS + 6, population >= 56 ? 26 : population >= 32 ? 22 : 16);
+    }
+    return Math.min(MAX_JOB_RADIUS + 4, population >= 48 ? 24 : 18);
+  }
+
+  private siteSearchAnchors(tribe: TribeState, type: BuildingType): Array<{ x: number; y: number; weight: number }> {
+    const anchors = new Map<string, { x: number; y: number; weight: number }>();
+    const addAnchor = (x: number, y: number, weight: number) => {
+      const key = `${x},${y}`;
+      const existing = anchors.get(key);
+      if (!existing || existing.weight < weight) {
+        anchors.set(key, { x, y, weight });
+      }
+    };
+
+    addAnchor(tribe.capitalX, tribe.capitalY, 18);
+
+    const tribeBuildings = this.buildingsForTribe(tribe.id);
+    const storages = tribeBuildings
+      .filter((building) => building.type === BuildingType.CapitalHall || building.type === BuildingType.Stockpile || building.type === BuildingType.Warehouse)
+      .map((building) => {
+        const center = buildingCenter(building);
+        const top = this.topStoredResource(building);
+        return { center, weight: 14 + Math.min(18, top.amount * 0.08) };
+      })
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 4);
+    for (const storage of storages) {
+      addAnchor(storage.center.x, storage.center.y, storage.weight);
+    }
+
+    const extractorTypes =
+      type === BuildingType.Farm || type === BuildingType.Orchard || type === BuildingType.Cistern
+        ? [BuildingType.Farm, BuildingType.Orchard, BuildingType.Stockpile, BuildingType.Warehouse]
+        : type === BuildingType.LumberCamp
+          ? [BuildingType.LumberCamp, BuildingType.Stockpile, BuildingType.Warehouse]
+          : type === BuildingType.Quarry || type === BuildingType.Mine || type === BuildingType.DeepMine || type === BuildingType.TunnelEntrance || type === BuildingType.MountainHall
+            ? [BuildingType.Quarry, BuildingType.Mine, BuildingType.DeepMine, BuildingType.TunnelEntrance, BuildingType.MountainHall, BuildingType.Stockpile, BuildingType.Warehouse]
+            : type === BuildingType.Dock || type === BuildingType.FishingHut || type === BuildingType.Fishery
+              ? [BuildingType.Dock, BuildingType.FishingHut, BuildingType.Fishery, BuildingType.Warehouse, BuildingType.Stockpile]
+              : type === BuildingType.House
+                ? [BuildingType.House, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+                : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall, BuildingType.House, BuildingType.Workshop];
+    for (const building of tribeBuildings) {
+      if (!extractorTypes.includes(building.type)) continue;
+      const center = buildingCenter(building);
+      const localLoad = Math.min(16, Math.max(0, this.topStoredResource(building).amount * 0.06));
+      addAnchor(center.x, center.y, 8 + localLoad);
+    }
+
+    return [...anchors.values()]
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 6);
   }
 
   private findBuildingSiteForSeed(tribeId: number, def: { type: BuildingType; size: [number, number] }): { x: number; y: number } | null {
@@ -7012,29 +7175,41 @@ export class Simulation {
   }
 
   private scoreBuildingSite(tribe: TribeState, type: BuildingType, x: number, y: number): number {
+    const population = this.populationOf(tribe.id);
     const centerDistance = manhattan(tribe.capitalX, tribe.capitalY, x, y);
     const index = indexOf(x, y, this.world.width);
     const roadScore = this.nearbyRoadScore(x, y, 2);
-    let score = -centerDistance * 0.6 + this.world.fertility[index] * 0.02 + roadScore * 2.2;
+    const spreadFactor = clamp((population - 18) * 0.018 + Math.max(0, this.buildingsForTribe(tribe.id).length - 8) * 0.02, 0, 0.42);
+    let score = -centerDistance * (0.5 - spreadFactor * 0.75) + this.world.fertility[index] * 0.02 + roadScore * 2.4;
+    const nearestStorage = this.nearestBuildingDistance(tribe.id, BuildingType.Warehouse, x, y);
+    const nearestStockpile = this.nearestBuildingDistance(tribe.id, BuildingType.Stockpile, x, y);
+    const nearestHouse = this.nearestBuildingDistance(tribe.id, BuildingType.House, x, y);
+    const storageDistance = Math.min(nearestStorage, nearestStockpile, this.nearestBuildingDistance(tribe.id, BuildingType.CapitalHall, x, y));
+    const housingDistance = Math.min(nearestHouse, this.nearestBuildingDistance(tribe.id, BuildingType.MountainHall, x, y));
 
     if (type === BuildingType.Farm || type === BuildingType.Orchard) {
+      const targetDistance = population >= 40 ? 16 : population >= 26 ? 12 : 9;
       score += this.world.fertility[index] * 0.45 + (hasAdjacentWater(this.world, x, y, 5) ? 14 : 0);
       if (this.world.terrain[index] === TerrainType.Grass || this.world.terrain[index] === TerrainType.ForestFloor) score += 40;
-      score += 28 - Math.abs(centerDistance - 9) * 2.8;
+      score += 32 - Math.abs(centerDistance - (targetDistance + 2)) * 2.1;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Farm, x, y, 10) * 8;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Orchard, x, y, 10) * 6;
+      score += Math.max(0, 18 - storageDistance) * 1.6;
     }
     if (type === BuildingType.LumberCamp) {
       score -= distanceToNearestFeature(this.world, x, y, (feature) => feature === FeatureType.Trees, 14) * 3;
-      score += 24 - Math.abs(centerDistance - 10) * 2.2;
+      score += 28 - Math.abs(centerDistance - (population >= 32 ? 16 : 12)) * 1.6;
+      score += Math.max(0, 18 - storageDistance) * 1.35;
     }
     if (type === BuildingType.Quarry) {
       score -= distanceToNearestFeature(this.world, x, y, (feature) => feature === FeatureType.StoneOutcrop || feature === FeatureType.ClayDeposit, 14) * 3;
-      score += 20 - Math.abs(centerDistance - 11) * 2.1;
+      score += 24 - Math.abs(centerDistance - (population >= 30 ? 17 : 13)) * 1.6;
+      score += Math.max(0, 18 - storageDistance) * 1.25;
     }
     if (type === BuildingType.Mine) {
       score -= distanceToNearestFeature(this.world, x, y, (feature) => feature === FeatureType.OreVein, 16) * 4;
-      score += Math.max(0, centerDistance - 14) * 0.7;
+      score += Math.max(0, centerDistance - 12) * 0.9;
+      score += Math.max(0, 18 - storageDistance) * 1.4;
     }
     if (type === BuildingType.MountainHall) {
       const terrain = this.world.terrain[index];
@@ -7074,7 +7249,7 @@ export class Simulation {
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Orchard, x, y, 10) * 6;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.House, x, y, 10) * 4;
       score += this.nearbyRoadScore(x, y, 3) * 1.2;
-      score += 26 - Math.abs(centerDistance - 7) * 2.4;
+      score += 26 - Math.abs(centerDistance - (population >= 30 ? 10 : 7)) * 2.1;
     }
     if (type === BuildingType.Stable) {
       score += this.animals.some((animal) => animal.type === AnimalType.Horse && manhattan(animal.x, animal.y, x, y) < 18) ? 60 : -60;
@@ -7150,19 +7325,24 @@ export class Simulation {
       score -= this.world.elevation[index] * 0.04;
     }
     if (type === BuildingType.House) {
-      score += 80 - Math.abs(centerDistance - 10) * 4;
+      const targetDistance = population >= 50 ? 20 : population >= 32 ? 16 : 12;
+      score += 84 - Math.abs(centerDistance - targetDistance) * 2.7;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.House, x, y, 8) * 10;
       score -= this.nearbyBuildingCount(tribe.id, BuildingType.MountainHall, x, y, 8) * 6;
       score -= this.nearbyBuildingCount(tribe.id, BuildingType.Mine, x, y, 10) * 20;
       score -= this.nearbyBuildingCount(tribe.id, BuildingType.Quarry, x, y, 10) * 14;
+      score += Math.max(0, 10 - storageDistance) * 3.5;
     }
     if (type === BuildingType.Stockpile) {
-      score += 60 - Math.abs(centerDistance - 6) * 6;
+      const targetDistance = population >= 44 ? 16 : population >= 26 ? 12 : 8;
+      score += 66 - Math.abs(centerDistance - targetDistance) * 3.7;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, x, y, 8) * 8;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Smithy, x, y, 8) * 8;
+      score += Math.max(0, 10 - housingDistance) * 2.4;
     }
     if (type === BuildingType.Warehouse) {
-      score += 62 - Math.abs(centerDistance - 6) * 5;
+      const targetDistance = population >= 46 ? 17 : population >= 28 ? 12 : 8;
+      score += 68 - Math.abs(centerDistance - targetDistance) * 3.3;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.House, x, y, 10) * 6;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, x, y, 10) * 7;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, x, y, 10) * 8;
@@ -7184,7 +7364,7 @@ export class Simulation {
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, x, y, 10) * 4;
     }
     if (type === BuildingType.Workshop || type === BuildingType.Smithy || type === BuildingType.Barracks || type === BuildingType.MageTower || type === BuildingType.Armory) {
-      score += 50 - Math.abs(centerDistance - 8) * 5;
+      score += 56 - Math.abs(centerDistance - (population >= 34 ? 13 : 10)) * 3.8;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, x, y, 8) * 10;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Warehouse, x, y, 10) * 8;
       score += this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, x, y, 8) * 6;
@@ -7310,6 +7490,18 @@ export class Simulation {
       this.world.road[tile] = Math.max(this.world.road[tile], 1);
       if (tribeId !== undefined) {
         this.world.owner[tile] = tribeId;
+        const { x, y } = coordsOf(tile, this.world.width);
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (!inBounds(nx, ny, this.world.width, this.world.height)) continue;
+            const nearIndex = indexOf(nx, ny, this.world.width);
+            if (this.world.owner[nearIndex] === -1 || this.world.owner[nearIndex] === tribeId) {
+              this.world.owner[nearIndex] = tribeId;
+            }
+          }
+        }
       }
       this.markDirty(tile);
     }

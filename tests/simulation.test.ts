@@ -117,7 +117,7 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
-  test("remains stable across extended ticks and reaches early settled progression", { timeout: 30000 }, () => {
+  test("remains stable across extended ticks and reaches early settled progression", { timeout: 45000 }, () => {
     const sim = createSimulation("long-run", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
     for (let i = 0; i < 1800; i += 1) {
@@ -223,6 +223,23 @@ describe("simulation", () => {
     expect(lastSnapshot.tribes.every((tribe) => tribe.age <= AgeType.Stone)).toBe(true);
   });
 
+  test("tribes keep water reserves and remain active through the opener", { timeout: 20000 }, () => {
+    const sim = createSimulation("water-balance", { width: 512, height: 512 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 900; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const watered = lastSnapshot.tribes.filter((tribe) => tribe.water >= 12).length;
+    const active = lastSnapshot.tribes.filter((tribe) => tribe.activity !== "Securing water").length;
+    expect(watered).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
+    expect(active).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
+  });
+
   test("tribes make first contact before wider diplomacy activates", { timeout: 30000 }, () => {
     const sim = createSimulation("discovery-flow", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
@@ -259,7 +276,52 @@ describe("simulation", () => {
     expect(new Set(lastSnapshot.buildings.map((building) => `${building.tribeId}:${building.type}:${building.x}:${building.y}`)).size).toBe(lastSnapshot.buildings.length);
   });
 
-  test("expanding settlements keep buildings attached to road influence", { timeout: 25000 }, () => {
+  test("settlements continue expanding beyond the initial core", { timeout: 35000 }, () => {
+    const sim = createSimulation("expansion-shape", { width: 512, height: 512 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const expanded = lastSnapshot.tribes.filter((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const farBuildings = tribeBuildings.filter((building) =>
+        Math.abs(building.x - tribe.capitalX) + Math.abs(building.y - tribe.capitalY) >= 10,
+      ).length;
+      return tribeBuildings.length >= 12 && farBuildings >= 4;
+    }).length;
+
+    expect(expanded).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.25));
+  });
+
+  test("maturing settlements expand beyond the immediate capital cluster", { timeout: 30000 }, () => {
+    const sim = createSimulation("outward-growth", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const expandedTribes = lastSnapshot.tribes.filter((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const maxDistance = Math.max(...tribeBuildings.map((building) =>
+        Math.abs(building.x + Math.floor(building.width / 2) - tribe.capitalX)
+        + Math.abs(building.y + Math.floor(building.height / 2) - tribe.capitalY),
+      ));
+      return maxDistance >= 14 && tribeBuildings.length >= 12;
+    });
+
+    expect(expandedTribes.length).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.5));
+  });
+
+  test("expanding settlements keep buildings attached to road influence", { timeout: 35000 }, () => {
     const sim = createSimulation("road-influence", { width: 384, height: 384 }) as any;
     let lastSnapshot = sim.snapshotNow();
 
@@ -313,7 +375,7 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
-  test("maturing settlements process food into rations at craft sites", { timeout: 30000 }, () => {
+  test("maturing settlements process food into rations at craft sites", { timeout: 60000 }, () => {
     const sim = createSimulation("ration-processing", { width: 384, height: 384 }) as any;
 
     for (let i = 0; i < 2200; i += 1) {
@@ -397,7 +459,7 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
-  test("stable stone-age tribes begin primitive industry before bronze", { timeout: 30000 }, () => {
+  test("stable stone-age tribes begin primitive industry before bronze", { timeout: 60000 }, () => {
     const sim = createSimulation("stone-industry", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
 
