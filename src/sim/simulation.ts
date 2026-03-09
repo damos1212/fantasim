@@ -5259,11 +5259,24 @@ export class Simulation {
         building.type === BuildingType.FishingHut ||
         building.type === BuildingType.Fishery,
       )
-      .map((building) => ({ building, center: buildingCenter(building), storageDistance: this.nearestStorageDistance(tribe.id, buildingCenter(building).x, buildingCenter(building).y) }))
-      .filter((entry) => entry.storageDistance >= 14)
-      .sort((a, b) => b.storageDistance - a.storageDistance);
+      .map((building) => {
+        const center = buildingCenter(building);
+        const top = this.topStoredResource(building);
+        return {
+          building,
+          center,
+          top,
+          storageDistance: this.nearestStorageDistance(tribe.id, center.x, center.y),
+          roadScore: this.nearbyRoadScore(center.x, center.y, 2),
+        };
+      })
+      .filter((entry) => entry.storageDistance >= 12 || entry.top.amount >= 28)
+      .sort((a, b) =>
+        (b.storageDistance + b.top.amount * 0.1 + b.roadScore * 2)
+        - (a.storageDistance + a.top.amount * 0.1 + a.roadScore * 2),
+      );
 
-    const targets = remoteCandidates.slice(0, population >= 28 ? 2 : 1);
+    const targets = remoteCandidates.slice(0, population >= 34 ? 3 : population >= 24 ? 2 : 1);
     if (targets.length === 0) {
       return;
     }
@@ -5272,13 +5285,12 @@ export class Simulation {
       const nearbyStorage = storages.some((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 7);
       if (!nearbyStorage && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 7)) {
         this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, target.center.x, target.center.y, 7);
-        continue;
       }
 
       if (
-        tribe.age >= AgeType.Bronze &&
+        tribe.age >= AgeType.Stone &&
         population >= 24 &&
-        target.storageDistance >= 20 &&
+        (target.storageDistance >= 18 || target.top.amount >= 48) &&
         !storages.some((building) => building.type === BuildingType.Warehouse && manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 8) &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 8)
       ) {
@@ -5287,10 +5299,20 @@ export class Simulation {
 
       if (
         population >= 18 &&
-        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 7) < 2 &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 7) < (target.top.amount >= 36 ? 3 : 2) &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 7)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.House, 6, target.center.x, target.center.y, 7);
+      }
+
+      if (
+        tribe.age >= AgeType.Stone &&
+        population >= 24 &&
+        target.top.amount >= 36 &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, target.center.x, target.center.y, 8) === 0 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Workshop, target.center.x, target.center.y, 8)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Workshop, 6, target.center.x, target.center.y, 8);
       }
     }
 
@@ -5469,11 +5491,20 @@ export class Simulation {
     if (tribe.age >= AgeType.Stone && infrastructureStable && population > 28 && this.buildingCount(tribe.id, BuildingType.Farm) < desiredFarms + 1) {
       this.tryPlanBuilding(tribe, BuildingType.Farm, 5);
     }
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 20 && this.buildingCount(tribe.id, BuildingType.Farm) < desiredFarms) {
+      this.tryPlanBuilding(tribe, BuildingType.Farm, 5);
+    }
     if (!this.hasBuilt(tribe.id, BuildingType.LumberCamp)) {
       this.tryPlanBuilding(tribe, BuildingType.LumberCamp, 7);
     }
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 22 && this.buildingCount(tribe.id, BuildingType.LumberCamp) < desiredLumber) {
+      this.tryPlanBuilding(tribe, BuildingType.LumberCamp, 5);
+    }
     if (!this.hasBuilt(tribe.id, BuildingType.Quarry)) {
       this.tryPlanBuilding(tribe, BuildingType.Quarry, 6);
+    }
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 22 && this.buildingCount(tribe.id, BuildingType.Quarry) < desiredQuarries) {
+      this.tryPlanBuilding(tribe, BuildingType.Quarry, 5);
     }
     if ((tribe.race.type === RaceType.Dwarves || tribe.race.type === RaceType.Darkfolk) && this.buildingCount(tribe.id, BuildingType.MountainHall) < 2) {
       this.tryPlanBuilding(tribe, BuildingType.MountainHall, 6);
@@ -5483,6 +5514,12 @@ export class Simulation {
     }
     if (infrastructureStable && population > 24 && housing < population + 6) {
       this.tryPlanBuilding(tribe, BuildingType.House, 6);
+    }
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 24 && this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
+      this.tryPlanBuilding(tribe, BuildingType.Stockpile, 5);
+    }
+    if (tribe.age >= AgeType.Stone && infrastructureStable && population > 26 && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
+      this.tryPlanBuilding(tribe, BuildingType.Warehouse, 5);
     }
     if (tribe.age >= AgeType.Stone && infrastructureStable && population > 20 && !this.hasBuilt(tribe.id, BuildingType.Shrine)) {
       this.tryPlanBuilding(tribe, BuildingType.Shrine, 5);
@@ -6903,13 +6940,13 @@ export class Simulation {
   private maxConcurrentBuildingPlans(tribe: TribeState, type: BuildingType): number {
     const population = this.populationOf(tribe.id);
     if (type === BuildingType.House) {
-      return population >= 40 ? 3 : 2;
+      return population >= 52 ? 4 : population >= 32 ? 3 : 2;
     }
     if (type === BuildingType.Farm || type === BuildingType.Orchard || type === BuildingType.LumberCamp || type === BuildingType.Quarry) {
-      return population >= 28 ? 2 : 1;
+      return population >= 40 ? 3 : population >= 24 ? 2 : 1;
     }
     if (type === BuildingType.Stockpile || type === BuildingType.Warehouse) {
-      return population >= 32 ? 2 : 1;
+      return population >= 48 ? 3 : population >= 28 ? 2 : 1;
     }
     return 1;
   }

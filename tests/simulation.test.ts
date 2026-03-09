@@ -413,6 +413,30 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("stable settlements keep adding second-wave extraction and logistics sites", { timeout: 70000 }, () => {
+    const sim = createSimulation("second-wave-districts", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 2100; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const expandingTribes = lastSnapshot.tribes.filter((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const farms = tribeBuildings.filter((building) => building.type === BuildingType.Farm).length;
+      const lumber = tribeBuildings.filter((building) => building.type === BuildingType.LumberCamp).length;
+      const quarries = tribeBuildings.filter((building) => building.type === BuildingType.Quarry).length;
+      const stockpiles = tribeBuildings.filter((building) => building.type === BuildingType.Stockpile).length;
+      const warehouses = tribeBuildings.filter((building) => building.type === BuildingType.Warehouse).length;
+      return (farms >= 2 || lumber >= 2 || quarries >= 1) && (stockpiles >= 2 || warehouses >= 1) && tribeBuildings.length >= 14;
+    }).length;
+
+    expect(expandingTribes).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.25));
+  });
+
   test("maturing settlements process food into rations at craft sites", { timeout: 60000 }, () => {
     const sim = createSimulation("ration-processing", { width: 384, height: 384 }) as any;
 
