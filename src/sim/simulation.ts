@@ -2824,6 +2824,11 @@ export class Simulation {
       }
     }
 
+    const opportunisticTask = this.findOpportunisticLaborTask(agent, tribe);
+    if (opportunisticTask) {
+      return opportunisticTask;
+    }
+
     const idleX = clamp(tribe.capitalX + randInt(this.random, -5, 5), 1, this.world.width - 2);
     const idleY = clamp(tribe.capitalY + randInt(this.random, -5, 5), 1, this.world.height - 2);
     agent.path = findPath(this.world, agent.x, agent.y, idleX, idleY);
@@ -2833,6 +2838,101 @@ export class Simulation {
       targetX: idleX,
       targetY: idleY,
       workLeft: randInt(this.random, 4, 12),
+    };
+  }
+
+  private findOpportunisticLaborTask(agent: AgentState, tribe: TribeState): AgentTask | null {
+    const scanRadius =
+      agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Miner ? 18
+      : agent.role === AgentRole.Farmer ? 14
+      : agent.role === AgentRole.Worker ? 12
+      : 0;
+    if (scanRadius <= 0) {
+      return null;
+    }
+
+    const matcher =
+      agent.role === AgentRole.Woodcutter
+        ? (index: number) =>
+            ((this.world.feature[index] === FeatureType.Trees || this.world.resourceType[index] === ResourceType.Wood)
+              && this.world.resourceAmount[index] > 0)
+        : agent.role === AgentRole.Miner
+          ? (index: number) =>
+              (((this.world.feature[index] === FeatureType.OreVein || this.world.resourceType[index] === ResourceType.Ore) && this.world.resourceAmount[index] > 0)
+                || ((this.world.feature[index] === FeatureType.StoneOutcrop || this.world.feature[index] === FeatureType.ClayDeposit) && this.world.resourceAmount[index] > 0))
+          : agent.role === AgentRole.Farmer
+            ? (index: number) =>
+                (((this.world.terrain[index] === TerrainType.Farmland || this.world.feature[index] === FeatureType.BerryPatch)
+                  && this.world.resourceAmount[index] > 0)
+                  || this.world.resourceType[index] === ResourceType.Grain
+                  || this.world.resourceType[index] === ResourceType.Berries)
+            : (index: number) =>
+                this.world.resourceAmount[index] > 0 && (
+                  this.world.feature[index] === FeatureType.BerryPatch
+                  || this.world.feature[index] === FeatureType.Trees
+                  || this.world.feature[index] === FeatureType.StoneOutcrop
+                  || this.world.feature[index] === FeatureType.ClayDeposit
+                );
+
+    let best:
+      | {
+          x: number;
+          y: number;
+          kind: AgentTask["kind"];
+          resourceType: ResourceType;
+          score: number;
+        }
+      | null = null;
+    for (let dy = -scanRadius; dy <= scanRadius; dy += 1) {
+      for (let dx = -scanRadius; dx <= scanRadius; dx += 1) {
+        const x = agent.x + dx;
+        const y = agent.y + dy;
+        if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+        const index = indexOf(x, y, this.world.width);
+        if (this.world.owner[index] !== tribe.id) continue;
+        if (!matcher(index)) continue;
+        if (this.jobs.some((job) => job.tribeId === tribe.id && job.x === x && job.y === y)) continue;
+        const resourceType = this.world.resourceType[index] as ResourceType;
+        const feature = this.world.feature[index] as FeatureType;
+        const kind =
+          agent.role === AgentRole.Woodcutter ? "cut_tree"
+          : agent.role === AgentRole.Miner
+            ? (feature === FeatureType.OreVein || resourceType === ResourceType.Ore ? "mine" : "quarry")
+            : agent.role === AgentRole.Farmer
+              ? (this.world.terrain[index] === TerrainType.Farmland || resourceType === ResourceType.Grain || resourceType === ResourceType.Berries ? "farm" : "gather")
+              : feature === FeatureType.Trees ? "cut_tree"
+                : feature === FeatureType.StoneOutcrop || feature === FeatureType.ClayDeposit ? "quarry"
+                  : "gather";
+        const distance = manhattan(agent.x, agent.y, x, y);
+        const nearbyRoad = this.nearbyRoadScore(x, y, 1);
+        const score = (this.world.resourceAmount[index] ?? 0) + nearbyRoad * 6 - distance * 2;
+        if (!best || score > best.score) {
+          best = { x, y, kind, resourceType: resourceType === ResourceType.None ? this.resourceForJob(kind) : resourceType, score };
+        }
+      }
+    }
+
+    if (!best) {
+      return null;
+    }
+
+    const path = findPath(this.world, agent.x, agent.y, best.x, best.y);
+    if (agent.x !== best.x || agent.y !== best.y) {
+      const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
+      if (unreachable) {
+        return null;
+      }
+    }
+    agent.path = path;
+    agent.pathIndex = 0;
+
+    return {
+      kind: best.kind as Extract<AgentTask["kind"], "gather" | "farm" | "cut_tree" | "quarry" | "mine">,
+      targetX: best.x,
+      targetY: best.y,
+      stage: "toTarget",
+      resourceType: best.resourceType,
+      amount: 0,
     };
   }
 
@@ -3276,7 +3376,18 @@ export class Simulation {
   }
 
   private findResourceDropBuilding(tribeId: number, originX: number, originY: number, resourceType: ResourceType): BuildingState | null {
-    const preferredTypes = this.sourceBuildingTypesForResource(resourceType);
+    const preferredTypes =
+      resourceType === ResourceType.Wood
+        ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+        : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay
+          ? [BuildingType.Quarry, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+          : resourceType === ResourceType.Ore
+            ? [BuildingType.Mine, BuildingType.DeepMine, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
+            : resourceType === ResourceType.Fish || resourceType === ResourceType.Berries || resourceType === ResourceType.Grain || resourceType === ResourceType.Meat || resourceType === ResourceType.Rations
+              ? [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall, BuildingType.Farm, BuildingType.Orchard, BuildingType.Fishery, BuildingType.FishingHut, BuildingType.Dock]
+              : resourceType === ResourceType.Horses || resourceType === ResourceType.Livestock || resourceType === ResourceType.Hides
+                ? [BuildingType.Stable, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall, BuildingType.Farm]
+                : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
     const candidates = this.buildingsForTribe(tribeId)
       .filter((building) => preferredTypes.includes(building.type))
       .sort((a, b) => {
