@@ -442,6 +442,38 @@ describe("simulation", () => {
     expect(expandingTribes).toBeGreaterThanOrEqual(1);
   });
 
+  test("productive remote sites grow satellite housing or storage", { timeout: 70000 }, () => {
+    const sim = createSimulation("remote-satellites", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 2200; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const satelliteGrowth = lastSnapshot.tribes.some((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const remotes = tribeBuildings.filter((building) =>
+        (building.type === BuildingType.LumberCamp
+          || building.type === BuildingType.Quarry
+          || building.type === BuildingType.Mine
+          || building.type === BuildingType.Farm
+          || building.type === BuildingType.Orchard)
+        && building.stockAmount >= 20,
+      );
+      return remotes.some((remote) => tribeBuildings.some((other) =>
+        other.id !== remote.id
+        && (other.type === BuildingType.House || other.type === BuildingType.Stockpile || other.type === BuildingType.Warehouse || other.type === BuildingType.Workshop)
+        && Math.abs((other.x + Math.floor(other.width / 2)) - (remote.x + Math.floor(remote.width / 2)))
+          + Math.abs((other.y + Math.floor(other.height / 2)) - (remote.y + Math.floor(remote.height / 2))) <= 10,
+      ));
+    });
+
+    expect(satelliteGrowth).toBe(true);
+  });
+
   test("maturing settlements process food into rations at craft sites", { timeout: 60000 }, () => {
     const sim = createSimulation("ration-processing", { width: 384, height: 384 }) as any;
 
