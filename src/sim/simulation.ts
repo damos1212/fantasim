@@ -3558,41 +3558,41 @@ export class Simulation {
   private localStockTarget(buildingType: BuildingType, resourceType: ResourceType): number {
     if (resourceType === ResourceType.Grain || resourceType === ResourceType.Berries || resourceType === ResourceType.Fish || resourceType === ResourceType.Meat) {
       if (buildingType === BuildingType.Farm || buildingType === BuildingType.Orchard || buildingType === BuildingType.FishingHut || buildingType === BuildingType.Fishery) {
-        return 96;
+        return 68;
       }
       if (buildingType === BuildingType.Warehouse || buildingType === BuildingType.Stockpile || buildingType === BuildingType.CapitalHall) {
-        return 180;
+        return 156;
       }
     }
     if (resourceType === ResourceType.Wood) {
       if (buildingType === BuildingType.LumberCamp) {
-        return 128;
+        return 88;
       }
       if (buildingType === BuildingType.Workshop) {
-        return 96;
+        return 84;
       }
-      return 180;
+      return 156;
     }
     if (resourceType === ResourceType.Stone || resourceType === ResourceType.Clay) {
       if (buildingType === BuildingType.Quarry) {
-        return 120;
+        return 84;
       }
       if (buildingType === BuildingType.Workshop) {
-        return 96;
+        return 84;
       }
-      return 168;
+      return 152;
     }
     if (resourceType === ResourceType.Ore) {
       if (buildingType === BuildingType.Mine || buildingType === BuildingType.DeepMine) {
-        return 96;
+        return 72;
       }
       if (buildingType === BuildingType.Smithy || buildingType === BuildingType.Foundry || buildingType === BuildingType.Factory) {
-        return 88;
+        return 76;
       }
-      return 144;
+      return 132;
     }
     if (resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal || resourceType === ResourceType.Bricks) {
-      return buildingType === BuildingType.Workshop || buildingType === BuildingType.Foundry || buildingType === BuildingType.Factory ? 88 : 132;
+      return buildingType === BuildingType.Workshop || buildingType === BuildingType.Foundry || buildingType === BuildingType.Factory ? 76 : 120;
     }
     return 120;
   }
@@ -5750,6 +5750,10 @@ export class Simulation {
     const population = this.populationOf(tribe.id);
     const soldiers = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
     const buildBacklog = this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length;
+    const woodReserve = tribe.resources[ResourceType.Wood];
+    const stoneReserve = tribe.resources[ResourceType.Stone];
+    const clayReserve = tribe.resources[ResourceType.Clay];
+    const oreReserve = tribe.resources[ResourceType.Ore];
     const desiredRations = Math.max(24, Math.floor(population * (tribe.age >= AgeType.Bronze ? 4.2 : 3.5)));
     const desiredStoneTools = Math.max(6, Math.floor(population * 0.45));
     const desiredBronzeTools = Math.max(4, Math.floor(population * 0.3));
@@ -5758,30 +5762,33 @@ export class Simulation {
     const desiredBasicArmor = Math.max(3, Math.floor(soldiers));
     const desiredMetalWeapons = Math.max(4, Math.floor(soldiers * 1.15));
     const desiredMetalArmor = Math.max(3, Math.floor(soldiers * 0.95));
+    const desiredPlanks = Math.max(6, Math.floor(buildBacklog * 0.7) + this.buildingCount(tribe.id, BuildingType.Warehouse) * 3 + this.buildingCount(tribe.id, BuildingType.Stockpile) * 2);
+    const desiredCharcoal = Math.max(12, Math.floor(population * 0.45) + this.buildingCount(tribe.id, BuildingType.Smithy) * 4 + this.buildingCount(tribe.id, BuildingType.Foundry) * 6);
+    const desiredBricks = Math.max(10, Math.floor(buildBacklog * 0.5) + this.buildingCount(tribe.id, BuildingType.Warehouse) * 2 + this.buildingCount(tribe.id, BuildingType.House));
     this.enqueueRationCrafting(tribe, desiredRations);
-    if (tribe.resources[ResourceType.StoneTools] < desiredStoneTools && tribe.resources[ResourceType.Wood] > 12 && tribe.resources[ResourceType.Stone] > 8) {
+    if (tribe.resources[ResourceType.StoneTools] < desiredStoneTools && woodReserve > 12 && stoneReserve > 8) {
       this.enqueueCraftJob(tribe, ResourceType.StoneTools, 4, { [ResourceType.Wood]: 4, [ResourceType.Stone]: 4 }, BuildingType.Workshop, 5);
     }
-    if (tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Planks] < Math.max(4, Math.floor(buildBacklog * 0.7)) && tribe.resources[ResourceType.Wood] > 18) {
+    if (tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Planks] < desiredPlanks && woodReserve > 18) {
       this.enqueueCraftJob(tribe, ResourceType.Planks, 4, { [ResourceType.Wood]: 8 }, BuildingType.Workshop, 5);
     }
-    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.BronzeTools] < desiredBronzeTools && tribe.resources[ResourceType.Ore] > 8 && tribe.resources[ResourceType.Wood] > 6) {
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.BronzeTools] < desiredBronzeTools && oreReserve > 8 && woodReserve > 6) {
       this.enqueueCraftJob(tribe, ResourceType.BronzeTools, 3, { [ResourceType.Ore]: 4, [ResourceType.Wood]: 2 }, BuildingType.Workshop, 4);
     }
-    if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.IronTools] < desiredIronTools && tribe.resources[ResourceType.Ore] > 10 && tribe.resources[ResourceType.Wood] > 4) {
+    if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.IronTools] < desiredIronTools && oreReserve > 10 && woodReserve > 4) {
       this.enqueueCraftJob(tribe, ResourceType.IronTools, 3, { [ResourceType.Ore]: 6, [ResourceType.Wood]: 2 }, BuildingType.Smithy, 5);
     }
-    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Charcoal] < Math.max(12, Math.floor(population * 0.45)) && tribe.resources[ResourceType.Wood] > 22) {
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Charcoal] < desiredCharcoal && woodReserve > 22) {
       this.enqueueCraftJob(tribe, ResourceType.Charcoal, 4, { [ResourceType.Wood]: 10 }, BuildingType.Workshop, 5);
     }
-    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Bricks] < Math.max(10, Math.floor(buildBacklog * 0.5)) && tribe.resources[ResourceType.Clay] > 8 && tribe.resources[ResourceType.Stone] > 8) {
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Bricks] < desiredBricks && clayReserve > 8 && stoneReserve > 8) {
       this.enqueueCraftJob(tribe, ResourceType.Bricks, 4, { [ResourceType.Clay]: 5, [ResourceType.Stone]: 3 }, BuildingType.Workshop, 5);
     }
     if (
       tribe.age >= AgeType.Bronze
       && tribe.resources[ResourceType.BasicWeapons] < desiredBasicWeapons
-      && tribe.resources[ResourceType.Ore] > 12
-      && tribe.resources[ResourceType.Wood] > 8
+      && oreReserve > 12
+      && woodReserve > 8
     ) {
       this.enqueueCraftJob(
         tribe,
@@ -5795,8 +5802,8 @@ export class Simulation {
     if (
       tribe.age >= AgeType.Bronze
       && tribe.resources[ResourceType.BasicArmor] < desiredBasicArmor
-      && tribe.resources[ResourceType.Ore] > 12
-      && tribe.resources[ResourceType.Wood] > 8
+      && oreReserve > 12
+      && woodReserve > 8
     ) {
       this.enqueueCraftJob(
         tribe,
@@ -5807,7 +5814,7 @@ export class Simulation {
         6,
       );
     }
-    if (tribe.age >= AgeType.Iron && tribe.resources[ResourceType.Ore] > 18) {
+    if (tribe.age >= AgeType.Iron && oreReserve > 18) {
       const militaryShop = this.hasBuilt(tribe.id, BuildingType.Armory) ? BuildingType.Armory : BuildingType.Smithy;
       if (tribe.resources[ResourceType.MetalWeapons] < desiredMetalWeapons) {
         this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
@@ -5816,11 +5823,11 @@ export class Simulation {
         this.enqueueCraftJob(tribe, ResourceType.MetalArmor, this.hasBuilt(tribe.id, BuildingType.Armory) ? 3 : 2, { [ResourceType.Ore]: 8, [ResourceType.Wood]: 2 }, militaryShop, 6);
       }
     }
-    if (tribe.age >= AgeType.Gunpowder && this.hasBuilt(tribe.id, BuildingType.Foundry) && tribe.resources[ResourceType.Ore] > 22 && tribe.resources[ResourceType.Charcoal] > 6) {
+    if (tribe.age >= AgeType.Gunpowder && this.hasBuilt(tribe.id, BuildingType.Foundry) && oreReserve > 22 && tribe.resources[ResourceType.Charcoal] > 6) {
       this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, 5, { [ResourceType.Ore]: 10, [ResourceType.Charcoal]: 4, [ResourceType.Wood]: 2 }, BuildingType.Foundry, 7);
       this.enqueueCraftJob(tribe, ResourceType.MetalArmor, 4, { [ResourceType.Ore]: 10, [ResourceType.Charcoal]: 3, [ResourceType.Wood]: 2 }, BuildingType.Foundry, 7);
     }
-    if (tribe.age >= AgeType.Industrial && this.hasBuilt(tribe.id, BuildingType.Factory) && tribe.resources[ResourceType.Ore] > 28 && tribe.resources[ResourceType.Charcoal] > 10 && tribe.resources[ResourceType.Bricks] > 4) {
+    if (tribe.age >= AgeType.Industrial && this.hasBuilt(tribe.id, BuildingType.Factory) && oreReserve > 28 && tribe.resources[ResourceType.Charcoal] > 10 && tribe.resources[ResourceType.Bricks] > 4) {
       this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, 7, { [ResourceType.Ore]: 12, [ResourceType.Charcoal]: 5, [ResourceType.Bricks]: 2 }, BuildingType.Factory, 8);
       this.enqueueCraftJob(tribe, ResourceType.MetalArmor, 6, { [ResourceType.Ore]: 12, [ResourceType.Charcoal]: 4, [ResourceType.Bricks]: 2 }, BuildingType.Factory, 8);
       this.enqueueCraftJob(tribe, ResourceType.IronTools, 6, { [ResourceType.Ore]: 8, [ResourceType.Charcoal]: 3, [ResourceType.Wood]: 2 }, BuildingType.Factory, 6);
@@ -5828,7 +5835,7 @@ export class Simulation {
     if (
       tribe.age >= AgeType.Modern &&
       (this.hasBuilt(tribe.id, BuildingType.PowerPlant) || this.hasBuilt(tribe.id, BuildingType.Airfield)) &&
-      tribe.resources[ResourceType.Ore] > 34 &&
+      oreReserve > 34 &&
       tribe.resources[ResourceType.Charcoal] > 12 &&
       tribe.resources[ResourceType.Bricks] > 8
     ) {
@@ -5842,7 +5849,7 @@ export class Simulation {
 
   private generateRedistributionHauls(tribe: TribeState): void {
     const activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
-    if (activeHauls > 28) {
+    if (activeHauls > 36) {
       return;
     }
     const candidates = this.buildingsForTribe(tribe.id)
@@ -5855,12 +5862,14 @@ export class Simulation {
         building.type === BuildingType.DeepMine ||
         building.type === BuildingType.FishingHut ||
         building.type === BuildingType.Fishery ||
-        building.type === BuildingType.Stockpile,
+        building.type === BuildingType.Stockpile ||
+        building.type === BuildingType.Warehouse ||
+        building.type === BuildingType.CapitalHall,
       );
 
     let planned = 0;
     for (const source of candidates) {
-      if (planned >= 8) break;
+      if (planned >= 12) break;
       const top = this.topStoredResource(source);
       if (top.resourceType === ResourceType.None) continue;
       const threshold = this.localStockTarget(source.type, top.resourceType);
