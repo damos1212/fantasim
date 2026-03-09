@@ -2331,18 +2331,24 @@ export class GameRenderer {
     }
     if (agent.carrying !== ResourceType.None) {
       const carryColor = resourceVisualColor(agent.carrying);
-      drawPixelRect(this.unitGraphics, px + 9, py + 8, 5, 5, carryColor, 0.95);
-      drawPixelRect(this.unitGraphics, px + 10, py + 7, 3, 1, lighten(carryColor, 18), 0.72);
-      drawPixelRect(this.unitGraphics, px + 8, py + 10, 1, 3, darken(carryColor, 18), 0.82);
+      const carryOffsetY = this.zoom > 1.05 ? -3 : -1;
+      drawPixelRect(this.unitGraphics, px + 8, py + carryOffsetY + 1, 6, 1, 0x000000, 0.18);
+      drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY - 1, 6, 6, carryColor, 0.96);
+      drawPixelRect(this.unitGraphics, px + 10, py + carryOffsetY - 2, 4, 1, lighten(carryColor, 18), 0.76);
+      drawPixelRect(this.unitGraphics, px + 8, py + carryOffsetY + 2, 1, 3, darken(carryColor, 18), 0.84);
       if (agent.carryingAmount > 6) {
-        drawPixelRect(this.unitGraphics, px + 13, py + 10, 2, 3, darken(carryColor, 14), 0.88);
+        drawPixelRect(this.unitGraphics, px + 14, py + carryOffsetY + 1, 2, 4, darken(carryColor, 14), 0.88);
       }
       if (agent.carrying === ResourceType.Wood || agent.carrying === ResourceType.Planks) {
-        drawPixelRect(this.unitGraphics, px + 9, py + 13, 6, 1, 0x6b4a2d, 0.88);
+        drawPixelRect(this.unitGraphics, px + 8, py + carryOffsetY + 6, 8, 1, 0x6b4a2d, 0.9);
+        drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY + 7, 6, 1, 0x8d6238, 0.78);
       } else if (agent.carrying === ResourceType.Stone || agent.carrying === ResourceType.Clay || agent.carrying === ResourceType.Ore) {
-        drawPixelRect(this.unitGraphics, px + 10, py + 13, 4, 1, 0xd7dde3, 0.7);
+        drawPixelRect(this.unitGraphics, px + 10, py + carryOffsetY + 6, 4, 1, 0xd7dde3, 0.76);
+        drawPixelRect(this.unitGraphics, px + 11, py + carryOffsetY + 7, 2, 1, darken(carryColor, 22), 0.72);
       } else if (agent.carrying === ResourceType.Berries || agent.carrying === ResourceType.Grain || agent.carrying === ResourceType.Fish || agent.carrying === ResourceType.Meat) {
-        drawPixelRect(this.unitGraphics, px + 10, py + 13, 4, 1, 0xf2ddb2, 0.72);
+        drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY + 6, 6, 2, 0xf2ddb2, 0.76);
+      } else if (agent.carrying === ResourceType.Rations) {
+        drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY + 6, 6, 2, 0xd5ba84, 0.84);
       }
     }
     if (this.zoom > 1.18 || this.selectedUnitId === agent.id || agent.hero) {

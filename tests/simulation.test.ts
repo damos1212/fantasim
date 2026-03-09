@@ -93,6 +93,30 @@ describe("simulation", () => {
     expect(sim.buildings.length).toBeLessThan(initialBuildingCount + INITIAL_TRIBE_COUNT * 3);
   });
 
+  test("starter settlements are connected by roads", () => {
+    const sim = createSimulation("starter-roads", { width: 768, height: 768 }) as any;
+
+    expect(sim.tribes.every((tribe: any) => {
+      const tribeBuildings = sim.buildings.filter((building: any) => building.tribeId === tribe.id);
+      return tribeBuildings.every((building: any) => {
+        const centerX = building.x + Math.floor(building.width / 2);
+        const centerY = building.y + Math.floor(building.height / 2);
+        for (let dy = -2; dy <= 2; dy += 1) {
+          for (let dx = -2; dx <= 2; dx += 1) {
+            const x = centerX + dx;
+            const y = centerY + dy;
+            if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
+            const index = y * sim.world.width + x;
+            if (sim.world.road[index] > 0 && sim.world.owner[index] === tribe.id) {
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+    })).toBe(true);
+  });
+
   test("remains stable across extended ticks and reaches early settled progression", { timeout: 30000 }, () => {
     const sim = createSimulation("long-run", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
@@ -235,6 +259,35 @@ describe("simulation", () => {
     expect(new Set(lastSnapshot.buildings.map((building) => `${building.tribeId}:${building.type}:${building.x}:${building.y}`)).size).toBe(lastSnapshot.buildings.length);
   });
 
+  test("expanding settlements keep buildings attached to road influence", { timeout: 25000 }, () => {
+    const sim = createSimulation("road-influence", { width: 384, height: 384 }) as any;
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.buildings.every((building: any) => {
+      const centerX = building.x + Math.floor(building.width / 2);
+      const centerY = building.y + Math.floor(building.height / 2);
+      for (let dy = -2; dy <= 2; dy += 1) {
+        for (let dx = -2; dx <= 2; dx += 1) {
+          const x = centerX + dx;
+          const y = centerY + dy;
+          if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
+          const index = y * sim.world.width + x;
+          if (sim.world.road[index] > 0 && sim.world.owner[index] === building.tribeId) {
+            return true;
+          }
+        }
+      }
+      return false;
+    })).toBe(true);
+  });
+
   test("active storage hubs attract nearby industry or housing", { timeout: 30000 }, () => {
     const sim = createSimulation("district-hubs", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
@@ -258,6 +311,19 @@ describe("simulation", () => {
         && Math.abs(other.x - hub.x) + Math.abs(other.y - hub.y) <= 10,
       ));
     })).toBe(true);
+  });
+
+  test("maturing settlements process food into rations at craft sites", { timeout: 30000 }, () => {
+    const sim = createSimulation("ration-processing", { width: 384, height: 384 }) as any;
+
+    for (let i = 0; i < 2200; i += 1) {
+      sim.tick();
+    }
+
+    expect(sim.buildings.some((building: any) =>
+      (building.type === BuildingType.Workshop || building.type === BuildingType.Tavern || building.type === BuildingType.Warehouse)
+      && (building.stock[ResourceType.Rations] ?? 0) > 0,
+    )).toBe(true);
   });
 
   test("deep mines do not generate passive resources without active labor", () => {
@@ -371,5 +437,26 @@ describe("simulation", () => {
       const haulers = tribeAgents.filter((agent) => agent.role === AgentRole.Hauler).length;
       return crafters >= 1 && miners >= 2 && haulers >= 2;
     })).toBe(true);
+  });
+
+  test("maturing tribes surface active work statuses instead of only condition labels", { timeout: 30000 }, () => {
+    const sim = createSimulation("status-clarity", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1800; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.agents.some((agent) =>
+      agent.status === "Building"
+      || agent.status === "Crafting"
+      || agent.status === "Digging"
+      || agent.status === "Cutting timber"
+      || agent.status === "Working the fields"
+      || agent.status.startsWith("Hauling "),
+    )).toBe(true);
   });
 });
