@@ -2842,8 +2842,12 @@ export class Simulation {
   }
 
   private findOpportunisticLaborTask(agent: AgentState, tribe: TribeState): AgentTask | null {
+    const population = this.populationOf(tribe.id);
+    const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
+    const sustainFood = tribe.resources[ResourceType.Rations] < foodNeed * (tribe.age >= AgeType.Stone ? 2.5 : 3.1);
     const scanRadius =
-      agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Miner ? 18
+      agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Miner || agent.role === AgentRole.Rider ? 18
+      : agent.role === AgentRole.Fisher || agent.role === AgentRole.Soldier ? 16
       : agent.role === AgentRole.Farmer ? 14
       : agent.role === AgentRole.Worker ? 12
       : 0;
@@ -2866,6 +2870,8 @@ export class Simulation {
                   && this.world.resourceAmount[index] > 0)
                   || this.world.resourceType[index] === ResourceType.Grain
                   || this.world.resourceType[index] === ResourceType.Berries)
+            : agent.role === AgentRole.Fisher || agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider
+              ? (_index: number) => false
             : (index: number) =>
                 this.world.resourceAmount[index] > 0 && (
                   this.world.feature[index] === FeatureType.BerryPatch
@@ -2913,6 +2919,24 @@ export class Simulation {
     }
 
     if (!best) {
+      if (agent.role === AgentRole.Fisher) {
+        return this.findOpportunisticFishingTask(agent, tribe, scanRadius);
+      }
+      if ((agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Worker || agent.role === AgentRole.Farmer) && sustainFood) {
+        const huntTask = this.findOpportunisticAnimalTask(agent, tribe, [AnimalType.Deer, AnimalType.Boar, AnimalType.Goat, AnimalType.Sheep], "hunt", scanRadius + 4);
+        if (huntTask) {
+          return huntTask;
+        }
+      }
+      if ((agent.role === AgentRole.Worker || agent.role === AgentRole.Farmer || agent.role === AgentRole.Rider) && tribe.resources[ResourceType.Livestock] < Math.max(4, Math.floor(population * 0.18))) {
+        const tameTask = this.findOpportunisticAnimalTask(agent, tribe, [AnimalType.Sheep, AnimalType.Goat], "tame_livestock", scanRadius + 4);
+        if (tameTask) {
+          return tameTask;
+        }
+      }
+      if ((agent.role === AgentRole.Worker || agent.role === AgentRole.Rider) && tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Horses] < 3) {
+        return this.findOpportunisticAnimalTask(agent, tribe, [AnimalType.Horse], "tame_horse", scanRadius + 6);
+      }
       return null;
     }
 
@@ -2932,6 +2956,104 @@ export class Simulation {
       targetY: best.y,
       stage: "toTarget",
       resourceType: best.resourceType,
+      amount: 0,
+    };
+  }
+
+  private findOpportunisticAnimalTask(
+    agent: AgentState,
+    tribe: TribeState,
+    types: AnimalType[],
+    kind: Extract<AgentTask["kind"], "hunt" | "tame_horse" | "tame_livestock">,
+    radius: number,
+  ): AgentTask | null {
+    let best:
+      | {
+          x: number;
+          y: number;
+          score: number;
+        }
+      | null = null;
+    for (const animal of this.animals) {
+      if (!types.includes(animal.type)) continue;
+      const distance = manhattan(agent.x, agent.y, animal.x, animal.y);
+      if (distance > radius) continue;
+      if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === kind && job.x === animal.x && job.y === animal.y)) continue;
+      const index = indexOf(animal.x, animal.y, this.world.width);
+      const owned = this.world.owner[index] === tribe.id;
+      const roadAffinity = this.nearbyRoadScore(animal.x, animal.y, 2);
+      const frontierReach = manhattan(tribe.capitalX, tribe.capitalY, animal.x, animal.y) <= radius + 8;
+      if (!owned && roadAffinity <= 0 && !frontierReach) continue;
+      const score =
+        (owned ? 18 : 0)
+        + roadAffinity * 8
+        + (animal.type === AnimalType.Boar ? 10 : animal.type === AnimalType.Horse ? 8 : 6)
+        - distance * 2;
+      if (!best || score > best.score) {
+        best = { x: animal.x, y: animal.y, score };
+      }
+    }
+    if (!best) return null;
+    return this.startOpportunisticResourceTask(agent, kind, best.x, best.y, this.resourceForJob(kind));
+  }
+
+  private findOpportunisticFishingTask(agent: AgentState, tribe: TribeState, radius: number): AgentTask | null {
+    const docks = this.buildingsForTribe(tribe.id).filter((building) =>
+      building.type === BuildingType.Dock || building.type === BuildingType.FishingHut || building.type === BuildingType.Fishery,
+    );
+    let best:
+      | {
+          x: number;
+          y: number;
+          score: number;
+        }
+      | null = null;
+    for (const dock of docks) {
+      const center = buildingCenter(dock);
+      for (let dy = -8; dy <= 8; dy += 1) {
+        for (let dx = -8; dx <= 8; dx += 1) {
+          const x = center.x + dx;
+          const y = center.y + dy;
+          if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+          const distance = manhattan(agent.x, agent.y, x, y);
+          if (distance > radius) continue;
+          const index = indexOf(x, y, this.world.width);
+          if (!isWaterTerrain(this.world.terrain[index])) continue;
+          if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "fish" && job.x === x && job.y === y)) continue;
+          const roadAffinity = this.nearbyRoadScore(center.x, center.y, 2);
+          const score = roadAffinity * 6 + Math.max(0, 12 - manhattan(center.x, center.y, x, y)) - distance * 2;
+          if (!best || score > best.score) {
+            best = { x, y, score };
+          }
+        }
+      }
+    }
+    if (!best) return null;
+    return this.startOpportunisticResourceTask(agent, "fish", best.x, best.y, ResourceType.Fish);
+  }
+
+  private startOpportunisticResourceTask(
+    agent: AgentState,
+    kind: Extract<AgentTask["kind"], "gather" | "farm" | "cut_tree" | "quarry" | "mine" | "fish" | "hunt" | "tame_horse" | "tame_livestock">,
+    targetX: number,
+    targetY: number,
+    resourceType: ResourceType,
+  ): AgentTask | null {
+    const path = findPath(this.world, agent.x, agent.y, targetX, targetY);
+    if (agent.x !== targetX || agent.y !== targetY) {
+      const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
+      if (unreachable) {
+        return null;
+      }
+    }
+    agent.path = path;
+    agent.pathIndex = 0;
+    return {
+      kind,
+      targetX,
+      targetY,
+      stage: "toTarget",
+      resourceType,
       amount: 0,
     };
   }
@@ -3022,7 +3144,9 @@ export class Simulation {
     if (kind === "cut_tree") return role === AgentRole.Woodcutter || role === AgentRole.Worker;
     if (kind === "replant_tree") return role === AgentRole.Farmer || role === AgentRole.Worker;
     if (kind === "farm") return role === AgentRole.Farmer || role === AgentRole.Worker;
-    if (kind === "gather" || kind === "hunt" || kind === "tame_horse" || kind === "tame_livestock") return role !== AgentRole.Soldier;
+    if (kind === "gather") return role !== AgentRole.Soldier;
+    if (kind === "hunt") return role !== AgentRole.Mage && role !== AgentRole.Scholar;
+    if (kind === "tame_horse" || kind === "tame_livestock") return role !== AgentRole.Mage && role !== AgentRole.Scholar && role !== AgentRole.Soldier;
     return true;
   }
 
@@ -4741,6 +4865,7 @@ export class Simulation {
     const population = this.populationOf(tribe.id);
     const foodNeed = this.populationOf(tribe.id) * (tribe.age >= AgeType.Bronze ? 6 : 5);
     const lowFood = tribe.resources[ResourceType.Rations] < foodNeed * (bootstrap ? 1.6 : 1.15);
+    const sustainFood = tribe.resources[ResourceType.Rations] < foodNeed * (bootstrap ? 2.8 : 2.2);
     const lowWood = tribe.resources[ResourceType.Wood] < (bootstrap ? 56 : 90);
     const lowStone = tribe.resources[ResourceType.Stone] < (bootstrap ? 28 : 70);
     const lowClay = tribe.resources[ResourceType.Clay] < (bootstrap ? 12 : 6);
@@ -4782,7 +4907,7 @@ export class Simulation {
       }
     }
 
-    if (docks.length > 0) {
+    if (docks.length > 0 && (bootstrap || lowFood || sustainFood)) {
       let activeFishJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "fish").length;
       const desiredFishJobs = Math.max(bootstrap ? 2 : 1, Math.min(docks.length * 2, Math.ceil(population / 10)));
       for (const dock of docks) {
@@ -4821,25 +4946,34 @@ export class Simulation {
       }
     }
 
-    if (lowFood || bootstrap || missingFarm) {
+    if (lowFood || sustainFood || bootstrap || missingFarm) {
       let queuedFood = 0;
       for (const farm of farms) {
         if (queuedFood >= (bootstrap ? 5 : 3)) break;
         const center = buildingCenter(farm);
         queuedFood += this.enqueueFeatureJobsAround(tribe, center.x, center.y, FeatureType.BerryPatch, "gather", 8, 2);
         queuedFood += this.enqueueResourceJobsAround(tribe, center.x, center.y, [ResourceType.Berries, ResourceType.Grain], "gather", 7, 1);
+        queuedFood += this.enqueueAnimalJobsAround(tribe, center.x, center.y, [AnimalType.Deer, AnimalType.Boar, AnimalType.Sheep, AnimalType.Goat], "hunt", 10, bootstrap ? 2 : 1);
       }
       if (queuedFood < (bootstrap ? 10 : 6)) {
         this.enqueueNearbyFeatureJobs(tribe, FeatureType.BerryPatch, "gather", economyRadius, (bootstrap ? 10 : 6) - queuedFood);
       }
       this.enqueueNearbyResourceJobs(tribe, [ResourceType.Berries, ResourceType.Grain], "gather", economyRadius, bootstrap ? 8 : 4);
-      this.enqueueAnimalJobs(tribe, [AnimalType.Deer, AnimalType.Boar, AnimalType.Sheep, AnimalType.Goat], "hunt", huntRadius, bootstrap ? 6 : 4);
+      this.enqueueAnimalJobs(tribe, [AnimalType.Deer, AnimalType.Boar, AnimalType.Sheep, AnimalType.Goat], "hunt", huntRadius, bootstrap ? 6 : sustainFood ? 5 : 4);
     }
 
     if (!bootstrap && tribe.age >= AgeType.Iron && tribe.resources[ResourceType.Horses] < 4) {
+      for (const farm of farms) {
+        const center = buildingCenter(farm);
+        this.enqueueAnimalJobsAround(tribe, center.x, center.y, [AnimalType.Horse], "tame_horse", 12, 1);
+      }
       this.enqueueAnimalJobs(tribe, [AnimalType.Horse], "tame_horse", 22, 2);
     }
     if (!bootstrap && tribe.age >= AgeType.Stone && tribe.resources[ResourceType.Livestock] < 6) {
+      for (const farm of farms) {
+        const center = buildingCenter(farm);
+        this.enqueueAnimalJobsAround(tribe, center.x, center.y, [AnimalType.Sheep, AnimalType.Goat], "tame_livestock", 10, 1);
+      }
       this.enqueueAnimalJobs(tribe, [AnimalType.Sheep], "tame_livestock", 18, 2);
     }
 
@@ -6544,6 +6678,27 @@ export class Simulation {
       });
       count += 1;
     }
+  }
+
+  private enqueueAnimalJobsAround(tribe: TribeState, originX: number, originY: number, types: AnimalType[], kind: JobKind, radius: number, limit: number): number {
+    let count = 0;
+    for (const animal of this.animals) {
+      if (count >= limit) break;
+      if (!types.includes(animal.type)) continue;
+      if (manhattan(originX, originY, animal.x, animal.y) > radius) continue;
+      if (this.jobs.some((job) => job.x === animal.x && job.y === animal.y && job.kind === kind && job.tribeId === tribe.id)) continue;
+      this.jobs.push({
+        id: this.nextJobId++,
+        tribeId: tribe.id,
+        kind,
+        x: animal.x,
+        y: animal.y,
+        priority: 5.2 + Math.max(0, radius - manhattan(originX, originY, animal.x, animal.y)) * 0.08,
+        claimedBy: null,
+      });
+      count += 1;
+    }
+    return count;
   }
 
   private enqueueReplantJobs(tribe: TribeState, limit: number): void {

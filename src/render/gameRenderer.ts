@@ -2388,12 +2388,14 @@ export class GameRenderer {
     const dy = Math.sign(agent.targetY - agent.y);
     const effectX = px + 8 + dx * 5;
     const effectY = py + 8 + dy * 5;
+    const flicker = pulse > 0.5 ? 1 : 0;
 
     if (agent.task === "hunt" || agent.task === "attack" || agent.task === "patrol") {
       if (agent.gear.weapon.includes("Bow")) {
         const color = agent.gear.weapon.includes("Fire") ? 0xff9a53 : 0xe6edf5;
         drawPixelRect(this.unitGraphics, effectX, effectY, 4, 1, color, 0.9);
         drawPixelRect(this.unitGraphics, effectX + 4, effectY, 1, 1, agent.gear.weapon.includes("Fire") ? 0xffd38a : 0xcfd7df, 0.9);
+        drawPixelRect(this.unitGraphics, effectX + 1, effectY - 1, 1, 1, lighten(color, 16), 0.72);
       } else if (agent.gear.weapon.includes("Arquebus") || agent.gear.weapon.includes("Rifle") || agent.gear.weapon.includes("Spark") || agent.gear.weapon.includes("Carbine") || agent.gear.weapon.includes("Volley") || agent.gear.weapon.includes("Repeater")) {
         drawPixelRect(this.unitGraphics, effectX, effectY, 2, 2, 0xf3d48f, 0.95);
         drawPixelRect(this.unitGraphics, effectX + 2, effectY, 2, 2, 0xd7dde4, 0.75);
@@ -2409,31 +2411,46 @@ export class GameRenderer {
       } else {
         drawPixelRect(this.unitGraphics, effectX, effectY, 3, 1, 0xeed8bc, 0.85);
       }
+      if (agent.task === "hunt") {
+        drawPixelRect(this.unitGraphics, effectX + 1, effectY + 2, 2, 1, 0xbf6a58, 0.72);
+      }
       return;
     }
     if (agent.task === "build" || agent.task === "earthwork") {
       drawPixelRect(this.unitGraphics, px + 12, py + 4, 2, 2, 0xffefb1, 0.85);
       drawPixelRect(this.unitGraphics, px + 13, py + 6, 1, 2, 0xe3b76f, 0.85);
+      drawPixelRect(this.unitGraphics, px + 10, py + 5 + flicker, 2, 1, 0xf6d68a, 0.76);
+      drawPixelRect(this.unitGraphics, px + 11, py + 7 + flicker, 3, 1, 0x8f6d48, 0.68);
       return;
     }
     if (agent.task === "farm") {
       drawPixelRect(this.unitGraphics, effectX, effectY + 1, 4, 1, 0xe3d27a, 0.9);
       drawPixelRect(this.unitGraphics, effectX + 1, effectY - 1, 1, 4, 0x8d6d40, 0.82);
+      drawPixelRect(this.unitGraphics, effectX - 1, effectY + 2, 2, 1, 0x97c85b, 0.72);
+      drawPixelRect(this.unitGraphics, effectX + 3, effectY + 2, 2, 1, 0x97c85b, 0.72);
       return;
     }
     if (agent.task === "cut_tree") {
       drawPixelRect(this.unitGraphics, effectX, effectY, 2, 2, 0xe1c7a0, 0.85);
       drawPixelRect(this.unitGraphics, effectX + 2, effectY + 1, 1, 2, 0x7d5c40, 0.9);
+      drawPixelRect(this.unitGraphics, effectX - 1, effectY + flicker, 1, 1, 0x79b06d, 0.7);
+      drawPixelRect(this.unitGraphics, effectX + 3, effectY - 1 + flicker, 1, 1, 0x8ece75, 0.68);
+      drawPixelRect(this.unitGraphics, effectX + 1, effectY + 3, 2, 1, 0xc29466, 0.72);
       return;
     }
     if (agent.task === "mine" || agent.task === "quarry") {
       drawPixelRect(this.unitGraphics, effectX, effectY, 2, 2, 0xd6dde4, 0.85);
       drawPixelRect(this.unitGraphics, effectX + 2, effectY + 1, 2, 1, 0xa8b7c6, 0.85);
+      drawPixelRect(this.unitGraphics, effectX - 1, effectY + 2, 1, 1, 0xf3f6fa, 0.75);
+      drawPixelRect(this.unitGraphics, effectX + 3, effectY - 1, 1, 1, 0xe1a86d, 0.68);
+      drawPixelRect(this.unitGraphics, effectX + 1, effectY + 3, 2, 1, 0x6f7e8d, 0.65);
       return;
     }
     if (agent.task === "fish") {
       drawPixelRect(this.unitGraphics, effectX, effectY, 1, 4, 0xb8e7f2, 0.85);
       drawPixelRect(this.unitGraphics, effectX - 1, effectY + 4, 3, 1, 0xf0fbff, 0.75);
+      drawPixelRect(this.unitGraphics, effectX + 1, effectY + 2 + flicker, 2, 1, 0xdffaff, 0.76);
+      drawPixelRect(this.unitGraphics, effectX - 2, effectY + 5, 5, 1, 0x8acfe2, 0.5);
       return;
     }
     if (agent.task === "craft") {

@@ -240,6 +240,34 @@ describe("simulation", () => {
     expect(active).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.tribes.length * 0.75));
   });
 
+  test("field work stays visibly active beyond the first bootstrap", { timeout: 35000 }, () => {
+    const sim = createSimulation("field-activity", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1200; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const activeFieldAgents = lastSnapshot.agents.filter((agent) =>
+      agent.task === "farm"
+      || agent.task === "gather"
+      || agent.task === "cut_tree"
+      || agent.task === "mine"
+      || agent.task === "quarry"
+      || agent.task === "hunt"
+      || agent.task === "fish"
+      || agent.task === "haul"
+      || agent.task === "build",
+    ).length;
+    const carryingAgents = lastSnapshot.agents.filter((agent) => agent.carrying !== ResourceType.None && agent.carryingAmount > 0).length;
+
+    expect(activeFieldAgents).toBeGreaterThanOrEqual(Math.ceil(lastSnapshot.agents.length * 0.35));
+    expect(carryingAgents).toBeGreaterThanOrEqual(6);
+  });
+
   test("tribes make first contact before wider diplomacy activates", { timeout: 30000 }, () => {
     const sim = createSimulation("discovery-flow", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
