@@ -5130,7 +5130,10 @@ export class Simulation {
     const desiredLumber = population >= 46 ? 3 : 2;
     const desiredQuarries = population >= 52 ? 3 : 2;
     const desiredStockpiles = population >= 48 ? 3 : 2;
-    const desiredWarehouses = tribe.age >= AgeType.Iron ? (population >= 64 ? 3 : 2) : population >= 34 ? 1 : 0;
+    const desiredWarehouses =
+      tribe.age >= AgeType.Iron ? (population >= 64 ? 3 : 2)
+      : tribe.age >= AgeType.Bronze ? (population >= 34 ? 2 : 1)
+      : population >= 24 ? 1 : 0;
     const activeStorageHubs = this.buildingsForTribe(tribe.id)
       .filter((building) =>
         building.type === BuildingType.Stockpile
@@ -5164,7 +5167,7 @@ export class Simulation {
     if ((lowFood || lowWood || lowStone) && this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
       this.tryPlanBuilding(tribe, BuildingType.Stockpile, 8);
     }
-    if (tribe.age >= AgeType.Bronze && (lowFood || lowWood || lowStone || lowWater) && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
+    if (tribe.age >= AgeType.Stone && (lowFood || lowWood || lowStone || lowWater) && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
       this.tryPlanBuilding(tribe, BuildingType.Warehouse, 9);
     }
 
@@ -5194,7 +5197,7 @@ export class Simulation {
     if (population > 16 && this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
       this.tryPlanBuilding(tribe, BuildingType.Stockpile, 6);
     }
-    if (tribe.age >= AgeType.Bronze && population > 22 && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
+    if (tribe.age >= AgeType.Stone && population > 20 && this.buildingCount(tribe.id, BuildingType.Warehouse) < Math.max(1, desiredWarehouses)) {
       this.tryPlanBuilding(tribe, BuildingType.Warehouse, 6);
     }
     if (this.buildingCount(tribe.id, BuildingType.Cistern) < 1) {
@@ -6611,8 +6614,9 @@ export class Simulation {
       return tribe.age === AgeType.Primitive ? 2 : tribe.age === AgeType.Stone ? (population >= 28 ? 3 : 2) : population >= 48 ? 4 : 3;
     }
     if (type === BuildingType.Warehouse) {
-      if (tribe.age < AgeType.Bronze) return 0;
-      if (tribe.age < AgeType.Iron) return population >= 34 ? 1 : 0;
+      if (tribe.age < AgeType.Stone) return 0;
+      if (tribe.age < AgeType.Bronze) return population >= 24 ? 1 : 0;
+      if (tribe.age < AgeType.Iron) return population >= 34 ? 2 : 1;
       if (tribe.age < AgeType.Industrial) return population >= 52 ? 2 : 1;
       return population >= 72 ? 3 : 2;
     }

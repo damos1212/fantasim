@@ -576,7 +576,7 @@ export const BUILDING_DEFS: BuildingDef[] = [
   { type: BuildingType.CapitalHall, name: "Capital Hall", size: [3, 3], minAge: AgeType.Primitive, cost: { [ResourceType.Wood]: 50, [ResourceType.Stone]: 30 } },
   { type: BuildingType.House, name: "House", size: [2, 2], minAge: AgeType.Primitive, cost: { [ResourceType.Wood]: 16 } },
   { type: BuildingType.Stockpile, name: "Stockpile", size: [2, 2], minAge: AgeType.Primitive, cost: { [ResourceType.Wood]: 10 } },
-  { type: BuildingType.Warehouse, name: "Warehouse", size: [3, 2], minAge: AgeType.Bronze, cost: { [ResourceType.Wood]: 20, [ResourceType.Stone]: 8 } },
+  { type: BuildingType.Warehouse, name: "Warehouse", size: [3, 2], minAge: AgeType.Stone, cost: { [ResourceType.Wood]: 20, [ResourceType.Stone]: 8 } },
   { type: BuildingType.Cistern, name: "Cistern", size: [2, 2], minAge: AgeType.Primitive, cost: { [ResourceType.Stone]: 12, [ResourceType.Clay]: 6 } },
   { type: BuildingType.Farm, name: "Farm", size: [3, 3], minAge: AgeType.Primitive, cost: { [ResourceType.Wood]: 10 } },
   { type: BuildingType.Orchard, name: "Orchard", size: [3, 3], minAge: AgeType.Stone, cost: { [ResourceType.Wood]: 12 } },
