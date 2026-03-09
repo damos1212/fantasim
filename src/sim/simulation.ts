@@ -3284,9 +3284,17 @@ export class Simulation {
         const centerB = buildingCenter(b);
         const typeBiasA = Math.max(0, 10 - preferredTypes.indexOf(a.type) * 2);
         const typeBiasB = Math.max(0, 10 - preferredTypes.indexOf(b.type) * 2);
+        const stockA = a.stock[resourceType] ?? 0;
+        const stockB = b.stock[resourceType] ?? 0;
+        const targetA = this.localStockTarget(a.type, resourceType);
+        const targetB = this.localStockTarget(b.type, resourceType);
+        const spareA = Math.max(0, targetA - stockA);
+        const spareB = Math.max(0, targetB - stockB);
+        const saturationPenaltyA = Math.max(0, stockA - targetA) * 0.15;
+        const saturationPenaltyB = Math.max(0, stockB - targetB) * 0.15;
         return (
-          (typeBiasB * 8 - manhattan(originX, originY, centerB.x, centerB.y) * 1.35)
-          - (typeBiasA * 8 - manhattan(originX, originY, centerA.x, centerA.y) * 1.35)
+          (typeBiasB * 6 + spareB * 0.28 - saturationPenaltyB - manhattan(originX, originY, centerB.x, centerB.y) * 1.2)
+          - (typeBiasA * 6 + spareA * 0.28 - saturationPenaltyA - manhattan(originX, originY, centerA.x, centerA.y) * 1.2)
         );
       });
     return candidates[0] ?? null;
@@ -6885,6 +6893,25 @@ export class Simulation {
     return best ? { x: best.x, y: best.y } : null;
   }
 
+  private hasTerritorialControl(tribeId: number, x: number, y: number, width: number, height: number): boolean {
+    const tribeBuildings = this.buildingsForTribe(tribeId);
+    if (tribeBuildings.length < 2) {
+      return true;
+    }
+    for (let dy = 0; dy < height; dy += 1) {
+      for (let dx = 0; dx < width; dx += 1) {
+        const tx = x + dx;
+        const ty = y + dy;
+        if (!inBounds(tx, ty, this.world.width, this.world.height)) return false;
+        const index = indexOf(tx, ty, this.world.width);
+        if (this.world.owner[index] !== tribeId) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   private canPlaceBuilding(type: BuildingType, x: number, y: number, width: number, height: number, tribeId?: number): boolean {
     for (let dy = 0; dy < height; dy += 1) {
       for (let dx = 0; dx < width; dx += 1) {
@@ -6941,8 +6968,13 @@ export class Simulation {
         }
       }
     }
-    if (tribeId !== undefined && !this.hasRoadInfluence(tribeId, type, x, y, width, height)) {
-      return false;
+    if (tribeId !== undefined) {
+      if (!this.hasTerritorialControl(tribeId, x, y, width, height)) {
+        return false;
+      }
+      if (!this.hasRoadInfluence(tribeId, type, x, y, width, height)) {
+        return false;
+      }
     }
     return true;
   }
@@ -7495,8 +7527,8 @@ export class Simulation {
       if (tribeId !== undefined) {
         this.world.owner[tile] = tribeId;
         const { x, y } = coordsOf(tile, this.world.width);
-        for (let dy = -1; dy <= 1; dy += 1) {
-          for (let dx = -1; dx <= 1; dx += 1) {
+        for (let dy = -2; dy <= 2; dy += 1) {
+          for (let dx = -2; dx <= 2; dx += 1) {
             const nx = x + dx;
             const ny = y + dy;
             if (!inBounds(nx, ny, this.world.width, this.world.height)) continue;

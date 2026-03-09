@@ -333,6 +333,16 @@ describe("simulation", () => {
     }
 
     expect(lastSnapshot.buildings.every((building: any) => {
+      for (let dy = 0; dy < building.height; dy += 1) {
+        for (let dx = 0; dx < building.width; dx += 1) {
+          const x = building.x + dx;
+          const y = building.y + dy;
+          const index = y * sim.world.width + x;
+          if (sim.world.owner[index] !== building.tribeId) {
+            return false;
+          }
+        }
+      }
       const centerX = building.x + Math.floor(building.width / 2);
       const centerY = building.y + Math.floor(building.height / 2);
       for (let dy = -2; dy <= 2; dy += 1) {

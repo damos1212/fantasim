@@ -2178,9 +2178,14 @@ export class GameRenderer {
     const gearColors = gearAccent(agent, race);
     const px = tileX * TILE_SIZE;
     const py = tileY * TILE_SIZE;
-    const stride = ((this.state.tick + agent.id) % 2) * 0.5;
-    const pulse = Math.sin((this.state.tick + agent.id) * 0.22);
+    const animPhase = this.presentationClock * 7 + agent.id * 0.31;
+    const stride = (Math.sin(animPhase) + 1) * 0.5;
+    const pulse = Math.sin(animPhase * 0.6);
     const taskBob = (pulse + 1) * 0.8;
+    const swing =
+      agent.task === "cut_tree" || agent.task === "mine" || agent.task === "quarry" || agent.task === "build" || agent.task === "earthwork" || agent.task === "hunt" || agent.task === "attack" || agent.task === "farm"
+        ? Math.round(Math.sin(this.presentationClock * 14 + agent.id) * 2)
+        : 0;
     drawPixelRect(this.unitGraphics, px + 4, py + 13, 8, 2, 0x000000, 0.16);
 
     switch (race) {
@@ -2245,16 +2250,16 @@ export class GameRenderer {
       const axeLike = agent.gear.weapon.includes("Axe") || agent.gear.weapon.includes("Cleaver");
       const weaponColor = agent.gear.weapon.includes("Lance") ? lighten(gearColors.weapon, 18) : agent.gear.weapon.includes("Spear") ? gearColors.weapon : darken(gearColors.weapon, 6);
       if (ranged) {
-        drawPixelRect(this.unitGraphics, px + 11, py + 6, 2, 6, weaponColor, 0.88);
-        drawPixelRect(this.unitGraphics, px + 10, py + 7, 1, 4, lighten(weaponColor, 18), 0.65);
+        drawPixelRect(this.unitGraphics, px + 11 + Math.max(0, swing), py + 6, 2, 6, weaponColor, 0.88);
+        drawPixelRect(this.unitGraphics, px + 10 + Math.max(0, swing), py + 7, 1, 4, lighten(weaponColor, 18), 0.65);
       } else if (agent.gear.weapon.includes("Arquebus") || agent.gear.weapon.includes("Rifle") || agent.gear.weapon.includes("Spark") || agent.gear.weapon.includes("Carbine") || agent.gear.weapon.includes("Volley") || agent.gear.weapon.includes("Repeater")) {
-        drawPixelRect(this.unitGraphics, px + 10, py + 8, 4, 2, 0x6f4f36, 0.92);
-        drawPixelRect(this.unitGraphics, px + 13, py + 7, 2, 1, 0xbfc9d1, 0.9);
+        drawPixelRect(this.unitGraphics, px + 10 + Math.max(0, swing), py + 8, 4, 2, 0x6f4f36, 0.92);
+        drawPixelRect(this.unitGraphics, px + 13 + Math.max(0, swing), py + 7, 2, 1, 0xbfc9d1, 0.9);
       } else if (axeLike) {
-        drawPixelRect(this.unitGraphics, px + 12, py + 7, 1, 6, 0x7d5a3f, 0.88);
-        drawPixelRect(this.unitGraphics, px + 11, py + 6, 3, 2, weaponColor, 0.92);
+        drawPixelRect(this.unitGraphics, px + 12 + swing, py + 7 - Math.abs(swing), 1, 6, 0x7d5a3f, 0.88);
+        drawPixelRect(this.unitGraphics, px + 11 + swing, py + 6 - Math.abs(swing), 3, 2, weaponColor, 0.92);
       } else {
-        drawPixelRect(this.unitGraphics, px + 12, py + 6, 1, 7, weaponColor, 0.88);
+        drawPixelRect(this.unitGraphics, px + 12 + swing, py + 6 - Math.abs(swing), 1, 7, weaponColor, 0.88);
       }
       if (race === RaceType.Humans || race === RaceType.Dwarves) {
         drawPixelRect(this.unitGraphics, px + 2, py + 8, 2, 4, shieldColor(race), 0.8);
@@ -2267,7 +2272,7 @@ export class GameRenderer {
       }
     }
     if (agent.role === AgentRole.Mage) {
-      drawPixelRect(this.unitGraphics, px + 12, py + 5, 1, 7, 0xa8c8ff, 0.95);
+      drawPixelRect(this.unitGraphics, px + 12 + swing, py + 5 - Math.abs(swing), 1, 7, 0xa8c8ff, 0.95);
       drawPixelRect(this.unitGraphics, px + 10, py + 3, 2, 2, 0xcbdcff, 0.9);
       drawPixelRect(this.unitGraphics, px + 3, py + 6, 1, 6, 0x8d72d9, 0.6);
       if (agent.gear.weapon.includes("Sunfire") || agent.gear.weapon.includes("Void")) {
@@ -2276,33 +2281,34 @@ export class GameRenderer {
       }
     }
     if (agent.role === AgentRole.Scholar) {
-      drawPixelRect(this.unitGraphics, px + 2, py + 6, 2, 5, 0xd5b7ec, 0.85);
-      drawPixelRect(this.unitGraphics, px + 1, py + 7, 3, 3, 0xf4ead2, 0.85);
+      drawPixelRect(this.unitGraphics, px + 2, py + 6 + Math.max(0, swing), 2, 5, 0xd5b7ec, 0.85);
+      drawPixelRect(this.unitGraphics, px + 1, py + 7 + Math.max(0, swing), 3, 3, 0xf4ead2, 0.85);
     }
     if (agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Builder) {
-      drawPixelRect(this.unitGraphics, px + 2, py + 8, 2, 5, 0xbdc6ce, 0.85);
+      drawPixelRect(this.unitGraphics, px + 2 + swing, py + 8 - Math.abs(swing), 2, 5, 0xbdc6ce, 0.85);
     }
     if (agent.role === AgentRole.Builder) {
-      drawPixelRect(this.unitGraphics, px + 12, py + 10, 2, 2, 0xe4bc73, 0.9);
+      drawPixelRect(this.unitGraphics, px + 12 + swing, py + 9 - Math.abs(swing), 2, 2, 0xe4bc73, 0.9);
     }
     if (agent.role === AgentRole.Farmer) {
-      drawPixelRect(this.unitGraphics, px + 2, py + 9, 1, 4, 0x8f6e46, 0.85);
-      drawPixelRect(this.unitGraphics, px + 1, py + 8, 3, 1, 0xc7d475, 0.85);
+      drawPixelRect(this.unitGraphics, px + 2 + swing, py + 9 - Math.abs(swing), 1, 4, 0x8f6e46, 0.85);
+      drawPixelRect(this.unitGraphics, px + 1 + swing, py + 8 - Math.abs(swing), 3, 1, 0xc7d475, 0.85);
     }
     if (agent.role === AgentRole.Hauler) {
       drawPixelRect(this.unitGraphics, px + 2, py + 9, 3, 3, 0xb59269, 0.88);
+      drawPixelRect(this.unitGraphics, px + 1 + Math.max(0, swing), py + 8, 1, 5, 0x8d6f52, 0.86);
     }
     if (agent.role === AgentRole.Crafter) {
-      drawPixelRect(this.unitGraphics, px + 2, py + 8, 2, 4, 0xc98f58, 0.85);
-      drawPixelRect(this.unitGraphics, px + 1, py + 7, 3, 2, 0xe1b179, 0.8);
+      drawPixelRect(this.unitGraphics, px + 2 + swing, py + 8 - Math.abs(swing), 2, 4, 0xc98f58, 0.85);
+      drawPixelRect(this.unitGraphics, px + 1 + swing, py + 7 - Math.abs(swing), 3, 2, 0xe1b179, 0.8);
     }
     if (agent.role === AgentRole.Fisher) {
-      drawPixelRect(this.unitGraphics, px + 12, py + 7, 1, 6, 0x8f7650, 0.85);
-      drawPixelRect(this.unitGraphics, px + 11, py + 12, 3, 1, 0xddeef5, 0.75);
+      drawPixelRect(this.unitGraphics, px + 12 + swing, py + 7 - Math.abs(swing), 1, 6, 0x8f7650, 0.85);
+      drawPixelRect(this.unitGraphics, px + 11 + swing, py + 12 - Math.abs(swing), 3, 1, 0xddeef5, 0.75);
     }
     if (agent.role === AgentRole.Miner) {
-      drawPixelRect(this.unitGraphics, px + 12, py + 7, 1, 6, 0x8d6f52, 0.85);
-      drawPixelRect(this.unitGraphics, px + 11, py + 6, 3, 2, 0xbfc8cf, 0.85);
+      drawPixelRect(this.unitGraphics, px + 12 + swing, py + 7 - Math.abs(swing), 1, 6, 0x8d6f52, 0.85);
+      drawPixelRect(this.unitGraphics, px + 11 + swing, py + 6 - Math.abs(swing), 3, 2, 0xbfc8cf, 0.85);
     }
     if (agent.gear.armor !== "Cloth") {
       drawPixelRect(this.unitGraphics, px + 4, py + 9, 8, 2, gearColors.armor, 0.72);
@@ -2331,24 +2337,32 @@ export class GameRenderer {
     }
     if (agent.carrying !== ResourceType.None) {
       const carryColor = resourceVisualColor(agent.carrying);
-      const carryOffsetY = this.zoom > 1.05 ? -3 : -1;
-      drawPixelRect(this.unitGraphics, px + 8, py + carryOffsetY + 1, 6, 1, 0x000000, 0.18);
-      drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY - 1, 6, 6, carryColor, 0.96);
-      drawPixelRect(this.unitGraphics, px + 10, py + carryOffsetY - 2, 4, 1, lighten(carryColor, 18), 0.76);
-      drawPixelRect(this.unitGraphics, px + 8, py + carryOffsetY + 2, 1, 3, darken(carryColor, 18), 0.84);
+      const carryOffsetY = this.zoom > 1.05 ? -5 : -2;
+      const carryX = px + 8 + Math.max(0, swing);
+      const carryY = py + carryOffsetY - Math.max(0, Math.abs(swing) - 1);
+      drawPixelRect(this.unitGraphics, carryX - 1, carryY + 3, 8, 1, 0x000000, 0.22);
+      drawPixelRect(this.unitGraphics, carryX, carryY, 7, 7, carryColor, 0.97);
+      drawPixelRect(this.unitGraphics, carryX + 1, carryY - 1, 5, 1, lighten(carryColor, 18), 0.76);
+      drawPixelRect(this.unitGraphics, carryX - 1, carryY + 1, 1, 4, darken(carryColor, 18), 0.84);
       if (agent.carryingAmount > 6) {
-        drawPixelRect(this.unitGraphics, px + 14, py + carryOffsetY + 1, 2, 4, darken(carryColor, 14), 0.88);
+        drawPixelRect(this.unitGraphics, carryX + 6, carryY + 1, 2, 4, darken(carryColor, 14), 0.88);
       }
       if (agent.carrying === ResourceType.Wood || agent.carrying === ResourceType.Planks) {
-        drawPixelRect(this.unitGraphics, px + 8, py + carryOffsetY + 6, 8, 1, 0x6b4a2d, 0.9);
-        drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY + 7, 6, 1, 0x8d6238, 0.78);
+        drawPixelRect(this.unitGraphics, carryX - 1, carryY + 7, 9, 1, 0x6b4a2d, 0.9);
+        drawPixelRect(this.unitGraphics, carryX, carryY + 8, 7, 1, 0x8d6238, 0.78);
+        drawPixelRect(this.unitGraphics, carryX + 1, carryY + 4, 5, 1, 0xd2a26a, 0.66);
       } else if (agent.carrying === ResourceType.Stone || agent.carrying === ResourceType.Clay || agent.carrying === ResourceType.Ore) {
-        drawPixelRect(this.unitGraphics, px + 10, py + carryOffsetY + 6, 4, 1, 0xd7dde3, 0.76);
-        drawPixelRect(this.unitGraphics, px + 11, py + carryOffsetY + 7, 2, 1, darken(carryColor, 22), 0.72);
+        drawPixelRect(this.unitGraphics, carryX + 1, carryY + 7, 5, 2, 0xd7dde3, 0.76);
+        drawPixelRect(this.unitGraphics, carryX + 2, carryY + 8, 3, 1, darken(carryColor, 22), 0.72);
       } else if (agent.carrying === ResourceType.Berries || agent.carrying === ResourceType.Grain || agent.carrying === ResourceType.Fish || agent.carrying === ResourceType.Meat) {
-        drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY + 6, 6, 2, 0xf2ddb2, 0.76);
+        drawPixelRect(this.unitGraphics, carryX, carryY + 7, 7, 2, 0xf2ddb2, 0.76);
+        drawPixelRect(this.unitGraphics, carryX + 1, carryY + 8, 5, 1, agent.carrying === ResourceType.Fish ? 0x9ddff3 : agent.carrying === ResourceType.Meat ? 0xc65e52 : 0xd2b25a, 0.8);
       } else if (agent.carrying === ResourceType.Rations) {
-        drawPixelRect(this.unitGraphics, px + 9, py + carryOffsetY + 6, 6, 2, 0xd5ba84, 0.84);
+        drawPixelRect(this.unitGraphics, carryX, carryY + 7, 7, 2, 0xd5ba84, 0.84);
+        drawPixelRect(this.unitGraphics, carryX + 1, carryY + 8, 5, 1, 0x8d6238, 0.66);
+      } else if (agent.carrying === ResourceType.Horses || agent.carrying === ResourceType.Livestock) {
+        drawPixelRect(this.unitGraphics, carryX + 1, carryY + 7, 5, 2, 0xc5b48c, 0.82);
+        drawPixelRect(this.unitGraphics, carryX + 2, carryY + 6, 3, 1, 0x6b4a2d, 0.7);
       }
     }
     if (this.zoom > 1.18 || this.selectedUnitId === agent.id || agent.hero) {
