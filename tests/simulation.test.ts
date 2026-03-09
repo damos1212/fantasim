@@ -235,6 +235,31 @@ describe("simulation", () => {
     expect(new Set(lastSnapshot.buildings.map((building) => `${building.tribeId}:${building.type}:${building.x}:${building.y}`)).size).toBe(lastSnapshot.buildings.length);
   });
 
+  test("active storage hubs attract nearby industry or housing", { timeout: 30000 }, () => {
+    const sim = createSimulation("district-hubs", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 2200; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.tribes.some((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      const hubs = tribeBuildings.filter((building) =>
+        (building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile)
+        && building.stockAmount >= 32,
+      );
+      return hubs.some((hub) => tribeBuildings.some((other) =>
+        other.id !== hub.id
+        && (other.type === BuildingType.Workshop || other.type === BuildingType.House || other.type === BuildingType.Smithy)
+        && Math.abs(other.x - hub.x) + Math.abs(other.y - hub.y) <= 10,
+      ));
+    })).toBe(true);
+  });
+
   test("deep mines do not generate passive resources without active labor", () => {
     const sim = createSimulation("deep-mine-passive", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes[0];

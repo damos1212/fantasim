@@ -4898,6 +4898,18 @@ export class Simulation {
     if (storages.length === 0) {
       return;
     }
+    const storageHubs = storages
+      .map((building) => {
+        const top = this.topStoredResource(building);
+        const center = buildingCenter(building);
+        return {
+          building,
+          center,
+          top,
+          overflow: top.resourceType === ResourceType.None ? 0 : Math.max(0, top.amount - this.localStockTarget(building.type, top.resourceType)),
+        };
+      })
+      .sort((a, b) => b.overflow - a.overflow || b.top.amount - a.top.amount);
 
     const remoteCandidates = this.buildingsForTribe(tribe.id)
       .filter((building) =>
@@ -4934,6 +4946,41 @@ export class Simulation {
       !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 8)
     ) {
       this.tryPlanBuildingAround(tribe, BuildingType.Warehouse, 7, target.center.x, target.center.y, 8);
+    }
+
+    const activeHub = storageHubs.find((hub) => hub.top.resourceType !== ResourceType.None && hub.top.amount >= 64) ?? storageHubs[0];
+    if (!activeHub) {
+      return;
+    }
+
+    if (
+      tribe.age >= AgeType.Stone &&
+      population >= 24 &&
+      (activeHub.top.resourceType === ResourceType.Wood || activeHub.top.resourceType === ResourceType.Stone || activeHub.top.resourceType === ResourceType.Clay || activeHub.top.resourceType === ResourceType.Grain) &&
+      this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, activeHub.center.x, activeHub.center.y, 8) === 0 &&
+      !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Workshop, activeHub.center.x, activeHub.center.y, 8)
+    ) {
+      this.tryPlanBuildingAround(tribe, BuildingType.Workshop, 6, activeHub.center.x, activeHub.center.y, 8);
+    }
+
+    if (
+      tribe.age >= AgeType.Bronze &&
+      population >= 28 &&
+      activeHub.top.resourceType === ResourceType.Ore &&
+      activeHub.top.amount >= 72 &&
+      this.nearbyBuildingCount(tribe.id, BuildingType.Smithy, activeHub.center.x, activeHub.center.y, 10) === 0 &&
+      !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Smithy, activeHub.center.x, activeHub.center.y, 10)
+    ) {
+      this.tryPlanBuildingAround(tribe, BuildingType.Smithy, 6, activeHub.center.x, activeHub.center.y, 10);
+    }
+
+    if (
+      population >= 28 &&
+      activeHub.building.type !== BuildingType.CapitalHall &&
+      this.nearbyBuildingCount(tribe.id, BuildingType.House, activeHub.center.x, activeHub.center.y, 7) < 2 &&
+      !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, activeHub.center.x, activeHub.center.y, 7)
+    ) {
+      this.tryPlanBuildingAround(tribe, BuildingType.House, 5, activeHub.center.x, activeHub.center.y, 7);
     }
   }
 
