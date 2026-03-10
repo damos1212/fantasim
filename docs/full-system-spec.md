@@ -814,3 +814,72 @@ The active implementation priorities are now:
   - clearer world feedback for hauling, stock, work, and expansion
 
 These execution priorities sit in front of the deeper backlog because they make the existing systems behave like a more credible simulation instead of only adding more content layers.
+
+## 22. Next Execution Focus
+
+The next implementation block is deliberately ordered:
+
+1. stabilize bootstrap scarcity and branch-to-branch internal logistics
+2. improve observer tooling and history usability
+3. deepen economy pull and district specialization
+4. improve combat readability before raising unit/war complexity further
+5. only then deepen social simulation and later-era expansion
+
+The immediate success criteria for the first block are:
+
+- starts feel constrained but survivable
+- branch halls can import what they lack from other halls in the same tribe
+- resource depletion forces outward extension
+- long-run settlements stay active instead of flattening into idle stock equilibrium
+
+## 22. Current Multi-Hour Execution Window
+
+The current active execution window is focused on making the simulation feel materially more physical and less over-provisioned before deeper content expansion continues.
+
+### 22.1 Scarcity and Bootstrap Balance
+
+- reduce starter global stock, embark piles, and starter building stock
+- reduce seeded bootstrap deposit sizes near starts
+- reduce passive food, livestock, and horse growth so early tribes must work to sustain themselves
+- keep starts viable, but no longer godmode-safe
+
+### 22.2 Branch-Hall Internal Logistics
+
+- branch halls should exchange scarce goods with each other through real haul jobs
+- branch halls should no longer behave like isolated mini-economies once multiple halls exist
+- branch-local storage targets should cover food, building materials, and industrial inputs
+
+### 22.3 Midgame District Demand
+
+- productive raw sites should feed downstream hubs sooner
+- branch halls should pull storage, housing, workshops, and support buildings more aggressively
+- wagons should prefer longer balancing routes that keep multiple districts supplied
+
+### 22.4 Expansion Shape
+
+- roads and halls should define settlement corridors
+- branch towns should become visible secondary centers, not only extra capital markers
+- race and district specialization should be visible in branch follow-up buildings
+
+### 22.5 Observer Readability
+
+- local stock, shortage, and exchange behavior should be easier to inspect
+- carried materials and deliveries should stay visible
+- shortages, branch founding, and redistribution should emit clearer world feedback
+
+The implementation order for this execution window is:
+
+1. scarcity and bootstrap balance
+2. branch-hall internal logistics
+3. stronger midgame demand and redistribution
+4. stronger branch settlement growth/readability
+5. observer/readability polish for the above systems
+
+Concrete todo list for this execution window:
+
+- finish the current scarcity patch in startup and passive economy
+- add direct tests for branch-hall internal exchange
+- re-verify startup, branch-support, redistribution, and long-run district behavior
+- commit the scarcity/branch-logistics slice
+- tighten remote-district support if branches still stall after founding
+- re-run long-run activity/expansion checks after each balancing pass

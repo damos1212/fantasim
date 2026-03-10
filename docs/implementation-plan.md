@@ -906,3 +906,366 @@ The following should be revisited continuously as each phase lands:
 3. Land combat readability improvements before expanding unit counts further.
 4. Add the first social-simulation slice only after economy/combat become easier to read.
 5. Rebalance long-run pacing before pushing harder into late modern and sci-fi.
+
+## Multi-Hour Execution Sprint
+
+This is the current hands-on execution plan for the next several hours of work. It is ordered by dependency and tuned to the present prototype state, where the biggest problems are still realism, pacing, sustained activity, and readability rather than missing top-level systems.
+
+### Sprint Goals
+
+- reduce "godmode" starts and force tribes to earn stability
+- make branch halls behave like real settlement nodes instead of cosmetic extra capitals
+- keep towns expanding and redistributing goods after bootstrap instead of idling in place
+- make scarcity, depletion, and long-haul logistics visible in-world
+- tighten the long-run loop before adding another major era/system layer
+
+### Workstream 1. Scarcity and Bootstrap Balance
+
+Tasks:
+
+- reduce tribe starting inventories to a tighter primitive baseline
+- reduce embark stockyard quantities and starter building stock
+- reduce bootstrap feature/deposit amounts near starts so extension matters earlier
+- reduce passive food, herd, fishing, and breeding inflation so tribes cannot coast for free
+- verify that the opener still remains survivable with the smaller stock base
+
+Verification:
+
+- starting-state tests reflect a restrained but viable opener
+- construction still has real starter materials to source
+- tribes still reach farm + lumber + cistern + stockpile reliably
+
+### Workstream 2. Branch Hall Logistics and Internal Trade
+
+Tasks:
+
+- add hall-local storage accounting around each capital hall
+- give each hall local reserve targets for food, wood, stone, ore, and refined goods
+- create branch-to-branch haul jobs when one hall runs a deficit and another has surplus
+- prefer warehouse/stockpile/capital-hall sources with real visible stock
+- keep branch halls fed enough to become self-sufficient instead of collapsing into isolated outposts
+
+Verification:
+
+- branch halls can request and receive goods from other halls in the same tribe
+- the new jobs use real stocked buildings, not synthetic sources
+- deterministic planner tests cover branch exchange behavior
+
+### Workstream 3. Sustained Activity and Outward Growth
+
+Tasks:
+
+- keep productive remote districts pulling storage, housing, workshops, and roads
+- keep idle labor feeding active hubs instead of settling into quiet equilibrium
+- bias second-wave growth toward remote productive nodes, not always the core capital
+- ensure resource exhaustion pushes tribes outward into new extractor districts
+- keep branch halls spawning real support infrastructure after founding
+
+Verification:
+
+- long-run district tests still pass
+- at least some tribes expand beyond one compact capital cluster
+- resource flow visibly continues after bootstrap rather than freezing into stock equilibrium
+
+### Workstream 4. Observer Readability for Logistics
+
+Tasks:
+
+- keep carried-resource cues strong enough to show what is moving
+- keep construction-stage delivery visible on sites
+- preserve building-local stock visibility
+- surface the consequences of scarcity through tribe activity strings and local stock changes
+- avoid adding new observer complexity until the core logistics loop is easier to read
+
+Verification:
+
+- close-zoom observation makes it obvious what a unit is carrying and where it is taking it
+- stocked source sites drain and destination sites fill during active hauling
+
+### Workstream 5. Midgame Economic Pressure
+
+Tasks:
+
+- continue strengthening district specialization once scarcity is under control
+- make branches and remote hubs pull more race-shaped follow-up buildings
+- deepen internal hauling between extractors, warehouses, workshops, smithies, and branch halls
+- make trade with external tribes follow local surplus and local shortage more strictly
+
+Verification:
+
+- mature tribes show more than one meaningful district type
+- caravans and wagons carry goods that match the producing district and receiving need
+
+### Workstream 6. After This Sprint
+
+Only after the above is stable:
+
+- combat readability improvements
+- social simulation depth
+- stronger legends/history tooling
+- later modern and sci-fi progression
+
+## Multi-Hour Todo List
+
+The concrete todo list for this sprint is:
+
+1. Finish the current scarcity patch in simulation startup and passive economy.
+2. Add hall-local branch exchange hauling and test it directly.
+3. Re-run startup, branch-support, redistribution, and long-run district tests.
+4. Commit the scarcity/branch-logistics slice.
+5. Push resource depletion pressure slightly harder if long-run tests still show stock ballooning.
+6. Re-run long-run activity/expansion tests and inspect for flattening.
+7. Tighten remote-district support triggers if branches still stall after founding.
+8. Commit the sustained-activity / outward-growth slice.
+9. Update docs again with what landed, what changed in the balance model, and what the next sprint should target.
+
+### Subagent Split
+
+Where parallel work is useful:
+
+- subagent A audits observer/UI/tooling gaps so mainline work does not guess at UX needs
+- subagent B audits remaining economy/combat/social gaps so the roadmap stays grounded in code reality
+- main agent executes scarcity/logistics/growth changes and owns integration/testing
+
+### Definition of Success for This Sprint
+
+This sprint is successful if:
+
+- tribes start weaker but still survive
+- resources deplete sooner and force real extension
+- branch halls exchange goods with each other instead of acting like isolated silos
+- towns keep adding connected satellite districts after the opener
+- the sim remains readable and testable after the balance shift
+
+## Current Multi-Hour Execution Plan
+
+The next sustained implementation block should not be treated as "add random features". It should be treated as a staged simulation-solidification pass that makes the existing game loop credible for long observation sessions before larger content expansion resumes.
+
+### Workstream 1. Scarcity, Bootstrap Balance, and Physical Flow
+
+Goal:
+Make the first in-world years feel constrained, readable, and believable instead of over-stocked and consequence-free.
+
+Problems to solve:
+
+- tribes start too rich and can coast without doing enough real work
+- passive food and breeding are too generous
+- remote branches can stockpile in isolation instead of sharing shortages
+- resource depletion is real on tiles, but the bootstrap economy can still feel infinite because the starting buffers are too large
+
+Deliverables:
+
+- lower starter tribe/global stock
+- lower visible embark pile stock
+- lower starter building stock
+- lower bootstrap feature deposit sizes near starts
+- lower passive food, livestock, and horse growth
+- hall-to-hall internal logistics so branch halls can request scarce goods from other halls
+- regression tests that prove branch exchange happens and starter stock is restrained
+
+Definition of done:
+
+- tribes must visibly gather, haul, and process within the first year
+- at least some starts feel pressure to extend toward new trees, stone, clay, ore, fish, or farmland
+- multi-hall tribes no longer behave like isolated economies
+
+### Workstream 2. Long-Haul Logistics and District Demand
+
+Goal:
+Keep towns active after the bootstrap phase instead of flattening into "enough stock, stop moving".
+
+Problems to solve:
+
+- mature settlements still go visually quiet too often
+- raw sites can still overfill relative to downstream pull
+- branch halls need stronger reasons to become self-sustaining districts
+
+Deliverables:
+
+- stronger hall-local demand targets for food, wood, stone, ore, planks, bricks
+- stronger wagon preference for branch/core rebalancing
+- more storage pull into branch halls and productive remote districts
+- stronger demand propagation from workshops, smithies, foundries, factories, taverns, shrines, and barracks
+- more visible site-to-site redistribution jobs over time
+
+Definition of done:
+
+- mature tribes keep moving goods across multiple districts
+- branch halls do not remain cosmetic
+- outposts regularly grow storage, housing, and support follow-ups
+
+### Workstream 3. Expansion Shape and Settlement Readability
+
+Goal:
+Make settlements spread into coherent linked districts instead of only thickening the capital blob.
+
+Problems to solve:
+
+- some tribes still cluster too tightly around the initial hall
+- roads and branch halls need to read as settlement skeletons
+- branch towns need stronger identity once founded
+
+Deliverables:
+
+- stronger road-linked site scoring around branch halls and active hubs
+- branch-hall follow-up packages by specialization and race
+- better second-wave support around remote extractors
+- more town-center and branch-center housing/storage/civic layering
+- clearer tests for outward growth and branch support
+
+Definition of done:
+
+- long runs produce at least some tribes with multiple clearly readable settlement centers
+- roads visually connect core and branch districts
+- specialized branches look different from one another
+
+### Workstream 4. Observer Readability and Feedback
+
+Goal:
+Make all of the above easy to see while the sim runs.
+
+Problems to solve:
+
+- some logistics and shortages are still only implicit
+- branch-to-branch exchange and local scarcity need clearer observer feedback
+- long runs still need more reliable "what is happening and why" readability
+
+Deliverables:
+
+- better branch/local stock feedback in tribe and building inspection
+- clearer carrying/building/delivery signals
+- cleaner event history for shortages, expansion, and branch founding
+- better world-side representation of stocked hubs and active transfers
+- smoother unit motion where possible without regressing perf
+
+Definition of done:
+
+- a viewer can tell which districts are exporting, which are starving, and which are growing
+- unit movement and hauling remain readable during dense activity
+
+### Workstream 5. Next Major Depth Phase After Stabilization
+
+Once the four workstreams above are stable, the next deeper content pass should resume in this order:
+
+1. richer production chains and warehousing
+2. combat readability and battlefield behavior
+3. social simulation and dynasty pressure
+4. stronger world-danger and adventure loops
+5. deeper late-modern and sci-fi progression
+
+## Current Execution Matrix
+
+The next several hours of implementation should be treated as one connected program of work, not a grab bag of feature additions.
+
+### Stream A. Immediate Stability and Scarcity
+
+Owner:
+- main thread
+
+Tasks:
+- finish the reduced-start-resource pass
+- finish branch-to-branch internal haul generation
+- validate that starts remain viable
+- validate that mature tribes extend instead of sitting on huge buffers
+
+Verification:
+- startup tests
+- branch exchange tests
+- redistribution tests
+
+### Stream B. Observer and Tooling Audit
+
+Owner:
+- subagent / parallel audit
+
+Tasks:
+- identify the highest-value missing observer controls
+- identify the highest-value missing legends/history affordances
+- identify save/load and seed visibility gaps
+
+Verification:
+- roadmap updated with concrete UI/tooling deltas
+- follow-up implementation list ordered by user value
+
+### Stream C. Midgame Activity and District Specialization
+
+Owner:
+- main thread after Stream A is green
+
+Tasks:
+- keep branch halls and productive outposts demanding goods
+- keep warehouses acting as real attractors
+- increase race-shaped branch specialization
+- keep settlements adding support buildings after founding
+
+Verification:
+- long-run district growth tests
+- branch hall support tests
+- visual probe of branch settlement growth
+
+### Stream D. Combat and Social Pre-Design
+
+Owner:
+- subagent / parallel audit first, implementation later
+
+Tasks:
+- define the concrete first slice for:
+  - formations
+  - retreat/rout
+  - campaign readability
+  - families/dynasties
+  - succession conflict
+  - religion splits
+
+Verification:
+- next-phase implementation tasks are concrete and code-grounded, not aspirational
+
+## Active Multi-Hour Todo Queue
+
+1. Finish scarcity tuning already in progress in the simulation.
+2. Finish branch-hall internal exchange hauling and keep it covered by tests.
+3. Re-run startup, branch, redistribution, and long-run district/activity tests.
+4. Commit the scarcity/logistics checkpoint.
+5. Update the roadmap/spec with the next observer/economy/combat/social slices.
+6. Execute the next strongest midgame district-specialization improvements.
+7. Verify again with focused long-run tests and a build.
+8. Commit and push the resulting checkpoint.
+
+## Multi-Hour Todo List
+
+This is the concrete execution queue for the next several hours. Items should be worked in order unless a regression blocks progress.
+
+### Block A. Finish Scarcity and Branch Logistics
+
+1. Reduce bootstrap stock and passive growth across tribes, embark piles, building stocks, and nearby seeded deposits.
+2. Add branch-hall internal exchange hauls for food, building materials, and industrial inputs.
+3. Add/update tests for restrained starts and branch exchange.
+4. Verify with targeted startup, branch, and redistribution tests plus build.
+
+### Block B. Strengthen Midgame Demand
+
+1. Push stronger downstream demand from branch halls, warehouses, workshops, smithies, and food hubs.
+2. Tighten extractor-site target stock so remote sites feed the network earlier.
+3. Strengthen wagon preference for long-haul branch/core balancing.
+4. Verify with long-run logistics, district, and branch growth tests.
+
+### Block C. Improve Expansion Shape
+
+1. Increase road-linked site scoring around branch halls and productive remote hubs.
+2. Add stronger follow-up building packages for branch specializations.
+3. Tighten support spawning for second-wave houses, stockpiles, warehouses, cisterns, and workshops.
+4. Verify with outward-growth and branch-support tests plus live sim probe.
+
+### Block D. Improve Observer Feedback
+
+1. Expose branch-hall exchange and district scarcity more clearly in snapshots/UI.
+2. Improve world-side representation of carried goods, deliveries, and stocked hubs where needed.
+3. Add clearer shortage/expansion events.
+4. Verify with build plus manual observer probe.
+
+### Block E. Commit/Push Checkpoint
+
+1. Run final targeted tests for the touched systems.
+2. Run production build.
+3. Commit with a conventional message.
+4. Push to `main`.

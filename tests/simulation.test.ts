@@ -32,10 +32,14 @@ describe("simulation", () => {
     )).toBe(true);
     expect(sim.tribes.every((tribe) =>
       tribe.water >= 40 &&
-      tribe.resources[ResourceType.Clay] >= 8 &&
-      tribe.resources[ResourceType.StoneTools] >= 8 &&
-      tribe.resources[ResourceType.BasicWeapons] >= 5 &&
-      tribe.resources[ResourceType.BasicArmor] >= 4,
+      tribe.resources[ResourceType.Clay] >= 4 &&
+      tribe.resources[ResourceType.Clay] <= 6 &&
+      tribe.resources[ResourceType.StoneTools] >= 4 &&
+      tribe.resources[ResourceType.StoneTools] <= 6 &&
+      tribe.resources[ResourceType.BasicWeapons] >= 2 &&
+      tribe.resources[ResourceType.BasicWeapons] <= 4 &&
+      tribe.resources[ResourceType.BasicArmor] >= 1 &&
+      tribe.resources[ResourceType.BasicArmor] <= 3,
     )).toBe(true);
     expect(sim.tribes.every((tribe) => {
       let embarkPileTiles = 0;
@@ -55,7 +59,7 @@ describe("simulation", () => {
           }
         }
       }
-      return embarkPileTiles >= 12;
+      return embarkPileTiles >= 10;
     })).toBe(true);
   });
 
@@ -542,6 +546,71 @@ describe("simulation", () => {
       .map((job: any) => job.payload?.buildingType);
 
     expect(plannedTypes.some((type: any) => type === BuildingType.Smithy || type === BuildingType.Warehouse)).toBe(true);
+  });
+
+  test("branch halls exchange scarce goods between local hubs", () => {
+    const sim = createSimulation("branch-exchange", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 10);
+    const sourceWarehouse = sim.placeBuilding(tribe.id, BuildingType.Warehouse, tribe.capitalX + 6, tribe.capitalY + 2);
+    const branchStockpile = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+
+    sourceWarehouse.stock[ResourceType.Wood] = 72;
+    sourceWarehouse.stock[ResourceType.Rations] = 36;
+    branchStockpile.stock[ResourceType.Wood] = 0;
+    branchStockpile.stock[ResourceType.Rations] = 0;
+
+    sim.generateBranchExchangeHauls(tribe);
+
+    const exchangeHauls = sim.jobs.filter((job: any) => {
+      if (job.tribeId !== tribe.id || job.kind !== "haul") return false;
+      const payload = job.payload;
+      return (
+        payload.sourceBuildingId === sourceWarehouse.id
+        && (payload.destBuildingId === branchStockpile.id || payload.destBuildingId === branchHall.id)
+      );
+    });
+
+    expect(exchangeHauls.length).toBeGreaterThan(0);
+    expect(exchangeHauls.some((job: any) =>
+      job.payload.resourceType === ResourceType.Wood || job.payload.resourceType === ResourceType.Rations,
+    )).toBe(true);
+  });
+
+  test("understocked branch halls pull self-supply buildings", () => {
+    const sim = createSimulation("branch-shortage-support", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 8);
+    const branchStockpile = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x, branchHall.y + 5);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x + 5, branchHall.y + 5);
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+
+    branchStockpile.stock[ResourceType.Rations] = 0;
+    branchStockpile.stock[ResourceType.Grain] = 0;
+    branchStockpile.stock[ResourceType.Wood] = 0;
+    branchStockpile.stock[ResourceType.Stone] = 0;
+
+    sim.generateBranchHubPlans(tribe);
+
+    const plannedTypes = sim.jobs
+      .filter((job: any) => job.tribeId === tribe.id && job.kind === "build")
+      .map((job: any) => job.payload?.buildingType);
+
+    expect(plannedTypes.some((type: any) =>
+      type === BuildingType.Farm || type === BuildingType.LumberCamp || type === BuildingType.Quarry,
+    )).toBe(true);
   });
 
   test("expanding settlements keep buildings attached to road influence", { timeout: 45000 }, () => {
