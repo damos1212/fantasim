@@ -689,7 +689,9 @@ export class Simulation {
   readonly buildingByIdCache = new Map<number, BuildingState>();
   readonly jobByIdCache = new Map<number, JobState>();
   readonly claimedJobByAgentCache = new Map<number, JobState>();
+  readonly jobSiteCache = new Set<string>();
   lookupCachesDirty = true;
+  jobSiteCacheDirty = true;
   lookupCacheTick = -1;
   cachedBuildingsByTribe: BuildingState[][] = [];
   cachedAgentsByTribe: AgentState[][] = [];
@@ -760,6 +762,7 @@ export class Simulation {
   tick(): DynamicSnapshot | null {
     this.tickCount += 1;
     this.lookupCachesDirty = true;
+    this.jobSiteCacheDirty = true;
     if (this.tickCount % 16 === 1 && this.pathCache.size > 4096) {
       this.pathCache.clear();
     }
@@ -3290,7 +3293,7 @@ export class Simulation {
         const index = indexOf(x, y, this.world.width);
         if (this.world.owner[index] !== tribe.id) continue;
         if (!matcher(index)) continue;
-        if (this.jobs.some((job) => job.tribeId === tribe.id && job.x === x && job.y === y)) continue;
+        if (this.hasAnyJobAtForTribe(tribe.id, x, y)) continue;
         const resourceType = this.world.resourceType[index] as ResourceType;
         const feature = this.world.feature[index] as FeatureType;
         const kind =
@@ -3506,7 +3509,7 @@ export class Simulation {
           const index = indexOf(x, y, this.world.width);
           if (this.world.owner[index] !== tribe.id) continue;
           if (this.world.buildingByTile[index] >= 0) continue;
-          if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "earthwork" && job.x === x && job.y === y)) continue;
+          if (this.hasJobAt(tribe.id, "earthwork", x, y)) continue;
           if (this.agents.some((other) => other.tribeId === tribe.id && other.id !== agent.id && other.task?.kind === "earthwork" && other.task.targetX === x && other.task.targetY === y)) continue;
           const distance = manhattan(agent.x, agent.y, x, y);
           const hubDistance = manhattan(center.x, center.y, x, y);
@@ -3564,7 +3567,7 @@ export class Simulation {
       if (!types.includes(animal.type)) continue;
       const distance = manhattan(agent.x, agent.y, animal.x, animal.y);
       if (distance > radius) continue;
-      if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === kind && job.x === animal.x && job.y === animal.y)) continue;
+      if (this.hasJobAt(tribe.id, kind, animal.x, animal.y)) continue;
       const index = indexOf(animal.x, animal.y, this.world.width);
       const owned = this.world.owner[index] === tribe.id;
       const roadAffinity = this.nearbyRoadScore(animal.x, animal.y, 2);
@@ -3605,7 +3608,7 @@ export class Simulation {
           if (distance > radius) continue;
           const index = indexOf(x, y, this.world.width);
           if (!isWaterTerrain(this.world.terrain[index])) continue;
-          if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "fish" && job.x === x && job.y === y)) continue;
+          if (this.hasJobAt(tribe.id, "fish", x, y)) continue;
           const roadAffinity = this.nearbyRoadScore(center.x, center.y, 2);
           const score = roadAffinity * 6 + Math.max(0, 12 - manhattan(center.x, center.y, x, y)) - distance * 2;
           if (!best || score > best.score) {
@@ -6805,8 +6808,8 @@ export class Simulation {
         const farmResource = farm.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain;
         if (!this.siteHasExtractionCapacity(farm, farmResource, lowFood)) continue;
         const center = buildingCenter(farm);
-        if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "farm" && job.x === center.x && job.y === center.y)) continue;
-        this.jobs.push({
+        if (this.hasJobAt(tribe.id, "farm", center.x, center.y)) continue;
+        const job: JobState = {
           id: this.nextJobId++,
           tribeId: tribe.id,
           kind: "farm",
@@ -6815,7 +6818,9 @@ export class Simulation {
           priority: lowFood ? 6 : 4,
           claimedBy: null,
           payload: { resourceType: farmResource },
-        });
+        };
+        this.jobs.push(job);
+        this.recordJobSite(job);
         activeFarmJobs += 1;
       }
     }
@@ -9569,7 +9574,7 @@ export class Simulation {
     for (let i = existing; i < desired; i += 1) {
       const site = sites[i % sites.length]!;
       const center = buildingCenter(site);
-      if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "delve" && job.x === center.x && job.y === center.y)) {
+      if (this.hasJobAt(tribe.id, "delve", center.x, center.y)) {
         continue;
       }
       const pressure = tribe.resources[ResourceType.Ore] < 50 ? 3 : 0;
@@ -9587,10 +9592,10 @@ export class Simulation {
   }
 
   private enqueueEarthworkJob(tribe: TribeState, x: number, y: number, kind: EarthworkKind, priority: number): void {
-    if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "earthwork" && job.x === x && job.y === y)) {
+    if (this.hasJobAt(tribe.id, "earthwork", x, y)) {
       return;
     }
-    this.jobs.push({
+    const job: JobState = {
       id: this.nextJobId++,
       tribeId: tribe.id,
       kind: "earthwork",
@@ -9599,7 +9604,9 @@ export class Simulation {
       priority,
       claimedBy: null,
       payload: { kind },
-    });
+    };
+    this.jobs.push(job);
+    this.recordJobSite(job);
   }
 
   private canPlaceEarthwork(x: number, y: number, kind: EarthworkKind): boolean {
@@ -9643,8 +9650,8 @@ export class Simulation {
         if (!inBounds(x, y, this.world.width, this.world.height)) continue;
         const index = indexOf(x, y, this.world.width);
         if (this.world.feature[index] !== feature) continue;
-        if (this.jobs.some((job) => job.x === x && job.y === y && job.kind === kind && job.tribeId === tribe.id)) continue;
-        this.jobs.push({
+        if (this.hasJobAt(tribe.id, kind, x, y)) continue;
+        const job: JobState = {
           id: this.nextJobId++,
           tribeId: tribe.id,
           kind,
@@ -9652,7 +9659,9 @@ export class Simulation {
           y,
           priority: 4 + Math.max(0, radius - manhattan(originX, originY, x, y)) * 0.1,
           claimedBy: null,
-        });
+        };
+        this.jobs.push(job);
+        this.recordJobSite(job);
         count += 1;
       }
     }
@@ -9681,8 +9690,8 @@ export class Simulation {
         const index = indexOf(x, y, this.world.width);
         const resourceType = this.world.resourceType[index] as ResourceType;
         if (!resourceTypes.includes(resourceType) || this.world.resourceAmount[index] <= 0) continue;
-        if (this.jobs.some((job) => job.x === x && job.y === y && job.kind === kind && job.tribeId === tribe.id)) continue;
-        this.jobs.push({
+        if (this.hasJobAt(tribe.id, kind, x, y)) continue;
+        const job: JobState = {
           id: this.nextJobId++,
           tribeId: tribe.id,
           kind,
@@ -9693,7 +9702,9 @@ export class Simulation {
           payload: {
             resourceType,
           },
-        });
+        };
+        this.jobs.push(job);
+        this.recordJobSite(job);
         count += 1;
       }
     }
@@ -9713,8 +9724,8 @@ export class Simulation {
         if (!inBounds(x, y, this.world.width, this.world.height)) continue;
         const index = indexOf(x, y, this.world.width);
         if (!isWaterTerrain(this.world.terrain[index])) continue;
-        if (this.jobs.some((job) => job.x === x && job.y === y && job.kind === kind && job.tribeId === tribe.id)) continue;
-        this.jobs.push({
+        if (this.hasJobAt(tribe.id, kind, x, y)) continue;
+        const job: JobState = {
           id: this.nextJobId++,
           tribeId: tribe.id,
           kind,
@@ -9722,7 +9733,9 @@ export class Simulation {
           y,
           priority: 4 + Math.max(0, radius - manhattan(originX, originY, x, y)) * 0.08,
           claimedBy: null,
-        });
+        };
+        this.jobs.push(job);
+        this.recordJobSite(job);
         count += 1;
       }
     }
@@ -9735,8 +9748,8 @@ export class Simulation {
       if (count >= limit) break;
       if (!types.includes(animal.type)) continue;
       if (manhattan(tribe.capitalX, tribe.capitalY, animal.x, animal.y) > radius) continue;
-      if (this.jobs.some((job) => job.x === animal.x && job.y === animal.y && job.kind === kind && job.tribeId === tribe.id)) continue;
-      this.jobs.push({
+      if (this.hasJobAt(tribe.id, kind, animal.x, animal.y)) continue;
+      const job: JobState = {
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind,
@@ -9744,7 +9757,9 @@ export class Simulation {
         y: animal.y,
         priority: 5,
         claimedBy: null,
-      });
+      };
+      this.jobs.push(job);
+      this.recordJobSite(job);
       count += 1;
     }
   }
@@ -9755,8 +9770,8 @@ export class Simulation {
       if (count >= limit) break;
       if (!types.includes(animal.type)) continue;
       if (manhattan(originX, originY, animal.x, animal.y) > radius) continue;
-      if (this.jobs.some((job) => job.x === animal.x && job.y === animal.y && job.kind === kind && job.tribeId === tribe.id)) continue;
-      this.jobs.push({
+      if (this.hasJobAt(tribe.id, kind, animal.x, animal.y)) continue;
+      const job: JobState = {
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind,
@@ -9764,7 +9779,9 @@ export class Simulation {
         y: animal.y,
         priority: 5.2 + Math.max(0, radius - manhattan(originX, originY, animal.x, animal.y)) * 0.08,
         claimedBy: null,
-      });
+      };
+      this.jobs.push(job);
+      this.recordJobSite(job);
       count += 1;
     }
     return count;
@@ -9780,8 +9797,8 @@ export class Simulation {
         const index = indexOf(x, y, this.world.width);
         if (this.world.terrain[index] !== TerrainType.ForestFloor && this.world.biome[index] !== BiomeType.DeepForest) continue;
         if (this.world.feature[index] !== FeatureType.None) continue;
-        if (this.jobs.some((job) => job.x === x && job.y === y && job.kind === "replant_tree" && job.tribeId === tribe.id)) continue;
-        this.jobs.push({
+        if (this.hasJobAt(tribe.id, "replant_tree", x, y)) continue;
+        const job: JobState = {
           id: this.nextJobId++,
           tribeId: tribe.id,
           kind: "replant_tree",
@@ -9789,7 +9806,9 @@ export class Simulation {
           y,
           priority: 3,
           claimedBy: null,
-        });
+        };
+        this.jobs.push(job);
+        this.recordJobSite(job);
         count += 1;
       }
     }
@@ -11030,6 +11049,7 @@ export class Simulation {
 
   private invalidateLookupCaches(): void {
     this.lookupCachesDirty = true;
+    this.jobSiteCacheDirty = true;
   }
 
   private ensureLookupCaches(): void {
@@ -11067,6 +11087,40 @@ export class Simulation {
   private getClaimedJobForAgent(agentId: number): JobState | null {
     this.ensureLookupCaches();
     return this.claimedJobByAgentCache.get(agentId) ?? null;
+  }
+
+  private jobSiteKey(tribeId: number, kind: JobKind | "*", x: number, y: number): string {
+    return `${tribeId}:${kind}:${x}:${y}`;
+  }
+
+  private ensureJobSiteCache(): void {
+    if (!this.jobSiteCacheDirty) {
+      return;
+    }
+    this.jobSiteCache.clear();
+    for (const job of this.jobs) {
+      this.jobSiteCache.add(this.jobSiteKey(job.tribeId, job.kind, job.x, job.y));
+      this.jobSiteCache.add(this.jobSiteKey(job.tribeId, "*", job.x, job.y));
+    }
+    this.jobSiteCacheDirty = false;
+  }
+
+  private recordJobSite(job: JobState): void {
+    if (this.jobSiteCacheDirty) {
+      return;
+    }
+    this.jobSiteCache.add(this.jobSiteKey(job.tribeId, job.kind, job.x, job.y));
+    this.jobSiteCache.add(this.jobSiteKey(job.tribeId, "*", job.x, job.y));
+  }
+
+  private hasJobAt(tribeId: number, kind: JobKind, x: number, y: number): boolean {
+    this.ensureJobSiteCache();
+    return this.jobSiteCache.has(this.jobSiteKey(tribeId, kind, x, y));
+  }
+
+  private hasAnyJobAtForTribe(tribeId: number, x: number, y: number): boolean {
+    this.ensureJobSiteCache();
+    return this.jobSiteCache.has(this.jobSiteKey(tribeId, "*", x, y));
   }
 
   private capitalHallsForTribe(tribeId: number): BuildingState[] {
