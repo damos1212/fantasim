@@ -1657,6 +1657,35 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("productive remote districts keep pulling follow-up utility", () => {
+    const sim = createSimulation("remote-follow-up-utility", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+    expect(tribe).toBeTruthy();
+    tribe.age = AgeType.Stone;
+    tribe.resources[ResourceType.Wood] = Math.max(tribe.resources[ResourceType.Wood], 36);
+    tribe.resources[ResourceType.Stone] = Math.max(tribe.resources[ResourceType.Stone], 24);
+    tribe.resources[ResourceType.Clay] = Math.max(tribe.resources[ResourceType.Clay], 10);
+
+    const farm = sim.placeBuilding(tribe.id, BuildingType.Farm, tribe.capitalX + 14, tribe.capitalY + 8);
+    const stockpile = sim.placeBuilding(tribe.id, BuildingType.Stockpile, tribe.capitalX + 18, tribe.capitalY + 8);
+    sim.placeBuilding(tribe.id, BuildingType.House, tribe.capitalX + 14, tribe.capitalY + 12);
+    farm.stock[ResourceType.Grain] = 42;
+    stockpile.stock[ResourceType.Grain] = 18;
+
+    sim.generateDistrictPlans(tribe);
+
+    const plannedTypes = sim.jobs
+      .filter((job: any) => job.tribeId === tribe.id && job.kind === "build")
+      .map((job: any) => job.payload?.buildingType);
+
+    expect(plannedTypes.some((type: any) =>
+      type === BuildingType.Cistern
+      || type === BuildingType.Warehouse
+      || type === BuildingType.Workshop
+      || type === BuildingType.House,
+    )).toBe(true);
+  });
+
   test("mature tribes can field wagons for long-haul logistics", () => {
     const sim = createSimulation("wagon-logistics", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes[0];

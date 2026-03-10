@@ -1547,3 +1547,10 @@ Only after the previous workstreams are stable:
 5. run bootstrap, frontier, branch-support, branch-exchange, and long-run expansion tests
 6. commit and push that slice
 7. repeat on the next branch/logistics gap before moving to combat/social follow-up
+
+Latest landed progress in this block:
+
+- branch halls now react more strongly to their own nearby food, wood, stone, and ore scarcity
+- strained or immature branches now pull local survival extractors earlier instead of waiting only on central redistribution
+- productive remote districts now keep pulling follow-up utility such as warehouses, workshops, cisterns, and housing more reliably
+- redistribution destination scoring now favors strained branch halls more strongly over low-value same-hall moves

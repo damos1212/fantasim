@@ -7272,6 +7272,12 @@ export class Simulation {
       );
       const nearbyPlannedHall = this.hasNearbyPlannedBuild(tribe.id, BuildingType.CapitalHall, target.center.x, target.center.y, 10);
       const nearbyStorage = storages.some((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 7);
+      const nearbyHouses = this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 8);
+      const nearbyStockpiles = this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8);
+      const nearbyWarehouses = this.nearbyBuildingCount(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 9);
+      const nearbyWorkshops = this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, target.center.x, target.center.y, 8);
+      const nearbyCisterns = this.nearbyBuildingCount(tribe.id, BuildingType.Cistern, target.center.x, target.center.y, 8);
+      const supportCount = nearbyHouses + nearbyStockpiles + nearbyWarehouses + nearbyWorkshops + nearbyCisterns;
       if (!nearbyStorage && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 7)) {
         this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, target.center.x, target.center.y, 7);
       }
@@ -7288,7 +7294,7 @@ export class Simulation {
 
       if (
         population >= 16 &&
-        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 7) < (
+        nearbyHouses < (
           specialization === "harbor" || specialization === "agriculture"
             ? (target.top.amount >= 32 ? 3 : 2)
             : target.top.amount >= 36 ? 3 : productiveRemote ? 2 : 1
@@ -7300,7 +7306,7 @@ export class Simulation {
       if (
         productiveRemote &&
         population >= 22 &&
-        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 8) < 3 &&
+        nearbyHouses < 3 &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 8)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.House, 5, target.center.x, target.center.y, 8);
@@ -7370,10 +7376,42 @@ export class Simulation {
         productiveRemote &&
         specialization !== "agriculture" &&
         population >= 18 &&
-        this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8) < 2 &&
+        nearbyStockpiles < 2 &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 6, target.center.x, target.center.y, 8);
+      }
+
+      if (
+        productiveRemote &&
+        supportCount >= 2 &&
+        (specialization === "agriculture" || specialization === "harbor") &&
+        nearbyCisterns === 0 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Cistern, target.center.x, target.center.y, 9)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Cistern, 6, target.center.x, target.center.y, 9);
+      }
+
+      if (
+        tribe.age >= AgeType.Stone &&
+        productiveRemote &&
+        supportCount >= 3 &&
+        nearbyWarehouses === 0 &&
+        (target.storageDistance >= 10 || target.top.amount >= 24 || specialization === "mining" || specialization === "industry") &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 9)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Warehouse, 7, target.center.x, target.center.y, 9);
+      }
+
+      if (
+        tribe.age >= AgeType.Stone &&
+        productiveRemote &&
+        supportCount >= 3 &&
+        nearbyWorkshops === 0 &&
+        (specialization === "mining" || specialization === "industry" || target.top.amount >= 22) &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Workshop, target.center.x, target.center.y, 8)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Workshop, 6, target.center.x, target.center.y, 8);
       }
     }
 

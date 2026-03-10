@@ -995,3 +995,10 @@ After the previous workstreams are stable:
 4. expose any new branch shortage or maturity state needed in summaries and events
 5. run bootstrap, frontier, branch-support, branch-exchange, and long-run expansion tests after each slice
 6. commit and push each stable slice before moving to the next gap
+
+Latest progress inside this work program:
+
+- branch halls now react more strongly to their own nearby food, wood, stone, and ore scarcity
+- strained or immature branches now pull local extractors earlier instead of waiting only on central redistribution
+- productive remote districts now keep pulling follow-up utility such as warehouses, workshops, cisterns, and housing more reliably
+- redistribution scoring now favors strained branch destinations more strongly over low-value same-hall moves
