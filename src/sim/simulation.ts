@@ -1513,14 +1513,36 @@ export class Simulation {
     }
   }
 
+  private haulTravelDistance(payload: HaulPayload): number {
+    return manhattan(payload.sourceX, payload.sourceY, payload.dropX, payload.dropY);
+  }
+
   private assignWagonRoute(wagon: WagonState, tribe: TribeState, home: BuildingState): void {
     const haulJobs = this.jobs
       .filter((job) => job.tribeId === tribe.id && job.kind === "haul" && job.claimedBy === null)
-      .sort((a, b) =>
-        (manhattan(a.x, a.y, (a.payload as HaulPayload).dropX, (a.payload as HaulPayload).dropY) + manhattan(wagon.x, wagon.y, a.x, a.y))
-        - (manhattan(b.x, b.y, (b.payload as HaulPayload).dropX, (b.payload as HaulPayload).dropY) + manhattan(wagon.x, wagon.y, b.x, b.y)),
-      );
-    const candidate = haulJobs.find((job) => manhattan(job.x, job.y, (job.payload as HaulPayload).dropX, (job.payload as HaulPayload).dropY) >= 4)
+      .sort((a, b) => {
+        const payloadA = a.payload as HaulPayload;
+        const payloadB = b.payload as HaulPayload;
+        const distanceA = this.haulTravelDistance(payloadA);
+        const distanceB = this.haulTravelDistance(payloadB);
+        const pickupA = manhattan(wagon.x, wagon.y, a.x, a.y);
+        const pickupB = manhattan(wagon.x, wagon.y, b.x, b.y);
+        const scoreA =
+          distanceA * 3.2
+          + payloadA.amount * 0.45
+          + (payloadA.targetJobId != null ? 10 : 0)
+          + a.priority * 2.2
+          - pickupA * 0.85;
+        const scoreB =
+          distanceB * 3.2
+          + payloadB.amount * 0.45
+          + (payloadB.targetJobId != null ? 10 : 0)
+          + b.priority * 2.2
+          - pickupB * 0.85;
+        return scoreB - scoreA;
+      });
+    const candidate = haulJobs.find((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 8)
+      ?? haulJobs.find((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 5)
       ?? haulJobs[0];
     if (!candidate) {
       wagon.targetX = wagon.homeX;
@@ -4206,6 +4228,7 @@ export class Simulation {
                 ? [BuildingType.Workshop, BuildingType.Foundry, BuildingType.Factory, BuildingType.Warehouse]
                 : [BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall];
     const sourceCenter = buildingCenter(sourceBuilding);
+    const sourceSpecialization = this.districtSpecialization(sourceBuilding, this.topStoredResource(sourceBuilding));
     const candidates = this.buildingsForTribe(tribeId)
       .filter((building) => building.id !== sourceBuilding.id && preferredTypes.includes(building.type))
       .sort((a, b) => {
@@ -4219,9 +4242,21 @@ export class Simulation {
         const capacityB = this.localStockTarget(b.type, resourceType);
         const spareA = Math.max(0, capacityA - stockA);
         const spareB = Math.max(0, capacityB - stockB);
+        const specA = this.districtSpecialization(a, this.topStoredResource(a));
+        const specB = this.districtSpecialization(b, this.topStoredResource(b));
+        const networkA = this.nearbyRoadScore(centerA.x, centerA.y, 2);
+        const networkB = this.nearbyRoadScore(centerB.x, centerB.y, 2);
+        const specializationBiasA =
+          this.districtExportBiasForResource(specA, resourceType)
+          + (sourceSpecialization !== specA ? 2 : 0);
+        const specializationBiasB =
+          this.districtExportBiasForResource(specB, resourceType)
+          + (sourceSpecialization !== specB ? 2 : 0);
+        const longHaulA = manhattan(sourceCenter.x, sourceCenter.y, centerA.x, centerA.y);
+        const longHaulB = manhattan(sourceCenter.x, sourceCenter.y, centerB.x, centerB.y);
         return (
-          (typeBiasB * 6 + spareB * 0.25 - manhattan(sourceCenter.x, sourceCenter.y, centerB.x, centerB.y) * 1.1)
-          - (typeBiasA * 6 + spareA * 0.25 - manhattan(sourceCenter.x, sourceCenter.y, centerA.x, centerA.y) * 1.1)
+          (typeBiasB * 6 + spareB * 0.25 + specializationBiasB * 0.9 + networkB * 1.3 + Math.min(12, longHaulB) * 0.35 - longHaulB * 0.92)
+          - (typeBiasA * 6 + spareA * 0.25 + specializationBiasA * 0.9 + networkA * 1.3 + Math.min(12, longHaulA) * 0.35 - longHaulA * 0.92)
         );
       });
     return candidates[0] ?? null;
@@ -7145,7 +7180,7 @@ export class Simulation {
 
   private generateRedistributionHauls(tribe: TribeState): void {
     const activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
-    if (activeHauls > 36) {
+    if (activeHauls > 42) {
       return;
     }
     const candidates = this.buildingsForTribe(tribe.id)
@@ -7163,13 +7198,32 @@ export class Simulation {
         building.type === BuildingType.CapitalHall,
       );
 
+    const rankedSources = candidates
+      .map((source) => {
+        const top = this.topStoredResource(source);
+        if (top.resourceType === ResourceType.None) {
+          return null;
+        }
+        const threshold = this.localStockTarget(source.type, top.resourceType);
+        const overflow = top.amount - threshold;
+        const sourceCenter = buildingCenter(source);
+        const remoteness = this.nearestStorageDistance(tribe.id, sourceCenter.x, sourceCenter.y);
+        return {
+          source,
+          top,
+          threshold,
+          overflow,
+          remoteness,
+          score: overflow * 1.2 + remoteness * 1.4 + this.nearbyRoadScore(sourceCenter.x, sourceCenter.y, 2) * 2,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null && entry.overflow > 0)
+      .sort((a, b) => b.score - a.score);
+
     let planned = 0;
-    for (const source of candidates) {
-      if (planned >= 12) break;
-      const top = this.topStoredResource(source);
-      if (top.resourceType === ResourceType.None) continue;
-      const threshold = this.localStockTarget(source.type, top.resourceType);
-      if (top.amount <= threshold) continue;
+    for (const entry of rankedSources) {
+      if (planned >= 16) break;
+      const { source, top, threshold, remoteness } = entry;
       const destination = this.findRedistributionDestinationBuilding(tribe.id, source, top.resourceType);
       if (!destination) continue;
       if (this.hasRedistributionHaul(tribe.id, source.id, destination.id, top.resourceType)) continue;
@@ -7177,6 +7231,7 @@ export class Simulation {
       const sourceCenter = buildingCenter(source);
       const destCenter = buildingCenter(destination);
       if (manhattan(sourceCenter.x, sourceCenter.y, destCenter.x, destCenter.y) < 4) continue;
+      const haulDistance = manhattan(sourceCenter.x, sourceCenter.y, destCenter.x, destCenter.y);
 
       this.jobs.push({
         id: this.nextJobId++,
@@ -7184,7 +7239,7 @@ export class Simulation {
         kind: "haul",
         x: sourceCenter.x,
         y: sourceCenter.y,
-        priority: 5.4,
+        priority: 5.2 + Math.min(2.2, haulDistance * 0.08) + Math.min(1.5, remoteness * 0.05),
         claimedBy: null,
         payload: {
           sourceX: sourceCenter.x,
@@ -7194,7 +7249,7 @@ export class Simulation {
           dropY: destCenter.y,
           destBuildingId: destination.id,
           resourceType: top.resourceType,
-          amount: clamp(Math.floor((top.amount - threshold) * 0.45), 8, 30),
+          amount: clamp(Math.floor((top.amount - threshold) * (haulDistance >= 10 ? 0.62 : 0.45)), 8, haulDistance >= 10 ? 34 : 30),
           targetJobId: null,
         },
       });
@@ -7251,10 +7306,11 @@ export class Simulation {
   }
 
   private ensureWagonsForTribe(tribe: TribeState): void {
-    if (tribe.age < AgeType.Bronze) {
+    if (tribe.age < AgeType.Stone) {
       return;
     }
-    if (tribe.resources[ResourceType.Horses] <= 0) {
+    const draftAnimals = tribe.resources[ResourceType.Horses] + Math.floor(tribe.resources[ResourceType.Livestock] * 0.5);
+    if (draftAnimals <= 0) {
       return;
     }
     const depots = this.buildingsForTribe(tribe.id).filter((building) =>
@@ -7263,27 +7319,41 @@ export class Simulation {
     if (depots.length === 0) {
       return;
     }
-    const activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
-    if (activeHauls < 3) {
+    const tribeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul");
+    const activeHauls = tribeHauls.length;
+    const longHauls = tribeHauls.filter((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 8).length;
+    if (activeHauls < 3 && longHauls === 0) {
       return;
     }
     const desiredWagons = Math.min(
-      7,
-      depots.length + Math.floor(this.buildingCount(tribe.id, BuildingType.Stable) / 2) + this.buildingCount(tribe.id, BuildingType.RailDepot) * 2 + this.buildingCount(tribe.id, BuildingType.PowerPlant) + Math.floor(activeHauls / 6),
+      8,
+      depots.length
+        + Math.floor(this.buildingCount(tribe.id, BuildingType.Stable) / 2)
+        + this.buildingCount(tribe.id, BuildingType.RailDepot) * 2
+        + this.buildingCount(tribe.id, BuildingType.PowerPlant)
+        + Math.floor(activeHauls / 6)
+        + Math.floor(longHauls / 3),
     );
     const existingWagons = this.wagons.filter((wagon) => wagon.tribeId === tribe.id).length;
     if (existingWagons >= desiredWagons) {
       return;
     }
-    if (tribe.resources[ResourceType.Wood] < 10 || tribe.resources[ResourceType.Planks] < 4) {
+    const woodCost = tribe.age >= AgeType.Bronze ? 10 : 8;
+    const plankCost = tribe.age >= AgeType.Bronze ? 4 : 2;
+    if (tribe.resources[ResourceType.Wood] < woodCost || tribe.resources[ResourceType.Planks] < plankCost) {
       return;
     }
 
     const home = depots.find((building) => !this.wagons.some((wagon) => wagon.homeBuildingId === building.id)) ?? depots[0];
     if (!home) return;
     const center = buildingCenter(home);
-    tribe.resources[ResourceType.Wood] -= 10;
-    tribe.resources[ResourceType.Planks] -= 4;
+    tribe.resources[ResourceType.Wood] -= woodCost;
+    tribe.resources[ResourceType.Planks] -= plankCost;
+    if (tribe.resources[ResourceType.Horses] > 0) {
+      tribe.resources[ResourceType.Horses] = Math.max(0, tribe.resources[ResourceType.Horses] - 1);
+    } else if (tribe.resources[ResourceType.Livestock] > 1) {
+      tribe.resources[ResourceType.Livestock] = Math.max(0, tribe.resources[ResourceType.Livestock] - 2);
+    }
     this.wagons.push({
       id: this.nextWagonId++,
       tribeId: tribe.id,

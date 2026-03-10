@@ -549,6 +549,41 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("mature tribes can field wagons for long-haul logistics", () => {
+    const sim = createSimulation("wagon-logistics", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    tribe.age = AgeType.Stone;
+    tribe.resources[ResourceType.Livestock] = 4;
+    tribe.resources[ResourceType.Wood] = 40;
+    tribe.resources[ResourceType.Planks] = 16;
+    sim.jobs.push({
+      id: 999001,
+      tribeId: tribe.id,
+      kind: "haul",
+      x: tribe.capitalX + 10,
+      y: tribe.capitalY,
+      priority: 6,
+      claimedBy: null,
+      payload: {
+        sourceX: tribe.capitalX + 10,
+        sourceY: tribe.capitalY,
+        sourceBuildingId: null,
+        dropX: tribe.capitalX - 10,
+        dropY: tribe.capitalY,
+        destBuildingId: null,
+        resourceType: ResourceType.Wood,
+        amount: 12,
+        targetJobId: null,
+      },
+    });
+
+    sim.ensureWagonsForTribe(tribe);
+
+    const lastSnapshot = sim.snapshotNow();
+    expect(lastSnapshot.tribes.some((entry: any) => entry.id === tribe.id && entry.wagons > 0)).toBe(true);
+    expect(lastSnapshot.wagons.some((wagon: any) => wagon.tribeId === tribe.id)).toBe(true);
+  });
+
   test("stable settlements keep adding second-wave extraction and logistics sites", { timeout: 70000 }, () => {
     const sim = createSimulation("second-wave-districts", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
