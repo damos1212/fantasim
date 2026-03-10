@@ -831,6 +831,46 @@ describe("simulation", () => {
     expect(plannedTypes.some((type: any) => type === BuildingType.Stockpile || type === BuildingType.House || type === BuildingType.Cistern)).toBe(true);
   });
 
+  test("branch hall supply hauls get elevated urgency", () => {
+    const sim = createSimulation("branch-hall-haul-priority", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    const capital = sim.buildings.find((building: any) => building.tribeId === tribe.id && building.type === BuildingType.CapitalHall);
+    const stockpile = sim.buildings.find((building: any) => building.tribeId === tribe.id && building.type === BuildingType.Stockpile);
+    expect(capital).toBeTruthy();
+    expect(stockpile).toBeTruthy();
+
+    stockpile.stock[ResourceType.Wood] = 80;
+    sim.jobs.push({
+      id: 999101,
+      tribeId: tribe.id,
+      kind: "build",
+      x: capital.x + 18,
+      y: capital.y + 10,
+      priority: 9,
+      claimedBy: null,
+      payload: {
+        buildingType: BuildingType.CapitalHall,
+        width: 3,
+        height: 3,
+        cost: { [ResourceType.Wood]: 20 },
+        supplied: 0,
+        supplyNeeded: 1,
+        delivered: {},
+        stockX: capital.x + 19,
+        stockY: capital.y + 11,
+      },
+    });
+
+    sim.ensureBuildJobSupplyHauls(tribe, sim.jobs[sim.jobs.length - 1]);
+
+    const haul = sim.jobs.find((job: any) => job.kind === "haul" && job.payload?.targetJobId === 999101);
+    expect(haul).toBeTruthy();
+    expect(haul.priority).toBeGreaterThanOrEqual(8.8);
+  });
+
   test("branch redistribution does not drain a weak branch below reserve", () => {
     const sim = createSimulation("branch-reserve-protection", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);

@@ -1451,6 +1451,7 @@ Latest completed execution slices:
 - planned branch halls now seed nearby stockpile/house/cistern support and get stronger build/haul urgency
 - branch planning, growth, shortage, and recovery now emit explicit history events instead of only hiding in summary counters
 - branch-founded, branch-rescue, and branch-lost events now land as dedicated feed entries instead of only generic construction/loss noise
+- branch-hall build supply hauls now inherit elevated urgency so second centers complete more reliably once planned
 
 Current concrete follow-up gaps:
 

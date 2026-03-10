@@ -1273,8 +1273,8 @@ export class Simulation {
       || this.hasBuilt(tribe.id, BuildingType.Foundry)
       || this.hasBuilt(tribe.id, BuildingType.Factory);
     const desiredSoldiers = clamp(Math.floor(tribeAgents.length * (0.12 + tribe.race.militaryBias * 0.08 + hostility * 0.002)), primitive ? 1 : 2, 18);
-    const desiredFarmers = clamp(Math.floor(tribeAgents.length * (primitive ? 0.24 : 0.18) * tribe.race.foodBias + branchHallCount * 1.2 + foodBranches * 0.8 + strainedBranches * 0.8), primitive ? 4 : 3, 22);
-    const desiredWoodcutters = clamp(Math.floor(tribeAgents.length * (primitive ? 0.16 : 0.14) + branchHallCount * 0.6), primitive ? 3 : 2, 14);
+    const desiredFarmers = clamp(Math.floor(tribeAgents.length * (primitive ? 0.24 : 0.18) * tribe.race.foodBias + branchHallCount * 1.2 + plannedBranchHalls * 0.45 + foodBranches * 0.8 + strainedBranches * 0.8), primitive ? 4 : 3, 22);
+    const desiredWoodcutters = clamp(Math.floor(tribeAgents.length * (primitive ? 0.16 : 0.14) + branchHallCount * 0.6 + plannedBranchHalls * 0.35), primitive ? 3 : 2, 14);
     const desiredMiners = tribe.age >= AgeType.Stone
       ? clamp(
         Math.floor(
@@ -1282,6 +1282,7 @@ export class Simulation {
           + industrialSites * (tribe.age >= AgeType.Bronze ? 0.75 : 0.45)
           + productiveRemoteHubs * 0.35
           + branchHallCount * 0.55
+          + plannedBranchHalls * 0.25
           + miningBranches * 0.9
         ),
         primitive ? 3 : 2,
@@ -3572,6 +3573,18 @@ export class Simulation {
       const targetJob = payload.targetJobId === null ? null : this.jobs.find((entry) => entry.id === payload.targetJobId);
       if (targetJob) {
         score += this.jobUrgencyScore(agent, tribe, targetJob) * 0.7;
+        if (targetJob.kind === "build") {
+          const targetPayload = targetJob.payload as BuildPayload;
+          const targetCenterX = targetJob.x + Math.floor(targetPayload.width / 2);
+          const targetCenterY = targetJob.y + Math.floor(targetPayload.height / 2);
+          const targetType = targetPayload.buildingType;
+          const supportsPlannedHall =
+            targetType === BuildingType.CapitalHall
+            || this.plannedNearbyBuildingCount(tribe.id, BuildingType.CapitalHall, targetCenterX, targetCenterY, 10) > 0;
+          if (supportsPlannedHall) {
+            score += 28;
+          }
+        }
       } else {
         const sourceBuilding = payload.sourceBuildingId === null || payload.sourceBuildingId === undefined
           ? null
@@ -6903,6 +6916,7 @@ export class Simulation {
       const nearbyHall = this.capitalHallsForTribe(tribe.id).some((hall) =>
         manhattan(buildingCenter(hall).x, buildingCenter(hall).y, target.center.x, target.center.y) <= 12,
       );
+      const nearbyPlannedHall = this.hasNearbyPlannedBuild(tribe.id, BuildingType.CapitalHall, target.center.x, target.center.y, 10);
       const nearbyStorage = storages.some((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 7);
       if (!nearbyStorage && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 7)) {
         this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, target.center.x, target.center.y, 7);
@@ -6945,10 +6959,26 @@ export class Simulation {
           || (population >= 22 && (target.storageDistance >= 12 || target.top.amount >= 24))
         ) &&
         !nearbyHall &&
+        !nearbyPlannedHall &&
         this.buildingCount(tribe.id, BuildingType.CapitalHall) < this.maxBuildingCountForTribe(tribe, BuildingType.CapitalHall) &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.CapitalHall, target.center.x, target.center.y, 10)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.CapitalHall, 11, target.center.x, target.center.y, 10);
+      }
+
+      if (
+        nearbyPlannedHall &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 8) < 2 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 8)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.House, 7, target.center.x, target.center.y, 8);
+      }
+      if (
+        nearbyPlannedHall &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8) === 0 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 8, target.center.x, target.center.y, 8);
       }
 
       if (
@@ -8179,6 +8209,9 @@ export class Simulation {
 
   private ensureBuildJobSupplyHauls(tribe: TribeState, job: JobState): void {
     const payload = job.payload as BuildPayload;
+    const isHallBuild = payload.buildingType === BuildingType.CapitalHall && payload.upgradeBuildingId == null;
+    const nearPlannedHall = !isHallBuild
+      && this.plannedNearbyBuildingCount(tribe.id, BuildingType.CapitalHall, payload.stockX, payload.stockY, 10) > 0;
     for (const [resource, requiredAmount] of Object.entries(payload.cost)) {
       const resourceType = Number(resource) as ResourceType;
       const delivered = this.deliveredAmount(payload.delivered, resourceType);
@@ -8199,7 +8232,10 @@ export class Simulation {
           kind: "haul",
           x: sourceSite.x,
           y: sourceSite.y,
-          priority: Math.max(4, job.priority - 1),
+          priority:
+            isHallBuild ? Math.max(8.8, job.priority + 0.9)
+            : nearPlannedHall ? Math.max(6.8, job.priority + 0.2)
+            : Math.max(4, job.priority - 1),
           claimedBy: null,
           payload: {
             sourceX: sourceSite.x,
