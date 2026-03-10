@@ -118,6 +118,8 @@ type MotionState = {
   fromY: number;
   toX: number;
   toY: number;
+  startAt: number;
+  endAt: number;
 };
 
 type PixelTarget = Graphics | CanvasRenderingContext2D;
@@ -240,30 +242,36 @@ function entityPosition(
   id: number,
   fallbackX: number,
   fallbackY: number,
-  alpha: number,
+  nowMs: number,
   previewX = fallbackX,
   previewY = fallbackY,
 ): { x: number; y: number } {
   const state = motion.get(id);
   if (!state) {
-    const previewEase = alpha <= 0 ? 0 : alpha >= 1 ? 1 : alpha * alpha * (3 - 2 * alpha);
+    const previewEase = 0.35;
     return {
       x: fallbackX + (previewX - fallbackX) * previewEase,
       y: fallbackY + (previewY - fallbackY) * previewEase,
     };
   }
-  const eased = alpha <= 0 ? 0 : alpha >= 1 ? 1 : alpha * alpha * (3 - 2 * alpha);
+  const duration = Math.max(16, state.endAt - state.startAt);
+  const rawAlpha = clamp((nowMs - state.startAt) / duration, 0, 1.18);
+  const eased = rawAlpha <= 0 ? 0 : rawAlpha >= 1 ? 1 : rawAlpha * rawAlpha * (3 - 2 * rawAlpha);
   if (state.fromX === state.toX && state.fromY === state.toY && (previewX !== state.toX || previewY !== state.toY)) {
-    const previewEase = eased * 0.92;
+    const previewEase = Math.min(0.88, 0.22 + rawAlpha * 0.6);
     return {
       x: state.toX + (previewX - state.toX) * previewEase,
       y: state.toY + (previewY - state.toY) * previewEase,
     };
   }
-  return {
-    x: state.fromX + (state.toX - state.fromX) * eased,
-    y: state.fromY + (state.toY - state.fromY) * eased,
-  };
+  let x = state.fromX + (state.toX - state.fromX) * eased;
+  let y = state.fromY + (state.toY - state.fromY) * eased;
+  if (rawAlpha > 1 && (previewX !== state.toX || previewY !== state.toY)) {
+    const previewAlpha = Math.min(0.35, (rawAlpha - 1) * 0.45);
+    x += (previewX - state.toX) * previewAlpha;
+    y += (previewY - state.toY) * previewAlpha;
+  }
+  return { x, y };
 }
 
 function resourceVisualColor(resourceType: ResourceType): number {
@@ -417,6 +425,7 @@ export class GameRenderer {
     creatures: true,
   };
   lastSnapshotAt = performance.now();
+  lastSnapshotInterval = (1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS;
   lastFrameAt = performance.now();
   presentationClock = 0;
   lastHudRenderAt = 0;
@@ -722,16 +731,22 @@ export class GameRenderer {
   }
 
   applySnapshot(snapshot: DynamicSnapshot): void {
+    const nowMs = performance.now();
     const buildingsChanged = snapshot.buildings.length !== this.state.buildings.length;
     const plannedSitesChanged = snapshot.plannedSites.length !== this.state.plannedSites.length;
-    this.captureMotion(this.agentMotion, this.state.agents, snapshot.agents);
-    this.captureMotion(this.animalMotion, this.state.animals, snapshot.animals);
-    this.captureMotion(this.boatMotion, this.state.boats, snapshot.boats);
-    this.captureMotion(this.wagonMotion, this.state.wagons, snapshot.wagons);
-    this.captureMotion(this.caravanMotion, this.state.caravans, snapshot.caravans);
-    this.captureMotion(this.siegeMotion, this.state.siegeEngines, snapshot.siegeEngines);
+    const measuredInterval = nowMs - this.lastSnapshotAt;
+    if (measuredInterval > 8) {
+      const clampedInterval = clamp(measuredInterval, 16, 260);
+      this.lastSnapshotInterval = this.lastSnapshotInterval * 0.72 + clampedInterval * 0.28;
+    }
+    this.captureMotion(this.agentMotion, this.state.agents, snapshot.agents, nowMs);
+    this.captureMotion(this.animalMotion, this.state.animals, snapshot.animals, nowMs);
+    this.captureMotion(this.boatMotion, this.state.boats, snapshot.boats, nowMs);
+    this.captureMotion(this.wagonMotion, this.state.wagons, snapshot.wagons, nowMs);
+    this.captureMotion(this.caravanMotion, this.state.caravans, snapshot.caravans, nowMs);
+    this.captureMotion(this.siegeMotion, this.state.siegeEngines, snapshot.siegeEngines, nowMs);
 
-    this.lastSnapshotAt = performance.now();
+    this.lastSnapshotAt = nowMs;
     this.state.tick = snapshot.tick;
     this.state.year = snapshot.year;
     this.state.season = snapshot.season;
@@ -789,16 +804,38 @@ export class GameRenderer {
     this.drawMinimap(false);
   }
 
-  private captureMotion<T extends { id: number; x: number; y: number }>(store: Map<number, MotionState>, previous: T[], next: T[]): void {
+  private motionPositionFromState(state: MotionState | undefined, fallbackX: number, fallbackY: number, nowMs: number): { x: number; y: number } {
+    if (!state) {
+      return { x: fallbackX, y: fallbackY };
+    }
+    const duration = Math.max(16, state.endAt - state.startAt);
+    const rawAlpha = clamp((nowMs - state.startAt) / duration, 0, 1);
+    const eased = rawAlpha <= 0 ? 0 : rawAlpha >= 1 ? 1 : rawAlpha * rawAlpha * (3 - 2 * rawAlpha);
+    return {
+      x: state.fromX + (state.toX - state.fromX) * eased,
+      y: state.fromY + (state.toY - state.fromY) * eased,
+    };
+  }
+
+  private captureMotion<T extends { id: number; x: number; y: number }>(store: Map<number, MotionState>, previous: T[], next: T[], nowMs: number): void {
     const previousMap = new Map(previous.map((entry) => [entry.id, entry]));
-    store.clear();
+    const nextIds = new Set(next.map((entry) => entry.id));
+    for (const id of [...store.keys()]) {
+      if (!nextIds.has(id)) {
+        store.delete(id);
+      }
+    }
     for (const entry of next) {
       const before = previousMap.get(entry.id);
+      const priorState = store.get(entry.id);
+      const currentPosition = this.motionPositionFromState(priorState, before?.x ?? entry.x, before?.y ?? entry.y, nowMs);
       store.set(entry.id, {
-        fromX: before?.x ?? entry.x,
-        fromY: before?.y ?? entry.y,
+        fromX: currentPosition.x,
+        fromY: currentPosition.y,
         toX: entry.x,
         toY: entry.y,
+        startAt: nowMs,
+        endAt: nowMs + this.lastSnapshotInterval,
       });
     }
   }
@@ -969,12 +1006,11 @@ export class GameRenderer {
     const frameDelta = Math.min(0.05, Math.max(0, (nowMs - this.lastFrameAt) / 1000));
     this.lastFrameAt = nowMs;
     this.presentationClock += frameDelta * (this.paused ? 0.35 : 0.7 + this.simSpeed * 0.18);
-    const alpha = clamp((nowMs - this.lastSnapshotAt) / ((1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS), 0, 1);
     const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
     if (this.followSelectedUnit && this.selectedUnitId !== null) {
       const followed = this.state.agents.find((agent) => agent.id === this.selectedUnitId);
       if (followed && (this.viewMode === "surface" || followed.underground)) {
-        const position = entityPosition(this.agentMotion, followed.id, followed.x, followed.y, alpha, followed.moveToX, followed.moveToY);
+        const position = entityPosition(this.agentMotion, followed.id, followed.x, followed.y, nowMs, followed.moveToX, followed.moveToY);
         this.focusWorld(position.x, position.y);
       } else if (!followed) {
         this.followSelectedUnit = false;
@@ -987,14 +1023,14 @@ export class GameRenderer {
     const minTileY = Math.max(0, Math.floor(this.cameraY / TILE_SIZE));
     const maxTileX = Math.min(world.width - 1, Math.ceil((this.cameraX + viewportWidth / this.zoom) / TILE_SIZE) + 1);
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
-    const lodStep = this.zoom < 0.58 ? 4 : this.zoom < 1.08 ? 2 : 1;
+    const lodStep = 1;
     const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
     const atmosphereViewportSignature = `${this.viewMode}:${Math.floor(minTileX / 8)}:${Math.floor(minTileY / 8)}:${Math.floor(maxTileX / 8)}:${Math.floor(maxTileY / 8)}:${lodStep === 1 ? 1 : 0}:${this.zoom > 0.92 ? 1 : 0}`;
     const now = nowMs;
     const redrawStaticScene =
       this.staticSceneDirty ||
       this.lastStaticViewportSignature !== staticViewportSignature ||
-      (this.viewMode === "surface" && lodStep === 1 && this.zoom > 1.35 && now - this.lastStaticRenderAt > 1100);
+      (this.viewMode === "surface" && this.zoom > 1.35 && now - this.lastStaticRenderAt > 1100);
     const redrawAtmosphere =
       this.atmosphereDirty ||
       this.lastAtmosphereViewportSignature !== atmosphereViewportSignature ||
@@ -1057,11 +1093,11 @@ export class GameRenderer {
       this.drawBranchMarkers(minTileX, minTileY, maxTileX, maxTileY, tribeById);
     }
 
-    const useDetailedEntities = lodStep === 1 && this.zoom > 1.18;
+    const useDetailedEntities = this.zoom > 1.18;
 
     for (const animal of this.state.animals) {
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.animalMotion, animal.id, animal.x, animal.y, alpha, animal.moveToX, animal.moveToY);
+      const position = entityPosition(this.animalMotion, animal.id, animal.x, animal.y, nowMs, animal.moveToX, animal.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
@@ -1077,7 +1113,7 @@ export class GameRenderer {
     for (const boat of this.state.boats) {
       if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.boatMotion, boat.id, boat.x, boat.y, alpha, boat.moveToX, boat.moveToY);
+      const position = entityPosition(this.boatMotion, boat.id, boat.x, boat.y, nowMs, boat.moveToX, boat.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
@@ -1092,7 +1128,7 @@ export class GameRenderer {
     for (const wagon of this.state.wagons) {
       if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.wagonMotion, wagon.id, wagon.x, wagon.y, alpha, wagon.moveToX, wagon.moveToY);
+      const position = entityPosition(this.wagonMotion, wagon.id, wagon.x, wagon.y, nowMs, wagon.moveToX, wagon.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
@@ -1108,7 +1144,7 @@ export class GameRenderer {
     for (const caravan of this.state.caravans) {
       if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.caravanMotion, caravan.id, caravan.x, caravan.y, alpha, caravan.moveToX, caravan.moveToY);
+      const position = entityPosition(this.caravanMotion, caravan.id, caravan.x, caravan.y, nowMs, caravan.moveToX, caravan.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
@@ -1123,7 +1159,7 @@ export class GameRenderer {
 
     for (const engine of this.state.siegeEngines) {
       if (!this.renderFilters.armies) continue;
-      const position = entityPosition(this.siegeMotion, engine.id, engine.x, engine.y, alpha, engine.moveToX, engine.moveToY);
+      const position = entityPosition(this.siegeMotion, engine.id, engine.x, engine.y, nowMs, engine.moveToX, engine.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
@@ -1184,7 +1220,7 @@ export class GameRenderer {
       ) {
         continue;
       }
-      const position = entityPosition(this.agentMotion, agent.id, agent.x, agent.y, alpha, agent.moveToX, agent.moveToY);
+      const position = entityPosition(this.agentMotion, agent.id, agent.x, agent.y, nowMs, agent.moveToX, agent.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
@@ -1621,18 +1657,20 @@ export class GameRenderer {
 
   private drawRoadTile(target: PixelTarget, px: number, py: number, level = 1): void {
     if (level >= 2) {
-      drawPixelRect(target, px + 1, py + 3, 14, 10, 0x8e959d, 0.95);
-      drawPixelRect(target, px + 2, py + 4, 12, 1, 0xcfd4d8, 0.32);
-      drawPixelRect(target, px + 2, py + 11, 12, 1, 0x666c73, 0.35);
-      drawPixelRect(target, px + 3, py + 6, 10, 1, 0x727980, 0.42);
-      drawPixelRect(target, px + 3, py + 9, 10, 1, 0x727980, 0.42);
+      drawPixelRect(target, px, py, 16, 16, 0x8e959d, 0.98);
+      drawPixelRect(target, px, py, 16, 2, 0xd3d8dc, 0.35);
+      drawPixelRect(target, px, py + 14, 16, 2, 0x666c73, 0.38);
+      drawPixelRect(target, px + 2, py + 4, 12, 1, 0xc4c9ce, 0.2);
+      drawPixelRect(target, px + 3, py + 8, 10, 1, 0x6f767d, 0.22);
+      drawPixelRect(target, px + 2, py + 11, 12, 1, 0x707780, 0.2);
       return;
     }
-    drawPixelRect(target, px + 1, py + 4, 14, 8, 0xb28d59, 0.95);
-    drawPixelRect(target, px + 2, py + 5, 12, 1, 0xd0b07b, 0.26);
-    drawPixelRect(target, px + 2, py + 10, 12, 1, 0x7d6643, 0.3);
-    drawPixelRect(target, px + 4, py + 6, 8, 1, 0x8b7249, 0.34);
-    drawPixelRect(target, px + 4, py + 9, 8, 1, 0x8b7249, 0.34);
+    drawPixelRect(target, px, py, 16, 16, 0xb28d59, 0.98);
+    drawPixelRect(target, px, py, 16, 2, 0xd8b887, 0.24);
+    drawPixelRect(target, px, py + 14, 16, 2, 0x7a6442, 0.3);
+    drawPixelRect(target, px + 2, py + 5, 12, 1, 0xd0b07b, 0.22);
+    drawPixelRect(target, px + 3, py + 8, 10, 1, 0x8b7249, 0.22);
+    drawPixelRect(target, px + 2, py + 11, 12, 1, 0x8b7249, 0.2);
   }
 
   private drawFeature(target: PixelTarget, feature: FeatureType, px: number, py: number, terrain: TerrainType): void {
