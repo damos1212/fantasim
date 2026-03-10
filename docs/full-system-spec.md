@@ -866,6 +866,7 @@ The current active execution window is focused on making the simulation feel mat
 - local stock, shortage, and exchange behavior should be easier to inspect
 - carried materials and deliveries should stay visible
 - shortages, branch founding, and redistribution should emit clearer world feedback
+- tribe summaries and kingdom panels should expose branch count, active branch transfers, current shortage, and current export focus
 
 The implementation order for this execution window is:
 
@@ -883,3 +884,19 @@ Concrete todo list for this execution window:
 - commit the scarcity/branch-logistics slice
 - tighten remote-district support if branches still stall after founding
 - re-run long-run activity/expansion checks after each balancing pass
+
+## 23. Next Multi-Hour Execution Block
+
+With scarcity and branch exchange established, the next implementation block should focus on visibility and midgame pull:
+
+1. expose branch logistics and shortage/export state clearly in summaries and UI
+2. strengthen hall-aware redistribution and long-haul balancing
+3. keep branch towns self-supplying and visibly growing
+4. only after that, begin the first combat-readability slice
+5. then begin the first social-simulation slice
+
+Immediate success criteria:
+
+- users can tell which tribes have multiple branches, which branches are strained, and whether goods are flowing inward or outward
+- mature tribes keep moving goods between districts instead of flattening into quiet stock equilibrium
+- branch towns continue pulling support buildings instead of remaining thin outposts
