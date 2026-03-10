@@ -480,7 +480,7 @@ export class GameRenderer {
       resizeTo: window,
       antialias: false,
       backgroundAlpha: 0,
-      resolution: Math.min(window.devicePixelRatio || 1, 1.25),
+      resolution: 1,
     });
 
     this.app.ticker.maxFPS = 60;
@@ -806,6 +806,23 @@ export class GameRenderer {
     this.iconTextures.clear();
   }
 
+  private upsertIconSprite(key: string, x: number, y: number, width: number, height: number, tint: number, alpha: number): void {
+    let state = this.iconSprites.get(key);
+    if (!state) {
+      const sprite = new Sprite(Texture.WHITE);
+      sprite.visible = false;
+      this.iconLayer.addChild(sprite);
+      state = { sprite, textureKey: "white" };
+      this.iconSprites.set(key, state);
+    }
+    state.sprite.visible = true;
+    state.sprite.position.set(x, y);
+    state.sprite.width = width;
+    state.sprite.height = height;
+    state.sprite.tint = tint;
+    state.sprite.alpha = alpha;
+  }
+
   private markAllStaticChunksDirty(): void {
     for (const chunk of this.staticChunks.values()) {
       chunk.dirty = true;
@@ -959,6 +976,9 @@ export class GameRenderer {
     }
     this.unitGraphics.clear();
     this.selectionGraphics.clear();
+    for (const state of this.iconSprites.values()) {
+      state.sprite.visible = false;
+    }
     for (const label of this.labelSprites.values()) {
       label.visible = false;
     }
@@ -984,11 +1004,16 @@ export class GameRenderer {
     }
 
     if (this.viewMode === "surface" && lodStep === 1) {
+      const drawLiveBuildings = this.zoom > 1.72;
       for (const building of this.state.buildings) {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), this.zoom > 1.22, 0, 0, true);
+        if (drawLiveBuildings) {
+          this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), true, 0, 0, true);
+        } else {
+          this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
+        }
       }
     }
 
@@ -1003,7 +1028,7 @@ export class GameRenderer {
       if (!useDetailedEntities) {
         const px = position.x * TILE_SIZE + TILE_SIZE * 0.3;
         const py = position.y * TILE_SIZE + TILE_SIZE * 0.3;
-        drawPixelRect(this.unitGraphics, px, py, 4, 4, ANIMAL_COLORS[animal.type], 0.8);
+        this.upsertIconSprite(`animal:${animal.id}`, px, py, 4, 4, ANIMAL_COLORS[animal.type], 0.8);
       } else {
         this.drawAnimal(animal, position.x, position.y);
       }
@@ -1018,7 +1043,7 @@ export class GameRenderer {
       }
       const tribe = tribeById.get(boat.tribeId);
       if (!useDetailedEntities) {
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
+        this.upsertIconSprite(`boat:${boat.id}`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
       } else {
         this.drawBoat(boat, tribe?.color ?? 0xffffff, position.x, position.y);
       }
@@ -1033,8 +1058,8 @@ export class GameRenderer {
       }
       const tribe = tribeById.get(wagon.tribeId);
       if (!useDetailedEntities) {
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
+        this.upsertIconSprite(`wagon:${wagon.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
+        this.upsertIconSprite(`wagon:${wagon.id}:flag`, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
       } else {
         this.drawWagon(wagon, tribe?.color ?? 0xffffff, position.x, position.y);
       }
@@ -1049,8 +1074,8 @@ export class GameRenderer {
       }
       const tribe = tribeById.get(caravan.tribeId);
       if (!useDetailedEntities) {
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
+        this.upsertIconSprite(`caravan:${caravan.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
+        this.upsertIconSprite(`caravan:${caravan.id}:flag`, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
       } else {
         this.drawCaravan(caravan, tribe?.color ?? 0xffffff, position.x, position.y);
       }
@@ -1064,7 +1089,7 @@ export class GameRenderer {
       }
       const tribe = tribeById.get(engine.tribeId);
       if (!useDetailedEntities) {
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
+        this.upsertIconSprite(`siege:${engine.id}`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
       } else {
         this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff, position.x, position.y);
       }
@@ -1084,7 +1109,7 @@ export class GameRenderer {
         continue;
       }
       if (lodStep > 1) {
-        drawPixelRect(this.unitGraphics, dungeon.x * TILE_SIZE + 5, dungeon.y * TILE_SIZE + 5, 3, 3, 0xd7c78f, 0.8);
+        this.upsertIconSprite(`dungeon:${dungeon.id}`, dungeon.x * TILE_SIZE + 5, dungeon.y * TILE_SIZE + 5, 3, 3, 0xd7c78f, 0.8);
       } else {
         const px = dungeon.x * TILE_SIZE;
         const py = dungeon.y * TILE_SIZE;
@@ -1100,7 +1125,7 @@ export class GameRenderer {
         continue;
       }
       if (lodStep > 1 || this.zoom <= 1.02) {
-        drawPixelRect(this.unitGraphics, creature.x * TILE_SIZE + 3, creature.y * TILE_SIZE + 5, 10, 8, 0xd06b48, 0.85);
+        this.upsertIconSprite(`creature:${creature.id}`, creature.x * TILE_SIZE + 3, creature.y * TILE_SIZE + 5, 10, 8, 0xd06b48, 0.85);
       } else {
         this.drawLegendaryCreature(creature);
       }
@@ -1127,9 +1152,9 @@ export class GameRenderer {
       }
       const tribe = tribeById.get(agent.tribeId);
       if (!useDetailedEntities) {
-        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
+        this.upsertIconSprite(`agent:${agent.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
         if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
-          drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
+          this.upsertIconSprite(`agent:${agent.id}:accent`, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
         }
       } else {
         this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.12);
@@ -1555,13 +1580,18 @@ export class GameRenderer {
 
   private drawRoadTile(target: PixelTarget, px: number, py: number, level = 1): void {
     if (level >= 2) {
-      drawPixelRect(target, px + 1, py + 5, 14, 6, 0x9aa0a7, 0.94);
-      drawPixelRect(target, px + 3, py + 7, 10, 2, 0x6f757b, 0.55);
-      drawPixelRect(target, px + 2, py + 5, 12, 1, 0xcfd4d8, 0.28);
+      drawPixelRect(target, px + 1, py + 3, 14, 10, 0x8e959d, 0.95);
+      drawPixelRect(target, px + 2, py + 4, 12, 1, 0xcfd4d8, 0.32);
+      drawPixelRect(target, px + 2, py + 11, 12, 1, 0x666c73, 0.35);
+      drawPixelRect(target, px + 3, py + 6, 10, 1, 0x727980, 0.42);
+      drawPixelRect(target, px + 3, py + 9, 10, 1, 0x727980, 0.42);
       return;
     }
-    drawPixelRect(target, px + 2, py + 6, 12, 4, 0xb99663, 0.95);
-    drawPixelRect(target, px + 4, py + 7, 8, 2, 0x7d6643, 0.5);
+    drawPixelRect(target, px + 1, py + 4, 14, 8, 0xb28d59, 0.95);
+    drawPixelRect(target, px + 2, py + 5, 12, 1, 0xd0b07b, 0.26);
+    drawPixelRect(target, px + 2, py + 10, 12, 1, 0x7d6643, 0.3);
+    drawPixelRect(target, px + 4, py + 6, 8, 1, 0x8b7249, 0.34);
+    drawPixelRect(target, px + 4, py + 9, 8, 1, 0x8b7249, 0.34);
   }
 
   private drawFeature(target: PixelTarget, feature: FeatureType, px: number, py: number, terrain: TerrainType): void {
@@ -1943,6 +1973,42 @@ export class GameRenderer {
         drawPixelRect(target, pileX + 1, pileY + pileHeight, Math.max(2, pileWidth - 2), 1, 0xd7dde3, 0.6);
       } else if (building.stockResource === ResourceType.Grain || building.stockResource === ResourceType.Berries || building.stockResource === ResourceType.Fish || building.stockResource === ResourceType.Meat) {
         drawPixelRect(target, pileX + 1, pileY + pileHeight, Math.max(2, pileWidth - 2), 1, 0xf2ddb2, 0.62);
+      }
+    }
+  }
+
+  private drawBuildingDynamicOverlay(target: PixelTarget, building: BuildingSnapshot, tribe?: TribeSummary): void {
+    const px = building.x * TILE_SIZE;
+    const py = building.y * TILE_SIZE;
+    const w = building.width * TILE_SIZE;
+    const h = building.height * TILE_SIZE;
+    const tribeColor = tribe?.color ?? 0xffffff;
+    const race = tribe?.race ?? RaceType.Humans;
+    const age = tribe?.age ?? AgeType.Primitive;
+    const materials = raceMaterial(race, age, tribeColor);
+
+    if (building.level > 1) {
+      const upgradeGlow = Math.min(0.32, 0.12 + (building.level - 2) * 0.06);
+      drawPixelRect(target, px + 2, py + h - 4, w - 4, 1, lighten(materials.trim, 18), 0.5 + upgradeGlow);
+      for (let pip = 0; pip < Math.min(3, building.level - 1); pip += 1) {
+        drawPixelRect(target, px + 3 + pip * 3, py + 2, 2, 1, materials.banner, 0.76);
+      }
+    }
+
+    if (building.stockResource !== ResourceType.None && building.stockAmount > 0) {
+      const stockColor = resourceVisualColor(building.stockResource);
+      const pileWidth = building.stockAmount >= 20 ? 6 : building.stockAmount >= 10 ? 5 : 4;
+      const pileHeight = building.stockAmount >= 20 ? 3 : 2;
+      const pileX = px + Math.max(2, w - pileWidth - 3);
+      const pileY = py + h - pileHeight - 3;
+      drawPixelRect(target, pileX, pileY, pileWidth, pileHeight, stockColor, 0.92);
+      drawPixelRect(target, pileX + 1, pileY - 1, Math.max(2, pileWidth - 2), 1, lighten(stockColor, 18), 0.68);
+      if (building.stockResource === ResourceType.Wood || building.stockResource === ResourceType.Planks) {
+        drawPixelRect(target, pileX, pileY + pileHeight, pileWidth, 1, 0x6f4525, 0.82);
+      } else if (building.stockResource === ResourceType.Stone || building.stockResource === ResourceType.Clay || building.stockResource === ResourceType.Ore) {
+        drawPixelRect(target, pileX + 1, pileY + pileHeight, Math.max(2, pileWidth - 2), 1, 0xd7dde3, 0.6);
+      } else if (building.stockResource === ResourceType.Grain || building.stockResource === ResourceType.Berries || building.stockResource === ResourceType.Fish || building.stockResource === ResourceType.Meat) {
+        drawPixelRect(target, pileX + 1, pileY + pileHeight, Math.max(2, pileWidth - 2), 1, 0xf5e3b8, 0.62);
       }
     }
   }

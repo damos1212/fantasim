@@ -8956,7 +8956,7 @@ export class Simulation {
     this.dirtyTiles.clear();
 
     const agents: AgentSnapshot[] = this.agents.map((agent) => {
-      const preview = this.pathPreviewTarget(agent.path, agent.pathIndex, agent.x, agent.y, agent.moveCooldown, 0);
+      const preview = this.pathPreviewTarget(agent.path, agent.pathIndex, agent.x, agent.y, agent.moveCooldown, 1);
       return {
         id: agent.id,
         tribeId: agent.tribeId,
@@ -9032,7 +9032,7 @@ export class Simulation {
     }));
 
     const boats: BoatSnapshot[] = this.boats.map((boat) => {
-      const preview = this.pathPreviewTarget(boat.path, boat.pathIndex, boat.x, boat.y, boat.moveCooldown, 0);
+      const preview = this.pathPreviewTarget(boat.path, boat.pathIndex, boat.x, boat.y, boat.moveCooldown, 1);
       return {
         id: boat.id,
         tribeId: boat.tribeId,
@@ -9046,7 +9046,7 @@ export class Simulation {
     });
 
     const wagons: WagonSnapshot[] = this.wagons.map((wagon) => {
-      const preview = this.pathPreviewTarget(wagon.path, wagon.pathIndex, wagon.x, wagon.y, wagon.moveCooldown, 0);
+      const preview = this.pathPreviewTarget(wagon.path, wagon.pathIndex, wagon.x, wagon.y, wagon.moveCooldown, 1);
       return {
         id: wagon.id,
         tribeId: wagon.tribeId,
@@ -9061,7 +9061,7 @@ export class Simulation {
     });
 
     const caravans: CaravanSnapshot[] = this.caravans.map((caravan) => {
-      const preview = this.pathPreviewTarget(caravan.path, caravan.pathIndex, caravan.x, caravan.y, caravan.moveCooldown, 0);
+      const preview = this.pathPreviewTarget(caravan.path, caravan.pathIndex, caravan.x, caravan.y, caravan.moveCooldown, 1);
       return {
         id: caravan.id,
         tribeId: caravan.tribeId,
