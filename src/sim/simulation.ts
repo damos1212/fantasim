@@ -1479,10 +1479,12 @@ export class Simulation {
         const buildPayload = buildJob.payload as BuildPayload;
         buildPayload.supplied += 1;
         this.addDeliveredAmount(buildPayload.delivered, payload.resourceType, wagon.cargoAmount);
+        tribe.resources[payload.resourceType] = Math.max(0, tribe.resources[payload.resourceType] - wagon.cargoAmount);
       } else if (buildJob?.kind === "craft") {
         const craftPayload = buildJob.payload as CraftPayload;
         craftPayload.supplied += 1;
         this.addDeliveredAmount(craftPayload.delivered, payload.resourceType, wagon.cargoAmount);
+        tribe.resources[payload.resourceType] = Math.max(0, tribe.resources[payload.resourceType] - wagon.cargoAmount);
       } else if (payload.destBuildingId != null) {
         const destBuilding = this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null;
         this.addBuildingStock(destBuilding, payload.resourceType, wagon.cargoAmount);
@@ -3457,10 +3459,12 @@ export class Simulation {
         const payload = buildJob.payload as BuildPayload;
         payload.supplied += 1;
         this.addDeliveredAmount(payload.delivered, task.payload.resourceType, agent.carryingAmount);
+        tribe.resources[task.payload.resourceType] = Math.max(0, tribe.resources[task.payload.resourceType] - agent.carryingAmount);
       } else if (buildJob?.kind === "craft") {
         const payload = buildJob.payload as CraftPayload;
         payload.supplied += 1;
         this.addDeliveredAmount(payload.delivered, task.payload.resourceType, agent.carryingAmount);
+        tribe.resources[task.payload.resourceType] = Math.max(0, tribe.resources[task.payload.resourceType] - agent.carryingAmount);
       } else if (task.payload.destBuildingId != null) {
         const destBuilding = this.buildings.find((entry) => entry.id === task.payload.destBuildingId) ?? null;
         this.addBuildingStock(destBuilding, task.payload.resourceType, agent.carryingAmount);
@@ -3808,6 +3812,21 @@ export class Simulation {
       }
       return total + payload.amount;
     }, 0);
+  }
+
+  private reservedUndeliveredResource(tribeId: number, resourceType: ResourceType): number {
+    let total = 0;
+    for (const job of this.jobs) {
+      if (job.tribeId !== tribeId || (job.kind !== "build" && job.kind !== "craft")) {
+        continue;
+      }
+      const payload = job.payload as BuildPayload | CraftPayload;
+      const costs = job.kind === "build" ? (payload as BuildPayload).cost : (payload as CraftPayload).inputs;
+      const required = costs[resourceType] ?? 0;
+      const delivered = this.deliveredAmount(payload.delivered, resourceType);
+      total += Math.max(0, required - delivered);
+    }
+    return total;
   }
 
   private topStoredResource(building: BuildingState): { resourceType: ResourceType; amount: number } {
@@ -5586,10 +5605,6 @@ export class Simulation {
     if (!site) return;
     const haulSpecs = this.constructionHaulPlan(def.cost);
 
-    for (const [resource, amount] of Object.entries(def.cost)) {
-      tribe.resources[Number(resource)] -= amount ?? 0;
-    }
-
     const buildJob: JobState = {
       id: this.nextJobId++,
       tribeId: tribe.id,
@@ -5682,13 +5697,13 @@ export class Simulation {
           roadScore: this.nearbyRoadScore(center.x, center.y, 2),
         };
       })
-      .filter((entry) => entry.storageDistance >= 12 || entry.top.amount >= 28)
+      .filter((entry) => entry.storageDistance >= 10 || entry.top.amount >= 20)
       .sort((a, b) =>
         (b.storageDistance + b.top.amount * 0.1 + b.roadScore * 2)
         - (a.storageDistance + a.top.amount * 0.1 + a.roadScore * 2),
       );
 
-    const targets = remoteCandidates.slice(0, population >= 34 ? 3 : population >= 24 ? 2 : 1);
+    const targets = remoteCandidates.slice(0, population >= 30 ? 3 : population >= 20 ? 2 : 1);
     if (targets.length === 0) {
       return;
     }
@@ -6112,9 +6127,6 @@ export class Simulation {
       return false;
     }
     const haulSpecs = this.constructionHaulPlan(cost);
-    for (const [resource, amount] of Object.entries(cost)) {
-      tribe.resources[Number(resource)] -= amount ?? 0;
-    }
     const center = buildingCenter(building);
     const buildJob: JobState = {
       id: this.nextJobId++,
@@ -6215,6 +6227,7 @@ export class Simulation {
 
   private generateBuildingPlans(tribe: TribeState): void {
     const population = this.populationOf(tribe.id);
+    const buildingTotal = this.buildingsForTribe(tribe.id).length;
     const housing = this.computeHousing(tribe.id);
     const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
     const contacts = this.contactCount(tribe);
@@ -6294,6 +6307,13 @@ export class Simulation {
         this.tryPlanBuilding(tribe, BuildingType.MountainHall, 8);
       }
       this.tryPlanBuilding(tribe, BuildingType.House, 8);
+    }
+
+    if (infrastructureStable && population >= 22 && buildingTotal < 12) {
+      this.tryPlanBuilding(tribe, BuildingType.House, 6);
+      if (this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
+        this.tryPlanBuilding(tribe, BuildingType.Stockpile, 5);
+      }
     }
 
     if (population > 16 && this.buildingCount(tribe.id, BuildingType.Stockpile) < desiredStockpiles) {
@@ -7750,7 +7770,9 @@ export class Simulation {
     }
 
     for (const [resource, needed] of Object.entries(inputs)) {
-      if (tribe.resources[Number(resource)] < (needed ?? 0)) {
+      const resourceType = Number(resource) as ResourceType;
+      const available = tribe.resources[resourceType] - this.reservedUndeliveredResource(tribe.id, resourceType);
+      if (available < (needed ?? 0)) {
         return;
       }
     }
@@ -7763,10 +7785,6 @@ export class Simulation {
 
     const stock = this.findNearestStorageSite(tribe.id, building.x, building.y, this.primaryInputResource(inputs));
     const haulSpecs = this.constructionHaulPlan(inputs);
-
-    for (const [resource, amountNeeded] of Object.entries(inputs)) {
-      tribe.resources[Number(resource)] -= amountNeeded ?? 0;
-    }
 
     const center = buildingCenter(building);
     const craftJobId = this.nextJobId++;
@@ -7843,10 +7861,6 @@ export class Simulation {
     const site = this.findBuildingSite(tribe, def);
     if (!site) return;
     const haulSpecs = this.constructionHaulPlan(def.cost);
-
-    for (const [resource, amount] of Object.entries(def.cost)) {
-      tribe.resources[Number(resource)] -= amount ?? 0;
-    }
 
     const buildJob: JobState = {
       id: this.nextJobId++,
@@ -7995,7 +8009,11 @@ export class Simulation {
   }
 
   private canAfford(tribe: TribeState, cost: Partial<Record<ResourceType, number>>): boolean {
-    return Object.entries(cost).every(([resource, amount]) => tribe.resources[Number(resource)] >= (amount ?? 0));
+    return Object.entries(cost).every(([resource, amount]) => {
+      const resourceType = Number(resource) as ResourceType;
+      const available = tribe.resources[resourceType] - this.reservedUndeliveredResource(tribe.id, resourceType);
+      return available >= (amount ?? 0);
+    });
   }
 
   private nearbyBuildingCount(tribeId: number, type: BuildingType, x: number, y: number, radius: number): number {
