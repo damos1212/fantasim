@@ -485,6 +485,42 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("branch halls plan local support around productive hubs", () => {
+    const sim = createSimulation("branch-hall-support", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    tribe.age = AgeType.Stone;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY);
+    const branchCenterX = branchHall.x + Math.floor(branchHall.width / 2);
+    const branchCenterY = branchHall.y + Math.floor(branchHall.height / 2);
+    const lumber = sim.placeBuilding(tribe.id, BuildingType.LumberCamp, branchCenterX + 4, branchCenterY + 1);
+    lumber.stock[ResourceType.Wood] = 40;
+
+    sim.generateBranchHubPlans(tribe);
+
+    const nearbyExistingTypes = sim.buildings
+      .filter((building: any) =>
+        building.tribeId === tribe.id
+        && building.id !== branchHall.id
+        && Math.abs((building.x + Math.floor(building.width / 2)) - branchCenterX)
+          + Math.abs((building.y + Math.floor(building.height / 2)) - branchCenterY) <= 12,
+      )
+      .map((building: any) => building.type);
+    const nearbyPlannedTypes = sim.jobs
+      .filter((job: any) => job.tribeId === tribe.id && job.kind === "build")
+      .map((job: any) => job.payload?.buildingType);
+    const nearbyTypes = [...nearbyExistingTypes, ...nearbyPlannedTypes];
+
+    expect(nearbyTypes.some((type: any) => type === BuildingType.Stockpile || type === BuildingType.Warehouse)).toBe(true);
+    expect(nearbyTypes.some((type: any) => type === BuildingType.House)).toBe(true);
+    expect(nearbyTypes.some((type: any) =>
+      type === BuildingType.Cistern
+      || type === BuildingType.Workshop
+      || type === BuildingType.Farm
+      || type === BuildingType.LumberCamp
+      || type === BuildingType.Quarry,
+    )).toBe(true);
+  });
+
   test("expanding settlements keep buildings attached to road influence", { timeout: 45000 }, () => {
     const sim = createSimulation("road-influence", { width: 384, height: 384 }) as any;
     let lastSnapshot = sim.snapshotNow();
