@@ -211,6 +211,41 @@ describe("simulation", () => {
     expect(ok).toBe(false);
   });
 
+  test("completed builds cannot be placed flush against another building", () => {
+    const sim = createSimulation("build-adjacency-guard", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const existing = sim.buildings.find((building: any) => building.tribeId === tribe.id && building.type === BuildingType.Stockpile);
+
+    expect(existing).toBeTruthy();
+
+    const ok = sim.completeBuildingTask(tribe, {
+      buildingType: BuildingType.House,
+      width: 2,
+      height: 2,
+      cost: {},
+      supplied: 0,
+      supplyNeeded: 0,
+      delivered: {},
+      stockX: existing.x + existing.width,
+      stockY: existing.y,
+    }, existing.x + existing.width, existing.y);
+
+    expect(ok).toBe(false);
+  });
+
+  test("new buildings require direct road frontage, not only territory influence", () => {
+    const sim = createSimulation("build-road-frontage", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const capital = sim.buildings.find((building: any) => building.id === tribe.capitalBuildingId);
+    expect(capital).toBeTruthy();
+
+    const targetX = capital.x + 10;
+    const targetY = capital.y + 10;
+    sim.claimTerritory(tribe.id, targetX, targetY, 3);
+
+    expect(sim.canPlaceBuilding(BuildingType.House, targetX, targetY, 2, 2, tribe.id)).toBe(false);
+  });
+
   test("new road tiles must connect to an existing road network", () => {
     const sim = createSimulation("road-tree", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes[0];

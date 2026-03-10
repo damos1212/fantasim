@@ -838,15 +838,15 @@ export class Simulation {
       const baseName = chooseOne(this.random, TRIBE_NAMES[race.type]);
       const name = selectedRaces.filter((entry) => entry.type === race.type).length > 1 ? `${baseName} ${raceCycle}` : baseName;
       const capital = this.placeBuilding(tribeId, BuildingType.CapitalHall, best.x, best.y);
-      const stockpile = this.placeBuilding(tribeId, BuildingType.Stockpile, best.x + 4, best.y);
+      const stockpile = this.placeBuilding(tribeId, BuildingType.Stockpile, best.x + 5, best.y);
       const starterBuildings = [
         capital,
         stockpile,
         this.placeBuilding(tribeId, BuildingType.House, best.x - 4, best.y),
-        this.placeBuilding(tribeId, BuildingType.House, best.x, best.y + 4),
-        this.placeBuilding(tribeId, BuildingType.House, best.x + 4, best.y + 4),
-        this.placeBuilding(tribeId, BuildingType.House, best.x - 4, best.y + 4),
-        this.placeBuilding(tribeId, BuildingType.House, best.x + 8, best.y),
+        this.placeBuilding(tribeId, BuildingType.House, best.x, best.y + 5),
+        this.placeBuilding(tribeId, BuildingType.House, best.x + 5, best.y + 5),
+        this.placeBuilding(tribeId, BuildingType.House, best.x - 4, best.y + 5),
+        this.placeBuilding(tribeId, BuildingType.House, best.x + 10, best.y),
       ];
 
       const tribe: TribeState = {
@@ -970,10 +970,34 @@ export class Simulation {
     const capital = buildings.find((building) => building.type === BuildingType.CapitalHall);
     if (!capital) return;
     const capitalCenter = buildingCenter(capital);
+    const seedRoad = (x: number, y: number, level = 1) => {
+      if (!inBounds(x, y, this.world.width, this.world.height)) return;
+      const index = indexOf(x, y, this.world.width);
+      if (this.world.buildingByTile[index] >= 0) return;
+      this.world.road[index] = Math.max(this.world.road[index], level);
+      this.world.owner[index] = tribeId;
+      this.markDirty(index);
+    };
+    const plazaRadius = 2;
+    for (let dy = -plazaRadius; dy <= plazaRadius; dy += 1) {
+      for (let dx = -plazaRadius; dx <= plazaRadius; dx += 1) {
+        const x = capitalCenter.x + dx;
+        const y = capitalCenter.y + dy;
+        seedRoad(x, y, 2);
+      }
+    }
     for (const building of buildings) {
       const center = buildingCenter(building);
       const entry = this.roadConnectionPoint(building, capitalCenter.x, capitalCenter.y);
       this.layRoad(capitalCenter.x, capitalCenter.y, entry.x, entry.y, tribeId);
+      for (let x = building.x; x < building.x + building.width; x += 1) {
+        seedRoad(x, building.y - 1, 1);
+        seedRoad(x, building.y + building.height, 1);
+      }
+      for (let y = building.y; y < building.y + building.height; y += 1) {
+        seedRoad(building.x - 1, y, 1);
+        seedRoad(building.x + building.width, y, 1);
+      }
       if (building.type === BuildingType.Stockpile || building.type === BuildingType.House) {
         const tribe = this.tribes[tribeId];
         if (tribe) {
@@ -3917,7 +3941,7 @@ export class Simulation {
       }
       task.workLeft -= workRate + tribe.race.buildBias * 0.3;
       if (task.workLeft <= 0) {
-        const completed = this.completeBuildingTask(tribe, task.payload, task.targetX, task.targetY);
+        const completed = this.completeBuildingTask(tribe, task.payload, task.targetX, task.targetY, agent.claimedJobId ?? undefined);
         this.consumeToolDurability(tribe, task.kind);
         if (completed) {
           this.finishTask(agent);
@@ -5799,7 +5823,7 @@ export class Simulation {
     return true;
   }
 
-  private completeBuildingTask(tribe: TribeState, payload: BuildPayload, x: number, y: number): boolean {
+  private completeBuildingTask(tribe: TribeState, payload: BuildPayload, x: number, y: number, currentJobId?: number): boolean {
     if (!this.hasDeliveredCost(payload.delivered, payload.cost)) {
       return false;
     }
@@ -5836,7 +5860,7 @@ export class Simulation {
       return true;
     }
 
-    if (!this.canFinalizeBuildingPlacement(tribe.id, payload, x, y)) {
+    if (!this.canFinalizeBuildingPlacement(tribe.id, payload, x, y, currentJobId)) {
       return false;
     }
 
@@ -10547,6 +10571,18 @@ export class Simulation {
     return manhattan(anchor.x, anchor.y, centerX, centerY) <= this.roadExpansionRange(type);
   }
 
+  private hasRoadFrontage(tribeId: number, x: number, y: number, width: number, height: number): boolean {
+    for (let tx = x; tx < x + width; tx += 1) {
+      if (this.tribeRoadAdjacency(tribeId, tx, y) > 0) return true;
+      if (this.tribeRoadAdjacency(tribeId, tx, y + height - 1) > 0) return true;
+    }
+    for (let ty = y; ty < y + height; ty += 1) {
+      if (this.tribeRoadAdjacency(tribeId, x, ty) > 0) return true;
+      if (this.tribeRoadAdjacency(tribeId, x + width - 1, ty) > 0) return true;
+    }
+    return false;
+  }
+
   private findBuildingSite(tribe: TribeState, def: { type: BuildingType; size: [number, number] }): { x: number; y: number } | null {
     const radius = this.siteSearchRadius(tribe, def.type);
     const anchors = this.siteSearchAnchors(tribe, def.type);
@@ -10680,7 +10716,7 @@ export class Simulation {
     return true;
   }
 
-  private canPlaceBuilding(type: BuildingType, x: number, y: number, width: number, height: number, tribeId?: number): boolean {
+  private canPlaceBuilding(type: BuildingType, x: number, y: number, width: number, height: number, tribeId?: number, ignorePlannedJobId?: number): boolean {
     for (let dy = 0; dy < height; dy += 1) {
       for (let dx = 0; dx < width; dx += 1) {
         const tx = x + dx;
@@ -10736,6 +10772,34 @@ export class Simulation {
         }
       }
     }
+    for (let dy = -1; dy <= height; dy += 1) {
+      for (let dx = -1; dx <= width; dx += 1) {
+        const tx = x + dx;
+        const ty = y + dy;
+        if (!inBounds(tx, ty, this.world.width, this.world.height)) continue;
+        const insideFootprint = dx >= 0 && dy >= 0 && dx < width && dy < height;
+        if (insideFootprint) continue;
+        const index = indexOf(tx, ty, this.world.width);
+        if (this.world.buildingByTile[index] >= 0) {
+          return false;
+        }
+      }
+    }
+    if (tribeId !== undefined) {
+      for (const job of this.jobs) {
+        if (job.kind !== "build" || job.tribeId !== tribeId || job.id === ignorePlannedJobId) continue;
+        const payload = job.payload as BuildPayload | undefined;
+        if (!payload || payload.upgradeBuildingId != null) continue;
+        const overlapOrAdjacent =
+          x <= job.x + payload.width &&
+          x + width >= job.x - 1 &&
+          y <= job.y + payload.height &&
+          y + height >= job.y - 1;
+        if (overlapOrAdjacent) {
+          return false;
+        }
+      }
+    }
     if (tribeId !== undefined) {
       if (!this.hasTerritorialControl(tribeId, x, y, width, height)) {
         return false;
@@ -10743,15 +10807,18 @@ export class Simulation {
       if (!this.hasRoadInfluence(tribeId, type, x, y, width, height)) {
         return false;
       }
+      if (!this.hasRoadFrontage(tribeId, x, y, width, height)) {
+        return false;
+      }
     }
     return true;
   }
 
-  private canFinalizeBuildingPlacement(tribeId: number, payload: BuildPayload, x: number, y: number): boolean {
+  private canFinalizeBuildingPlacement(tribeId: number, payload: BuildPayload, x: number, y: number, ignorePlannedJobId?: number): boolean {
     if (payload.upgradeBuildingId != null) {
       return true;
     }
-    return this.canPlaceBuilding(payload.buildingType, x, y, payload.width, payload.height, tribeId);
+    return this.canPlaceBuilding(payload.buildingType, x, y, payload.width, payload.height, tribeId, ignorePlannedJobId);
   }
 
   private pushEvent(event: Omit<EventState, "id" | "tick">): void {

@@ -95,6 +95,19 @@ const ROLE_ACCENTS: Record<AgentRole, number> = {
   [AgentRole.Mage]: 0x7fafff,
 };
 
+const TASK_COLORS: Record<string, number> = {
+  build: 0xe7be68,
+  haul: 0xd4b16e,
+  chop: 0x6ac16c,
+  cut_tree: 0x6ac16c,
+  mine: 0xb0c7d7,
+  quarry: 0xb0c7d7,
+  farm: 0xb9d760,
+  fish: 0x76cee0,
+  hunt: 0xde6c62,
+  earthwork: 0x8d6c4c,
+};
+
 const ANIMAL_COLORS: Record<AnimalType, number> = {
   [AnimalType.Deer]: 0xc6a16a,
   [AnimalType.Boar]: 0x7e6554,
@@ -1528,7 +1541,7 @@ export class GameRenderer {
     }
 
     if (this.viewMode === "surface" && lodStep === 1) {
-      const drawLiveBuildings = this.zoom > 1.72;
+      const drawLiveBuildings = this.zoom > 1.98;
       for (const building of this.state.buildings) {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
@@ -1545,7 +1558,7 @@ export class GameRenderer {
       this.drawBranchMarkers(minTileX, minTileY, maxTileX, maxTileY, tribeById);
     }
 
-    const useDetailedEntities = this.zoom > 1.18;
+    const useDetailedEntities = this.zoom > 1.38;
 
     for (const animal of this.state.animals) {
       if (this.viewMode === "underground") continue;
@@ -1705,12 +1718,17 @@ export class GameRenderer {
       const tribe = tribeById.get(agent.tribeId);
       const detailedAgent = useDetailedEntities;
       if (!detailedAgent) {
-        this.upsertIconSprite(`agent:${agent.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
+        const bodyColor = darken(tribe?.color ?? 0xffffff, 12);
+        this.upsertIconSprite(`agent:${agent.id}:outline`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 3, 6, 6, 0x1e1712, 0.5);
+        this.upsertIconSprite(`agent:${agent.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 5, 5, bodyColor, 0.94);
         if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
-          this.upsertIconSprite(`agent:${agent.id}:accent`, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
+          this.upsertIconSprite(`agent:${agent.id}:accent`, position.x * TILE_SIZE + 9, position.y * TILE_SIZE + 2, 2, 2, ROLE_ACCENTS[agent.role], 0.9);
+        }
+        if (agent.task === "build" || agent.task === "haul" || agent.task === "chop" || agent.task === "mine" || agent.task === "farm" || agent.task === "fish" || agent.task === "hunt") {
+          this.upsertIconSprite(`agent:${agent.id}:task`, position.x * TILE_SIZE + 2, position.y * TILE_SIZE + 2, 2, 2, TASK_COLORS[agent.task] ?? 0xf0d780, 0.88);
         }
         if (agent.carrying !== ResourceType.None && agent.carryingAmount > 0) {
-          this.upsertIconSprite(`agent:${agent.id}:carry`, position.x * TILE_SIZE + 9, position.y * TILE_SIZE + 2, 3, 3, resourceVisualColor(agent.carrying), 0.86);
+          this.upsertIconSprite(`agent:${agent.id}:carry`, position.x * TILE_SIZE + 10, position.y * TILE_SIZE + 2, 3, 3, resourceVisualColor(agent.carrying), 0.92);
         }
       } else {
         this.drawAgentSprite(agent, position.x, position.y, tribe);
@@ -2154,20 +2172,22 @@ export class GameRenderer {
 
   private drawRoadTile(target: PixelTarget, px: number, py: number, level = 1): void {
     if (level >= 2) {
-      drawPixelRect(target, px, py, 16, 16, 0x8e959d, 0.98);
-      drawPixelRect(target, px, py, 16, 2, 0xd3d8dc, 0.35);
-      drawPixelRect(target, px, py + 14, 16, 2, 0x666c73, 0.38);
-      drawPixelRect(target, px + 2, py + 4, 12, 1, 0xc4c9ce, 0.2);
-      drawPixelRect(target, px + 3, py + 8, 10, 1, 0x6f767d, 0.22);
-      drawPixelRect(target, px + 2, py + 11, 12, 1, 0x707780, 0.2);
+      drawPixelRect(target, px, py, 16, 16, 0x7f878f, 1);
+      drawPixelRect(target, px + 1, py + 1, 14, 14, 0x969ea6, 0.92);
+      drawPixelRect(target, px, py, 16, 2, 0xd7dde2, 0.42);
+      drawPixelRect(target, px, py + 14, 16, 2, 0x596067, 0.44);
+      drawPixelRect(target, px + 2, py + 4, 12, 1, 0xcfd5da, 0.28);
+      drawPixelRect(target, px + 2, py + 8, 12, 1, 0x666d75, 0.24);
+      drawPixelRect(target, px + 2, py + 11, 12, 1, 0x6e757d, 0.24);
       return;
     }
-    drawPixelRect(target, px, py, 16, 16, 0xb28d59, 0.98);
-    drawPixelRect(target, px, py, 16, 2, 0xd8b887, 0.24);
-    drawPixelRect(target, px, py + 14, 16, 2, 0x7a6442, 0.3);
-    drawPixelRect(target, px + 2, py + 5, 12, 1, 0xd0b07b, 0.22);
-    drawPixelRect(target, px + 3, py + 8, 10, 1, 0x8b7249, 0.22);
-    drawPixelRect(target, px + 2, py + 11, 12, 1, 0x8b7249, 0.2);
+    drawPixelRect(target, px, py, 16, 16, 0xa7804e, 1);
+    drawPixelRect(target, px + 1, py + 1, 14, 14, 0xc39b63, 0.92);
+    drawPixelRect(target, px, py, 16, 2, 0xe0c590, 0.34);
+    drawPixelRect(target, px, py + 14, 16, 2, 0x745937, 0.38);
+    drawPixelRect(target, px + 2, py + 5, 12, 1, 0xe0c189, 0.28);
+    drawPixelRect(target, px + 2, py + 8, 12, 1, 0x8c7046, 0.24);
+    drawPixelRect(target, px + 2, py + 11, 12, 1, 0x8c7046, 0.24);
   }
 
   private drawFeature(target: PixelTarget, feature: FeatureType, px: number, py: number, terrain: TerrainType): void {
