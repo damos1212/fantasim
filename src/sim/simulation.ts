@@ -3,6 +3,7 @@ import {
   INITIAL_AGENTS_PER_TRIBE,
   INITIAL_ANIMAL_HERDS,
   INITIAL_TRIBE_COUNT,
+  MAX_PATH_STEPS,
   MAX_AGENTS_PER_TRIBE,
   MAX_JOB_RADIUS,
   SEASON_TICKS,
@@ -683,6 +684,7 @@ export class Simulation {
   readonly dirtyTiles = new Set<number>();
   readonly activeWetTiles = new Set<number>();
   readonly branchEventStatus = new Map<number, BranchEventStatus>();
+  readonly pathCache = new Map<string, { tick: number; path: number[] }>();
   cachedBuildingsByTribe: BuildingState[][] = [];
   cachedAgentsByTribe: AgentState[][] = [];
   cachedBuildingCountsByTribe: Uint16Array[] = [];
@@ -751,6 +753,9 @@ export class Simulation {
 
   tick(): DynamicSnapshot | null {
     this.tickCount += 1;
+    if (this.tickCount % 16 === 1 && this.pathCache.size > 4096) {
+      this.pathCache.clear();
+    }
     this.currentYear = Math.floor(this.tickCount / YEAR_TICKS);
     this.season = Math.floor((this.tickCount % YEAR_TICKS) / SEASON_TICKS) as SeasonType;
 
@@ -1520,7 +1525,7 @@ export class Simulation {
         boat.task = BoatTaskType.ReturnToDock;
         boat.targetX = boat.dockX;
         boat.targetY = boat.dockY;
-        boat.path = findPath(this.world, boat.x, boat.y, boat.targetX, boat.targetY, "water", 160);
+        boat.path = this.findPathCached(boat.x, boat.y, boat.targetX, boat.targetY, "water", 160);
         boat.pathIndex = 0;
         continue;
       }
@@ -1607,7 +1612,7 @@ export class Simulation {
         wagon.task = WagonTaskType.ToDrop;
         wagon.targetX = payload.dropX;
         wagon.targetY = payload.dropY;
-        wagon.path = findPath(this.world, wagon.x, wagon.y, wagon.targetX, wagon.targetY);
+        wagon.path = this.findPathCached(wagon.x, wagon.y, wagon.targetX, wagon.targetY);
         wagon.pathIndex = 0;
         continue;
       }
@@ -1635,7 +1640,7 @@ export class Simulation {
       wagon.cargoAmount = 0;
       wagon.targetX = wagon.homeX;
       wagon.targetY = wagon.homeY;
-      wagon.path = findPath(this.world, wagon.x, wagon.y, wagon.homeX, wagon.homeY);
+      wagon.path = this.findPathCached(wagon.x, wagon.y, wagon.homeX, wagon.homeY);
       wagon.pathIndex = 0;
     }
   }
@@ -1721,7 +1726,7 @@ export class Simulation {
       wagon.targetX = wagon.homeX;
       wagon.targetY = wagon.homeY;
       if (wagon.x !== wagon.homeX || wagon.y !== wagon.homeY) {
-        wagon.path = findPath(this.world, wagon.x, wagon.y, wagon.homeX, wagon.homeY);
+        wagon.path = this.findPathCached(wagon.x, wagon.y, wagon.homeX, wagon.homeY);
         wagon.pathIndex = 0;
       }
       return;
@@ -1731,7 +1736,7 @@ export class Simulation {
     wagon.task = WagonTaskType.ToSource;
     wagon.targetX = (candidate.payload as HaulPayload).sourceX;
     wagon.targetY = (candidate.payload as HaulPayload).sourceY;
-    wagon.path = findPath(this.world, wagon.x, wagon.y, wagon.targetX, wagon.targetY);
+    wagon.path = this.findPathCached(wagon.x, wagon.y, wagon.targetX, wagon.targetY);
     wagon.pathIndex = 0;
     if (wagon.path.length <= 1 && (wagon.x !== wagon.targetX || wagon.y !== wagon.targetY)) {
       candidate.claimedBy = null;
@@ -1798,7 +1803,7 @@ export class Simulation {
         caravan.task = CaravanTaskType.ReturnHome;
         caravan.targetX = caravan.homeX;
         caravan.targetY = caravan.homeY;
-        caravan.path = findPath(this.world, caravan.x, caravan.y, caravan.targetX, caravan.targetY);
+        caravan.path = this.findPathCached(caravan.x, caravan.y, caravan.targetX, caravan.targetY);
         caravan.pathIndex = 0;
         if (this.tickCount % 24 === 0) {
           this.pushEvent({
@@ -1820,7 +1825,7 @@ export class Simulation {
         caravan.task = CaravanTaskType.ToPartner;
         caravan.targetX = partner.capitalX;
         caravan.targetY = partner.capitalY;
-        caravan.path = findPath(this.world, caravan.x, caravan.y, caravan.targetX, caravan.targetY);
+        caravan.path = this.findPathCached(caravan.x, caravan.y, caravan.targetX, caravan.targetY);
         caravan.pathIndex = 0;
         const outboundCargoType = this.chooseTradeCargo(tribe, partner);
         const outboundCargoAmount = this.chooseTradeCargoAmount(tribe, partner, outboundCargoType);
@@ -2025,7 +2030,7 @@ export class Simulation {
       if (engine.path.length <= 1 || engine.pathIndex >= engine.path.length - 1 || this.tickCount % 10 === 0) {
         const approachX = enemy.capitalX + randInt(this.random, -bombardRange, bombardRange);
         const approachY = enemy.capitalY + randInt(this.random, -bombardRange, bombardRange);
-        engine.path = findPath(this.world, engine.x, engine.y, clamp(approachX, 1, this.world.width - 2), clamp(approachY, 1, this.world.height - 2));
+        engine.path = this.findPathCached(engine.x, engine.y, clamp(approachX, 1, this.world.width - 2), clamp(approachY, 1, this.world.height - 2));
         engine.pathIndex = 0;
       }
       if (engine.moveCooldown > 0) {
@@ -3083,7 +3088,7 @@ export class Simulation {
   private claimTask(agent: AgentState, tribe: TribeState): AgentTask | null {
     const recoverySite = this.findRecoverySite(tribe, agent);
     if (recoverySite) {
-      agent.path = findPath(this.world, agent.x, agent.y, recoverySite.x, recoverySite.y);
+      agent.path = this.findPathCached(agent.x, agent.y, recoverySite.x, recoverySite.y);
       agent.pathIndex = 0;
       return {
         kind: "recover",
@@ -3116,7 +3121,7 @@ export class Simulation {
       if (job.kind === "craft" && (job.payload as CraftPayload).supplied < (job.payload as CraftPayload).supplyNeeded) {
         continue;
       }
-      const path = findPath(this.world, agent.x, agent.y, job.x, job.y);
+      const path = this.findPathCached(agent.x, agent.y, job.x, job.y);
       if (agent.x !== job.x || agent.y !== job.y) {
         const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
         if (unreachable) {
@@ -3190,7 +3195,7 @@ export class Simulation {
 
     const idleX = clamp(tribe.capitalX + randInt(this.random, -5, 5), 1, this.world.width - 2);
     const idleY = clamp(tribe.capitalY + randInt(this.random, -5, 5), 1, this.world.height - 2);
-    agent.path = findPath(this.world, agent.x, agent.y, idleX, idleY);
+    agent.path = this.findPathCached(agent.x, agent.y, idleX, idleY);
     agent.pathIndex = 0;
     return {
       kind: "idle",
@@ -3319,7 +3324,7 @@ export class Simulation {
       return null;
     }
 
-    const path = findPath(this.world, agent.x, agent.y, best.x, best.y);
+    const path = this.findPathCached(agent.x, agent.y, best.x, best.y);
     if (agent.x !== best.x || agent.y !== best.y) {
       const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
       if (unreachable) {
@@ -3389,7 +3394,7 @@ export class Simulation {
       if (destSpare >= -6) {
         continue;
       }
-      const path = findPath(this.world, agent.x, agent.y, source.x, source.y);
+      const path = this.findPathCached(agent.x, agent.y, source.x, source.y);
       if (agent.x !== source.x || agent.y !== source.y) {
         const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
         if (unreachable) {
@@ -3420,7 +3425,7 @@ export class Simulation {
   }
 
   private createDirectEarthworkTask(agent: AgentState, x: number, y: number, kind: EarthworkKind, workLeft = 7): AgentTask | null {
-    const path = findPath(this.world, agent.x, agent.y, x, y);
+    const path = this.findPathCached(agent.x, agent.y, x, y);
     if (agent.x !== x || agent.y !== y) {
       const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
       if (unreachable) {
@@ -3605,7 +3610,7 @@ export class Simulation {
     targetY: number,
     resourceType: ResourceType,
   ): AgentTask | null {
-    const path = findPath(this.world, agent.x, agent.y, targetX, targetY);
+    const path = this.findPathCached(agent.x, agent.y, targetX, targetY);
     if (agent.x !== targetX || agent.y !== targetY) {
       const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
       if (unreachable) {
@@ -3635,7 +3640,7 @@ export class Simulation {
       })[0];
     const retreatTarget = hall ? buildingCenter(hall) : fallback;
     agent.status = reason === "routed" ? "Routing" : "Retreating";
-    agent.path = findPath(this.world, agent.x, agent.y, retreatTarget.x, retreatTarget.y);
+    agent.path = this.findPathCached(agent.x, agent.y, retreatTarget.x, retreatTarget.y);
     agent.pathIndex = 0;
     agent.task = {
       kind: "retreat",
@@ -3808,7 +3813,7 @@ export class Simulation {
         task.stage = "return";
         task.targetX = storageSite.x;
         task.targetY = storageSite.y;
-        agent.path = findPath(this.world, agent.x, agent.y, task.targetX, task.targetY);
+        agent.path = this.findPathCached(agent.x, agent.y, task.targetX, task.targetY);
         agent.pathIndex = 0;
         return;
       }
@@ -3852,7 +3857,7 @@ export class Simulation {
         task.stage = "toDrop";
         task.targetX = task.payload.dropX;
         task.targetY = task.payload.dropY;
-        agent.path = findPath(this.world, agent.x, agent.y, task.targetX, task.targetY);
+        agent.path = this.findPathCached(agent.x, agent.y, task.targetX, task.targetY);
         agent.pathIndex = 0;
         return;
       }
@@ -5699,7 +5704,7 @@ export class Simulation {
           if (reassigned >= 3) break;
           if (manhattan(agent.x, agent.y, center.x, center.y) <= 8) continue;
           if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage) continue;
-          agent.path = findPath(this.world, agent.x, agent.y, clamp(center.x + randInt(this.random, -2, 2), 1, this.world.width - 2), clamp(center.y + randInt(this.random, -2, 2), 1, this.world.height - 2));
+          agent.path = this.findPathCached(agent.x, agent.y, clamp(center.x + randInt(this.random, -2, 2), 1, this.world.width - 2), clamp(center.y + randInt(this.random, -2, 2), 1, this.world.height - 2));
           agent.pathIndex = 0;
           if (!agent.task || agent.task.kind === "idle") {
             agent.task = null;
@@ -9040,7 +9045,7 @@ export class Simulation {
     }
     const startX = stock.x + Math.floor(stock.width / 2);
     const startY = stock.y + Math.floor(stock.height / 2);
-    const path = findPath(this.world, startX, startY, partner.capitalX, partner.capitalY);
+    const path = this.findPathCached(startX, startY, partner.capitalX, partner.capitalY);
     if (path.length <= 1) {
       return;
     }
@@ -9380,7 +9385,7 @@ export class Simulation {
       return;
     }
 
-    const path = findPath(this.world, boat.x, boat.y, target.x, target.y, "water", 180);
+    const path = this.findPathCached(boat.x, boat.y, target.x, target.y, "water", 180);
     if (path.length <= 1) {
       boat.task = BoatTaskType.Idle;
       return;
@@ -10888,7 +10893,7 @@ export class Simulation {
   }
 
   private layRoad(startX: number, startY: number, endX: number, endY: number, tribeId?: number): void {
-    const path = findPath(this.world, startX, startY, endX, endY);
+    const path = this.findPathCached(startX, startY, endX, endY);
     for (const tile of path) {
       if (tile === indexOf(startX, startY, this.world.width)) continue;
       this.world.road[tile] = Math.max(this.world.road[tile], 1);
@@ -10978,6 +10983,24 @@ export class Simulation {
   private buildingCount(tribeId: number, type: BuildingType): number {
     this.ensureSummaryCaches();
     return this.cachedBuildingCountsByTribe[tribeId]?.[type] ?? 0;
+  }
+
+  private findPathCached(
+    startX: number,
+    startY: number,
+    goalX: number,
+    goalY: number,
+    mode: "land" | "water" = "land",
+    maxSteps = MAX_PATH_STEPS,
+  ): number[] {
+    const key = `${mode}:${maxSteps}:${startX},${startY}->${goalX},${goalY}`;
+    const cached = this.pathCache.get(key);
+    if (cached && this.tickCount - cached.tick <= 4) {
+      return cached.path;
+    }
+    const path = findPath(this.world, startX, startY, goalX, goalY, mode, maxSteps);
+    this.pathCache.set(key, { tick: this.tickCount, path });
+    return path;
   }
 
   private capitalHallsForTribe(tribeId: number): BuildingState[] {
