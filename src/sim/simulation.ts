@@ -1347,6 +1347,31 @@ export class Simulation {
     return tribe.discovered.filter((known, index) => index !== tribe.id && known).length;
   }
 
+  private tribeShortage(tribe: TribeState): string {
+    const population = this.populationOf(tribe.id);
+    if (tribe.resources[ResourceType.Rations] < population * 2.4) return "Food";
+    if (tribe.water < Math.max(10, population * 0.45)) return "Water";
+    if (tribe.resources[ResourceType.Wood] < Math.max(28, population * 0.9)) return "Wood";
+    if (tribe.resources[ResourceType.Stone] < Math.max(18, population * 0.65)) return "Stone";
+    if (tribe.age >= AgeType.Bronze && tribe.resources[ResourceType.Ore] < Math.max(12, population * 0.4)) return "Ore";
+    if (this.computeHousing(tribe.id) < population + 2) return "Housing";
+    return "Stable";
+  }
+
+  private tribeExportFocus(tribe: TribeState): string {
+    const options: Array<{ resourceType: ResourceType; surplus: number }> = [
+      { resourceType: ResourceType.Grain, surplus: tribe.resources[ResourceType.Grain] - Math.max(10, Math.floor(this.populationOf(tribe.id) * 0.8)) },
+      { resourceType: ResourceType.Berries, surplus: tribe.resources[ResourceType.Berries] - 8 },
+      { resourceType: ResourceType.Wood, surplus: tribe.resources[ResourceType.Wood] - Math.max(20, Math.floor(this.populationOf(tribe.id) * 0.7)) },
+      { resourceType: ResourceType.Stone, surplus: tribe.resources[ResourceType.Stone] - Math.max(14, Math.floor(this.populationOf(tribe.id) * 0.55)) },
+      { resourceType: ResourceType.Ore, surplus: tribe.resources[ResourceType.Ore] - Math.max(10, Math.floor(this.populationOf(tribe.id) * 0.3)) },
+      { resourceType: ResourceType.Planks, surplus: tribe.resources[ResourceType.Planks] - 8 },
+      { resourceType: ResourceType.Bricks, surplus: tribe.resources[ResourceType.Bricks] - 8 },
+      { resourceType: ResourceType.Rations, surplus: tribe.resources[ResourceType.Rations] - Math.max(18, Math.floor(this.populationOf(tribe.id) * 2.8)) },
+    ].sort((a, b) => b.surplus - a.surplus);
+    return options[0] && options[0].surplus > 6 ? ResourceType[options[0].resourceType] : "Balanced";
+  }
+
   private updateAnimals(): void {
     for (const animal of this.animals) {
       animal.moveCooldown -= 1;
@@ -4390,6 +4415,77 @@ export class Simulation {
     }
     const stored = this.hallStoredAmount(tribeId, hall, resourceType);
     return clamp((target - stored) / target, -1, 1);
+  }
+
+  private branchTransferCount(tribeId: number): number {
+    let total = 0;
+    for (const job of this.jobs) {
+      if (job.tribeId !== tribeId || job.kind !== "haul") continue;
+      const payload = job.payload as HaulPayload;
+      if (payload.targetJobId !== null) continue;
+      const sourceBuilding = payload.sourceBuildingId != null ? this.buildings.find((entry) => entry.id === payload.sourceBuildingId) ?? null : null;
+      const destBuilding = payload.destBuildingId != null ? this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null : null;
+      if (!sourceBuilding || !destBuilding) continue;
+      const sourceHall = this.nearestHallForBuilding(tribeId, sourceBuilding);
+      const destHall = this.nearestHallForBuilding(tribeId, destBuilding);
+      if (sourceHall && destHall && sourceHall.id !== destHall.id) {
+        total += 1;
+      }
+    }
+    return total;
+  }
+
+  private branchLogisticsStats(tribe: TribeState): { branches: number; strainedBranches: number; branchImports: number; branchExports: number } {
+    const halls = this.capitalHallsForTribe(tribe.id);
+    const branches = Math.max(0, halls.length - 1);
+    if (branches === 0) {
+      return { branches: 0, strainedBranches: 0, branchImports: 0, branchExports: 0 };
+    }
+
+    let strainedBranches = 0;
+    for (const hall of halls) {
+      if (hall.id === tribe.capitalBuildingId) continue;
+      const localFood =
+        this.hallStoredAmount(tribe.id, hall, ResourceType.Rations)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Grain)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Berries)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Fish)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Meat);
+      const localWood = this.hallStoredAmount(tribe.id, hall, ResourceType.Wood);
+      const localStone =
+        this.hallStoredAmount(tribe.id, hall, ResourceType.Stone)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Clay);
+      const foodTarget = this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Rations);
+      const woodTarget = this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Wood);
+      const stoneTarget = this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Stone);
+      const strained =
+        localFood < foodTarget * 0.55
+        || localWood < woodTarget * 0.5
+        || localStone < stoneTarget * 0.45;
+      if (strained) {
+        strainedBranches += 1;
+      }
+    }
+
+    let branchImports = 0;
+    let branchExports = 0;
+    for (const job of this.jobs) {
+      if (job.tribeId !== tribe.id || job.kind !== "haul") continue;
+      const payload = job.payload as HaulPayload;
+      if (payload.targetJobId !== null) continue;
+      const sourceBuilding = payload.sourceBuildingId != null ? this.buildings.find((entry) => entry.id === payload.sourceBuildingId) ?? null : null;
+      const destBuilding = payload.destBuildingId != null ? this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null : null;
+      const sourceHall = sourceBuilding ? this.nearestHallForBuilding(tribe.id, sourceBuilding) : null;
+      const destHall = destBuilding ? this.nearestHallForBuilding(tribe.id, destBuilding) : null;
+      if (sourceHall && sourceHall.id !== tribe.capitalBuildingId) {
+        branchExports += 1;
+      }
+      if (destHall && destHall.id !== tribe.capitalBuildingId) {
+        branchImports += 1;
+      }
+    }
+
+    return { branches, strainedBranches, branchImports, branchExports };
   }
 
   private generateBranchExchangeHauls(tribe: TribeState): void {
@@ -9115,8 +9211,10 @@ export class Simulation {
   private tribeActivity(tribe: TribeState): string {
     const population = this.populationOf(tribe.id);
     const tribeAgents = this.agentsForTribe(tribe.id);
+    const branchStats = this.branchLogisticsStats(tribe);
     if (tribe.resources[ResourceType.Rations] < population * 3) return "Securing food";
     if (tribe.water < Math.max(10, population * 0.45)) return "Securing water";
+    if (branchStats.branchImports + branchStats.branchExports > 0) return "Balancing branch supplies";
     if (tribe.discovered.some((known, index) => index !== tribe.id && !known) && this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "patrol")) return "Exploring frontiers";
     if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "haul")) return "Hauling supplies";
     if (tribe.faith >= 40 && this.hasBuilt(tribe.id, BuildingType.Shrine)) return "Raising blessings";
@@ -9974,6 +10072,7 @@ export class Simulation {
   private serializeTribes(): TribeSummary[] {
     return this.tribes.map((tribe) => {
       const tribeAgents = this.agentsForTribe(tribe.id);
+      const branchStats = this.branchLogisticsStats(tribe);
       const ruler = tribe.rulerAgentId !== null ? tribeAgents.find((agent) => agent.id === tribe.rulerAgentId) : null;
       const conditions = this.conditionCountsForTribe(tribe.id);
       const flooded = this.floodedBuildingCountForTribe(tribe.id);
@@ -10009,6 +10108,7 @@ export class Simulation {
         horses: Math.floor(tribe.resources[ResourceType.Horses]),
         boats: this.boats.filter((boat) => boat.tribeId === tribe.id).length,
         wagons: this.wagons.filter((wagon) => wagon.tribeId === tribe.id).length,
+        haulJobs: this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length,
         livestock: Math.floor(tribe.resources[ResourceType.Livestock]),
         flooded,
         delves: this.buildingCount(tribe.id, BuildingType.TunnelEntrance) + this.buildingCount(tribe.id, BuildingType.DeepMine),
@@ -10016,9 +10116,15 @@ export class Simulation {
         waterworks: this.waterworksScoreForTribe(tribe.id),
         powerPlants: this.buildingCount(tribe.id, BuildingType.PowerPlant),
         airfields: this.buildingCount(tribe.id, BuildingType.Airfield),
+        branches: branchStats.branches,
+        strainedBranches: branchStats.strainedBranches,
+        branchImports: branchStats.branchImports,
+        branchExports: branchStats.branchExports,
         contacts: this.contactCount(tribe),
         allies: tribe.relations.filter((score, index) => index !== tribe.id && tribe.discovered[index] && diplomacyStateFromScore(score) === DiplomacyState.Alliance).length,
         tradePartners: this.tradePartnerCount(tribe.id),
+        shortage: this.tribeShortage(tribe),
+        exportFocus: this.tribeExportFocus(tribe),
         tributeTo: tribe.tributeTo,
         tributaries: this.tributaryCount(tribe.id),
         siege: tribe.age >= AgeType.Medieval ? Math.floor(this.buildingCount(tribe.id, BuildingType.Barracks) + this.buildingCount(tribe.id, BuildingType.Armory) + this.buildingCount(tribe.id, BuildingType.Workshop) / 2 + this.buildingCount(tribe.id, BuildingType.Foundry) * 2 + this.buildingCount(tribe.id, BuildingType.Factory) * 3 + this.buildingCount(tribe.id, BuildingType.RailDepot) + this.buildingCount(tribe.id, BuildingType.PowerPlant) * 2 + this.buildingCount(tribe.id, BuildingType.Airfield) * 2 + this.siegeEngines.filter((engine) => engine.tribeId === tribe.id).length * 2 + this.buildingCount(tribe.id, BuildingType.Castle)) : 0,

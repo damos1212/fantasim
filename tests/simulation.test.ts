@@ -256,6 +256,11 @@ describe("simulation", () => {
       typeof tribe.faith === "number" &&
       typeof tribe.water === "number" &&
       typeof tribe.waterworks === "number" &&
+      typeof tribe.branches === "number" &&
+      typeof tribe.strainedBranches === "number" &&
+      typeof tribe.branchImports === "number" &&
+      typeof tribe.branchExports === "number" &&
+      typeof tribe.haulJobs === "number" &&
       typeof tribe.contacts === "number" &&
       typeof tribe.allies === "number" &&
       typeof tribe.tradePartners === "number" &&
@@ -264,13 +269,22 @@ describe("simulation", () => {
       typeof tribe.delves === "number" &&
       typeof tribe.undergroundTiles === "number" &&
       typeof tribe.wagons === "number" &&
+      typeof tribe.haulJobs === "number" &&
       typeof tribe.flooded === "number" &&
+      typeof tribe.branches === "number" &&
+      typeof tribe.strainedBranches === "number" &&
+      typeof tribe.branchImports === "number" &&
+      typeof tribe.branchExports === "number" &&
+      typeof tribe.shortage === "string" &&
+      typeof tribe.exportFocus === "string" &&
       typeof tribe.sick === "number" &&
       typeof tribe.exhausted === "number" &&
       typeof tribe.inspired === "number" &&
       typeof tribe.rulerName === "string" &&
       typeof tribe.rulerTitle === "string" &&
-      typeof tribe.successionCount === "number",
+      typeof tribe.successionCount === "number" &&
+      typeof tribe.shortage === "string" &&
+      typeof tribe.exportFocus === "string",
     )).toBe(true);
     expect(lastSnapshot.tribes.some((tribe) => tribe.siege >= 0)).toBe(true);
   });
@@ -581,6 +595,39 @@ describe("simulation", () => {
     expect(exchangeHauls.some((job: any) =>
       job.payload.resourceType === ResourceType.Wood || job.payload.resourceType === ResourceType.Rations,
     )).toBe(true);
+  });
+
+  test("tribe summaries expose branch logistics and shortage state", () => {
+    const sim = createSimulation("branch-summary", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    tribe.resources[ResourceType.Rations] = 2;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 10);
+    const sourceWarehouse = sim.placeBuilding(tribe.id, BuildingType.Warehouse, tribe.capitalX + 6, tribe.capitalY + 2);
+    const branchStockpile = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+
+    sourceWarehouse.stock[ResourceType.Wood] = 72;
+    sourceWarehouse.stock[ResourceType.Rations] = 36;
+    branchStockpile.stock[ResourceType.Wood] = 0;
+    branchStockpile.stock[ResourceType.Rations] = 0;
+
+    sim.generateBranchExchangeHauls(tribe);
+    const snapshot = sim.snapshotNow();
+    const tribeSummary = snapshot.tribes.find((entry: any) => entry.id === tribe.id);
+
+    expect(tribeSummary).toBeTruthy();
+    expect(tribeSummary.branches).toBeGreaterThanOrEqual(1);
+    expect(tribeSummary.branchImports).toBeGreaterThan(0);
+    expect(tribeSummary.strainedBranches).toBeGreaterThanOrEqual(1);
+    expect(typeof tribeSummary.branchExports).toBe("number");
+    expect(typeof tribeSummary.haulJobs).toBe("number");
+    expect(typeof tribeSummary.shortage).toBe("string");
+    expect(typeof tribeSummary.exportFocus).toBe("string");
   });
 
   test("understocked branch halls pull self-supply buildings", () => {

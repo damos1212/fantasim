@@ -1019,6 +1019,15 @@ The concrete todo list for this sprint is:
 8. Commit the sustained-activity / outward-growth slice.
 9. Update docs again with what landed, what changed in the balance model, and what the next sprint should target.
 
+### Immediate Follow-Up After Scarcity
+
+Once the scarcity and branch-exchange slice is in:
+
+1. expose branch logistics in tribe/world inspection
+2. expose shortage/export focus clearly in the tribe list and selected-tribe panel
+3. verify that branch-transfer counts and shortage summaries stay in the snapshot contract
+4. then continue into stronger long-haul wagon routing and remote district demand
+
 ### Subagent Split
 
 Where parallel work is useful:
@@ -1173,6 +1182,23 @@ Verification:
 - branch exchange tests
 - redistribution tests
 
+### Stream A1. Observer Logistics Readability
+
+Owner:
+- main thread
+
+Tasks:
+- expose branch hall count in tribe summaries
+- expose active branch-transfer count in tribe summaries
+- expose current shortage state in tribe summaries
+- expose current export focus in tribe summaries
+- surface those values in tribe/world panels so logistics state is readable without guessing from raw stock numbers
+
+Verification:
+- snapshot tests cover branch logistics summary fields
+- selected tribe UI exposes shortage / export focus / branch metrics
+- world panel exposes aggregate branch and branch-haul counts
+
 ### Stream B. Observer and Tooling Audit
 
 Owner:
@@ -1269,3 +1295,97 @@ This is the concrete execution queue for the next several hours. Items should be
 2. Run production build.
 3. Commit with a conventional message.
 4. Push to `main`.
+
+## Next Multi-Hour Execution Block
+
+Now that scarcity and branch logistics are in place, the next block should focus on making those systems easier to read and then deepening the midgame instead of immediately adding another age.
+
+### Priority Order
+
+1. observer/logistics readability
+2. stronger midgame demand and long-haul balancing
+3. expansion-shape polish for branch towns
+4. combat readability first slice
+5. social-simulation first slice
+
+### Workstream 1. Observer and Logistics Readability
+
+Goal:
+Expose the current economy and branch-network state clearly enough that long runs are easy to follow.
+
+Tasks:
+
+- surface branch count, branch strain, import/export pressure, and active haul load in tribe summaries
+- show branch logistics state in tribe/world panels
+- improve shortage/export-focus visibility so users can see why a tribe is moving goods
+- keep the added visibility lightweight enough not to hurt render performance
+
+Verification:
+
+- tribe summaries expose branch metrics in tests
+- build passes
+- selected tribe panel and world lead panel show branch logistics state
+
+### Workstream 2. Midgame Demand and Long-Haul Balancing
+
+Goal:
+Keep mature kingdoms moving goods between districts instead of stalling once reserves are comfortable.
+
+Tasks:
+
+- strengthen hall-aware redistribution so needy branches pull more aggressively
+- improve wagon preference for meaningful long-haul balancing
+- add more pull from workshops, smithies, warehouses, and civic hubs
+- keep source sites from over-exporting when their own local hall is strained
+
+Verification:
+
+- redistribution and branch tests stay green
+- long-run district tests continue to show active storage hubs and branch growth
+
+### Workstream 3. Expansion Shape Polish
+
+Goal:
+Make branch towns and productive outposts read like distinct secondary settlements.
+
+Tasks:
+
+- increase branch-town self-supply follow-ups when local stocks are low
+- keep roads, houses, stockpiles, and workshops clustering around real branch halls
+- continue biasing remote productive sites toward support infrastructure instead of dead-end extractors
+
+Verification:
+
+- branch-support planner tests stay green
+- long-run expansion tests still show outward growth and branch founding
+
+### Workstream 4. Combat Readability First Slice
+
+Goal:
+Make the next warfare work visible and legible before adding more unit complexity.
+
+Tasks:
+
+- define clearer staging/garrison/frontline states
+- expose battlefront pressure and campaign intent in summaries/events
+- keep this slice smaller than a full combat refactor
+
+### Workstream 5. Social Simulation First Slice
+
+Goal:
+Start turning tribe history into social history once economy and combat readability are in better shape.
+
+Tasks:
+
+- first family/dynasty links
+- succession pressure beyond a flat counter
+- first internal instability / rivalry visibility
+
+## Updated Multi-Hour Todo List
+
+1. Expose branch logistics metrics in summaries and UI.
+2. Verify those metrics with focused simulation tests and build.
+3. Tighten hall-aware redistribution and long-haul balancing.
+4. Re-run branch/district long-run checks.
+5. Strengthen branch self-supply and secondary-center growth.
+6. Update the plan again with what landed and what still remains before combat/social.

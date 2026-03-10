@@ -2740,6 +2740,9 @@ export class GameRenderer {
     const totalWaterworks = this.state.tribes.reduce((sum, tribe) => sum + (tribe.waterworks ?? 0), 0);
     const totalPowerPlants = this.state.tribes.reduce((sum, tribe) => sum + (tribe.powerPlants ?? 0), 0);
     const totalAirfields = this.state.tribes.reduce((sum, tribe) => sum + (tribe.airfields ?? 0), 0);
+    const totalBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.branches ?? 0), 0);
+    const totalBranchImports = this.state.tribes.reduce((sum, tribe) => sum + (tribe.branchImports ?? 0), 0);
+    const totalStrainedBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.strainedBranches ?? 0), 0);
     const totalTradePacts = this.state.tribes.reduce((sum, tribe) => sum + (tribe.tradePartners ?? 0), 0) / 2;
     const activeWars = this.state.tribes.flatMap((tribe) => tribe.diplomacy).filter((entry) => entry >= 4).length;
     const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
@@ -2782,6 +2785,8 @@ export class GameRenderer {
       this.statMarkup("Waterworks", `${totalWaterworks}`),
       this.statMarkup("Power", `${totalPowerPlants}`),
       this.statMarkup("Airfields", `${totalAirfields}`),
+      this.statMarkup("Branches", `${totalBranches}`),
+      this.statMarkup("Branch Imports", `${totalBranchImports}`),
       this.statMarkup("Trade Pacts", `${Math.floor(totalTradePacts)}`),
       this.statMarkup("Water", `${totalWater}`),
       this.statMarkup("Flooded", `${totalFlooded}`),
@@ -2828,7 +2833,7 @@ export class GameRenderer {
             <div class="tribe-row-wrap">
               <button class="tribe-row ${this.selectedTribeId === tribe.id ? "is-active" : ""}" data-tribe-id="${tribe.id}">
                 <span class="tribe-dot" style="background:#${tribe.color.toString(16).padStart(6, "0")}"></span>
-                <span>${RACE_NAMES[tribe.race]} ${tribe.name.split(" ").slice(-1)[0]} | ${tribe.doctrine} | ${AGE_NAMES[tribe.age as AgeType]} | Pop ${tribe.population} | Food ${tribe.food}</span>
+                <span>${RACE_NAMES[tribe.race]} ${tribe.name.split(" ").slice(-1)[0]} | ${tribe.doctrine} | ${AGE_NAMES[tribe.age as AgeType]} | Pop ${tribe.population} | Food ${tribe.food} | ${tribe.shortage}</span>
               </button>
               <button class="tribe-compare ${this.compareTribeId === tribe.id ? "is-active" : ""}" data-compare-tribe-id="${tribe.id}">Compare</button>
             </div>
@@ -2860,6 +2865,9 @@ export class GameRenderer {
           <strong>Waterworks</strong><span>${totalWaterworks}</span>
           <strong>Power Plants</strong><span>${totalPowerPlants}</span>
           <strong>Airfields</strong><span>${totalAirfields}</span>
+          <strong>Branches</strong><span>${totalBranches}</span>
+          <strong>Branch Imports</strong><span>${totalBranchImports}</span>
+          <strong>Strained Branches</strong><span>${totalStrainedBranches}</span>
           <strong>Trade Pacts</strong><span>${Math.floor(totalTradePacts)}</span>
           <strong>Flooded</strong><span>${totalFlooded}</span>
           <strong>Tunnels</strong><span>${totalUnderground}</span>
@@ -2917,6 +2925,8 @@ export class GameRenderer {
           <strong>Doctrine</strong><span>${selectedTribe.doctrine}</span>
           <strong>Weather</strong><span>${WEATHER_NAMES[selectedTribe.weather]}</span>
           <strong>Activity</strong><span>${selectedTribe.activity}</span>
+          <strong>Shortage</strong><span>${selectedTribe.shortage}</span>
+          <strong>Export Focus</strong><span>${selectedTribe.exportFocus}</span>
           <strong>Food</strong><span>${selectedTribe.food}</span>
           <strong>Wood</strong><span>${selectedTribe.wood}</span>
           <strong>Stone</strong><span>${selectedTribe.stone}</span>
@@ -2926,7 +2936,12 @@ export class GameRenderer {
           <strong>Flooded</strong><span>${selectedTribe.flooded}</span>
           <strong>Power Plants</strong><span>${selectedTribe.powerPlants}</span>
           <strong>Airfields</strong><span>${selectedTribe.airfields}</span>
+          <strong>Haul Jobs</strong><span>${selectedTribe.haulJobs}</span>
           <strong>Wagons</strong><span>${selectedTribe.wagons}</span>
+          <strong>Branches</strong><span>${selectedTribe.branches}</span>
+          <strong>Strained Branches</strong><span>${selectedTribe.strainedBranches}</span>
+          <strong>Branch Imports</strong><span>${selectedTribe.branchImports}</span>
+          <strong>Branch Exports</strong><span>${selectedTribe.branchExports}</span>
           <strong>Livestock</strong><span>${selectedTribe.livestock}</span>
           <strong>Waterworks</strong><span>${selectedTribe.waterworks}</span>
           <strong>Contacts</strong><span>${selectedTribe.contacts}</span>
@@ -3016,7 +3031,12 @@ export class GameRenderer {
           <strong>Waterworks</strong><span>${dominant.waterworks}</span>
           <strong>Power Plants</strong><span>${dominant.powerPlants}</span>
           <strong>Airfields</strong><span>${dominant.airfields}</span>
+          <strong>Branches</strong><span>${dominant.branches}</span>
+          <strong>Strained Branches</strong><span>${dominant.strainedBranches}</span>
+          <strong>Branch Imports</strong><span>${dominant.branchImports}</span>
           <strong>Trade Pacts</strong><span>${dominant.tradePartners}</span>
+          <strong>Shortage</strong><span>${dominant.shortage}</span>
+          <strong>Export Focus</strong><span>${dominant.exportFocus}</span>
           <strong>Flooded</strong><span>${dominant.flooded}</span>
           <strong>Tunnels</strong><span>${dominant.undergroundTiles}</span>
           <strong>Sick</strong><span>${dominant.sick}</span>
@@ -3024,6 +3044,7 @@ export class GameRenderer {
           <strong>Morale</strong><span>${dominant.morale}</span>
           <strong>Boats</strong><span>${dominant.boats}</span>
           <strong>Wagons</strong><span>${dominant.wagons}</span>
+          <strong>Haul Jobs</strong><span>${dominant.haulJobs}</span>
           <strong>Horses</strong><span>${dominant.horses}</span>
         </div>` : "<p>Waiting for sim data.</p>"}
       </section>`;
