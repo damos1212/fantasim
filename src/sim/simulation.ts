@@ -1566,6 +1566,36 @@ export class Simulation {
     return manhattan(payload.sourceX, payload.sourceY, payload.dropX, payload.dropY);
   }
 
+  private strategicHaulScore(tribeId: number, payload: HaulPayload): number {
+    const sourceBuilding = payload.sourceBuildingId != null ? this.buildings.find((entry) => entry.id === payload.sourceBuildingId) ?? null : null;
+    const destBuilding = payload.destBuildingId != null ? this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null : null;
+    const travelDistance = this.haulTravelDistance(payload);
+    if (!sourceBuilding || !destBuilding) {
+      return travelDistance * 0.2;
+    }
+
+    const sourceHall = this.nearestHallForBuilding(tribeId, sourceBuilding);
+    const destHall = this.nearestHallForBuilding(tribeId, destBuilding);
+    const sourceNeed = this.hallNeedPressure(tribeId, sourceBuilding, payload.resourceType);
+    const destNeed = this.hallNeedPressure(tribeId, destBuilding, payload.resourceType);
+    const crossHall = sourceHall && destHall && sourceHall.id !== destHall.id;
+    const destIsBranch = destHall !== null && destHall.id !== this.tribes[tribeId]?.capitalBuildingId;
+    const sourceIsBranch = sourceHall !== null && sourceHall.id !== this.tribes[tribeId]?.capitalBuildingId;
+    const roadScore = this.nearbyRoadScore(payload.sourceX, payload.sourceY, 2) + this.nearbyRoadScore(payload.dropX, payload.dropY, 2);
+    const localSpare = Math.max(0, (destBuilding.stock[payload.resourceType] ?? 0) - this.localStockTarget(destBuilding.type, payload.resourceType));
+
+    return (
+      travelDistance * 0.2
+      + (crossHall ? 10 : 0)
+      + (destIsBranch ? 7 : 0)
+      + (sourceIsBranch ? 2 : 0)
+      + destNeed * 18
+      - Math.max(0, sourceNeed) * 12
+      + roadScore * 0.9
+      - localSpare * 0.08
+    );
+  }
+
   private assignWagonRoute(wagon: WagonState, tribe: TribeState, home: BuildingState): void {
     const haulJobs = this.jobs
       .filter((job) => job.tribeId === tribe.id && job.kind === "haul" && job.claimedBy === null)
@@ -1576,16 +1606,20 @@ export class Simulation {
         const distanceB = this.haulTravelDistance(payloadB);
         const pickupA = manhattan(wagon.x, wagon.y, a.x, a.y);
         const pickupB = manhattan(wagon.x, wagon.y, b.x, b.y);
+        const strategicA = this.strategicHaulScore(tribe.id, payloadA);
+        const strategicB = this.strategicHaulScore(tribe.id, payloadB);
         const scoreA =
           distanceA * 3.2
           + payloadA.amount * 0.45
           + (payloadA.targetJobId != null ? 10 : 0)
+          + strategicA * 2.2
           + a.priority * 2.2
           - pickupA * 0.85;
         const scoreB =
           distanceB * 3.2
           + payloadB.amount * 0.45
           + (payloadB.targetJobId != null ? 10 : 0)
+          + strategicB * 2.2
           + b.priority * 2.2
           - pickupB * 0.85;
         return scoreB - scoreA;
@@ -3154,9 +3188,11 @@ export class Simulation {
         const centerB = buildingCenter(b.building);
         const spareA = a.top.amount - this.localStockTarget(a.building.type, a.top.resourceType);
         const spareB = b.top.amount - this.localStockTarget(b.building.type, b.top.resourceType);
+        const demandA = this.hallNeedPressure(tribe.id, a.building, a.top.resourceType);
+        const demandB = this.hallNeedPressure(tribe.id, b.building, b.top.resourceType);
         return (
-          spareB * 0.9 - manhattan(agent.x, agent.y, centerB.x, centerB.y) * 0.8
-          - (spareA * 0.9 - manhattan(agent.x, agent.y, centerA.x, centerA.y) * 0.8)
+          spareB * 0.9 - Math.max(0, demandB) * 12 - manhattan(agent.x, agent.y, centerB.x, centerB.y) * 0.8
+          - (spareA * 0.9 - Math.max(0, demandA) * 12 - manhattan(agent.x, agent.y, centerA.x, centerA.y) * 0.8)
         );
       });
 
@@ -3170,12 +3206,26 @@ export class Simulation {
       if (!dest) {
         continue;
       }
+      const source = buildingCenter(building);
+      const target = buildingCenter(dest);
+      const strategicScore = this.strategicHaulScore(tribe.id, {
+        sourceX: source.x,
+        sourceY: source.y,
+        sourceBuildingId: building.id,
+        dropX: target.x,
+        dropY: target.y,
+        destBuildingId: dest.id,
+        resourceType: top.resourceType,
+        amount: 0,
+        targetJobId: null,
+      });
+      if (strategicScore < 2) {
+        continue;
+      }
       const destSpare = (dest.stock[top.resourceType] ?? 0) - this.localStockTarget(dest.type, top.resourceType);
       if (destSpare >= -6) {
         continue;
       }
-      const source = buildingCenter(building);
-      const target = buildingCenter(dest);
       const path = findPath(this.world, agent.x, agent.y, source.x, source.y);
       if (agent.x !== source.x || agent.y !== source.y) {
         const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
@@ -3198,7 +3248,7 @@ export class Simulation {
           dropY: target.y,
           destBuildingId: dest.id,
           resourceType: top.resourceType,
-          amount: Math.min(10, Math.max(4, Math.floor(spare * 0.35))),
+          amount: Math.min(12, Math.max(4, Math.floor(spare * 0.35 + strategicScore * 0.25))),
           targetJobId: null,
         },
       };
@@ -7680,6 +7730,17 @@ export class Simulation {
       const destCenter = buildingCenter(destination);
       if (manhattan(sourceCenter.x, sourceCenter.y, destCenter.x, destCenter.y) < 4) continue;
       const haulDistance = manhattan(sourceCenter.x, sourceCenter.y, destCenter.x, destCenter.y);
+      const strategicScore = this.strategicHaulScore(tribe.id, {
+        sourceX: sourceCenter.x,
+        sourceY: sourceCenter.y,
+        sourceBuildingId: source.id,
+        dropX: destCenter.x,
+        dropY: destCenter.y,
+        destBuildingId: destination.id,
+        resourceType: top.resourceType,
+        amount: 0,
+        targetJobId: null,
+      });
 
       this.jobs.push({
         id: this.nextJobId++,
@@ -7687,7 +7748,7 @@ export class Simulation {
         kind: "haul",
         x: sourceCenter.x,
         y: sourceCenter.y,
-        priority: 5.2 + Math.min(2.2, haulDistance * 0.08) + Math.min(1.5, remoteness * 0.05),
+        priority: 5.2 + Math.min(2.2, haulDistance * 0.08) + Math.min(1.5, remoteness * 0.05) + Math.max(0, strategicScore * 0.12),
         claimedBy: null,
         payload: {
           sourceX: sourceCenter.x,
@@ -7697,7 +7758,7 @@ export class Simulation {
           dropY: destCenter.y,
           destBuildingId: destination.id,
           resourceType: top.resourceType,
-          amount: clamp(Math.floor((top.amount - threshold) * (haulDistance >= 10 ? 0.62 : 0.45)), 8, haulDistance >= 10 ? 34 : 30),
+          amount: clamp(Math.floor((top.amount - threshold) * (haulDistance >= 10 ? 0.62 : 0.45) + Math.max(0, strategicScore * 0.45)), 8, haulDistance >= 10 ? 38 : 30),
           targetJobId: null,
         },
       });

@@ -1326,6 +1326,14 @@ Verification:
 - build passes
 - selected tribe panel and world lead panel show branch logistics state
 
+Open gaps still remaining after this slice:
+
+- branch halls are still not directly identifiable on the map at a glance
+- shortage/export state is still tribe-level, not hall-level or district-level
+- hauling intent is still mostly implicit instead of showing source/destination flow clearly
+- history/events still do not group or summarize branch growth, shortage, and redistribution well
+- storage sites only expose top-stock state, not richer fullness/inbound/outbound role
+
 ### Workstream 2. Midgame Demand and Long-Haul Balancing
 
 Goal:
@@ -1343,6 +1351,12 @@ Verification:
 - redistribution and branch tests stay green
 - long-run district tests continue to show active storage hubs and branch growth
 
+Key implementation findings:
+
+- wagons still need to prioritize branch deficits and network role more strongly than raw haul size
+- hall-aware redistribution still needs deeper strategic reserve behavior beyond simple local pressure
+- remote districts still risk flattening once they are merely "good enough"
+
 ### Workstream 3. Expansion Shape Polish
 
 Goal:
@@ -1359,6 +1373,12 @@ Verification:
 - branch-support planner tests stay green
 - long-run expansion tests still show outward growth and branch founding
 
+Open sim-side gaps:
+
+- branch settlements still do not act like fully self-governing secondary towns
+- remote districts need stronger recurring demand for roads, warehousing, industry, and defense
+- branch-specialized districts still need stronger visual and structural differentiation over time
+
 ### Workstream 4. Combat Readability First Slice
 
 Goal:
@@ -1369,6 +1389,11 @@ Tasks:
 - define clearer staging/garrison/frontline states
 - expose battlefront pressure and campaign intent in summaries/events
 - keep this slice smaller than a full combat refactor
+
+Current reason this comes after logistics:
+
+- the next real combat gain is formations / rout / battlefront cohesion, not just more unit types
+- that work is better done after wagon/branch/midgame activity are stable enough to observe clearly
 
 ### Workstream 5. Social Simulation First Slice
 
@@ -1381,6 +1406,11 @@ Tasks:
 - succession pressure beyond a flat counter
 - first internal instability / rivalry visibility
 
+Current reason this comes after combat readability:
+
+- social simulation already has succession/unrest hooks, but it lacks family/dynasty structure, rival claimants, and religious branching
+- these systems will be easier to judge once kingdoms and wars are easier to read
+
 ## Updated Multi-Hour Todo List
 
 1. Expose branch logistics metrics in summaries and UI.
@@ -1389,3 +1419,21 @@ Tasks:
 4. Re-run branch/district long-run checks.
 5. Strengthen branch self-supply and secondary-center growth.
 6. Update the plan again with what landed and what still remains before combat/social.
+
+## Subagent Findings Folded Into The Plan
+
+Observer/logistics audit:
+
+- add direct on-map branch-hall identity later
+- add hall-level or district-level shortage/import/export visibility later
+- add better active haul intent / route readability later
+- add richer history grouping for shortages, branch founding, and redistribution later
+- add better storage fullness and inbound/outbound role visibility later
+
+Simulation-depth audit:
+
+- strengthen wagon routing by branch deficit and network role before adding bigger economy layers
+- deepen hall-aware redistribution once current balancing is stable
+- keep remote districts demanding support after first stabilization
+- move branch settlements toward stronger secondary-town behavior
+- only then start the first combat/social slice

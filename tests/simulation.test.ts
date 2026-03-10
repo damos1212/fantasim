@@ -759,6 +759,100 @@ describe("simulation", () => {
     expect(lastSnapshot.wagons.some((wagon: any) => wagon.tribeId === tribe.id)).toBe(true);
   });
 
+  test("wagons prefer strained branch-balance hauls over trivial local hauls", () => {
+    const sim = createSimulation("wagon-branch-priority", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const home = sim.placeBuilding(tribe.id, BuildingType.Warehouse, tribe.capitalX + 5, tribe.capitalY);
+    const source = sim.placeBuilding(tribe.id, BuildingType.Warehouse, tribe.capitalX + 8, tribe.capitalY + 2);
+    const localDest = sim.placeBuilding(tribe.id, BuildingType.Stockpile, tribe.capitalX + 10, tribe.capitalY + 3);
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 22, tribe.capitalY + 12);
+    const branchDest = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x, branchHall.y + 5);
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+
+    source.stock[ResourceType.Wood] = 90;
+    localDest.stock[ResourceType.Wood] = 6;
+    branchDest.stock[ResourceType.Wood] = 0;
+
+    const localCenterX = localDest.x + Math.floor(localDest.width / 2);
+    const localCenterY = localDest.y + Math.floor(localDest.height / 2);
+    const branchCenterX = branchDest.x + Math.floor(branchDest.width / 2);
+    const branchCenterY = branchDest.y + Math.floor(branchDest.height / 2);
+    const sourceCenterX = source.x + Math.floor(source.width / 2);
+    const sourceCenterY = source.y + Math.floor(source.height / 2);
+
+    const localJob = {
+      id: 900001,
+      tribeId: tribe.id,
+      kind: "haul",
+      x: sourceCenterX,
+      y: sourceCenterY,
+      priority: 6,
+      claimedBy: null,
+      payload: {
+        sourceX: sourceCenterX,
+        sourceY: sourceCenterY,
+        sourceBuildingId: source.id,
+        dropX: localCenterX,
+        dropY: localCenterY,
+        destBuildingId: localDest.id,
+        resourceType: ResourceType.Wood,
+        amount: 10,
+        targetJobId: null,
+      },
+    };
+    const branchJob = {
+      id: 900002,
+      tribeId: tribe.id,
+      kind: "haul",
+      x: sourceCenterX,
+      y: sourceCenterY,
+      priority: 6,
+      claimedBy: null,
+      payload: {
+        sourceX: sourceCenterX,
+        sourceY: sourceCenterY,
+        sourceBuildingId: source.id,
+        dropX: branchCenterX,
+        dropY: branchCenterY,
+        destBuildingId: branchDest.id,
+        resourceType: ResourceType.Wood,
+        amount: 10,
+        targetJobId: null,
+      },
+    };
+    sim.jobs.push(localJob, branchJob);
+
+    const homeCenterX = home.x + Math.floor(home.width / 2);
+    const homeCenterY = home.y + Math.floor(home.height / 2);
+    const wagon = {
+      id: 910001,
+      tribeId: tribe.id,
+      homeBuildingId: home.id,
+      x: homeCenterX,
+      y: homeCenterY,
+      homeX: homeCenterX,
+      homeY: homeCenterY,
+      targetX: homeCenterX,
+      targetY: homeCenterY,
+      path: [],
+      pathIndex: 0,
+      cargoType: ResourceType.None,
+      cargoAmount: 0,
+      task: 0,
+      targetJobId: null,
+      moveCooldown: 0,
+    };
+
+    sim.assignWagonRoute(wagon, tribe, home);
+
+    expect(wagon.targetJobId).toBe(branchJob.id);
+  });
+
   test("stable settlements keep adding second-wave extraction and logistics sites", { timeout: 70000 }, () => {
     const sim = createSimulation("second-wave-districts", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();

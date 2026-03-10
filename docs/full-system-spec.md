@@ -900,3 +900,11 @@ Immediate success criteria:
 - users can tell which tribes have multiple branches, which branches are strained, and whether goods are flowing inward or outward
 - mature tribes keep moving goods between districts instead of flattening into quiet stock equilibrium
 - branch towns continue pulling support buildings instead of remaining thin outposts
+
+Current concrete gaps after the latest execution slices:
+
+- wagons still need stronger preference for branch-deficit balancing over generic big hauls
+- redistribution still needs deeper strategic reserve behavior beyond local hall pressure
+- branch halls are visible in summary state, but not yet clearly marked as map-level branch centers
+- shortage/import/export state is still mostly tribe-level rather than per-branch/per-district
+- combat and social depth should remain behind these logistics fixes until the world is easier to read
