@@ -924,6 +924,8 @@ Latest completed execution slices:
 - succession can now surface explicit claimant pressure, and branch unrest can now surface as its own event pressure before full breakaways
 - tribe, branch, and selected-unit UI now expose the first social-state slice instead of hiding it behind raw sim fields
 - high-separatism branches can now riot locally, damaging stocks and legitimacy instead of only showing warning-state numbers
+- very high-separatism branches can now turn defiant, stop behaving like obedient exporters, and surface that state in summaries
+- combat resolution now lets rear-line and mage units contribute from stand-off range instead of requiring every attacker to stack on the same tile radius
 
 Current concrete gaps after the latest execution slices:
 
@@ -931,5 +933,5 @@ Current concrete gaps after the latest execution slices:
 - branch halls are identifiable on the map now, but branch-specialized districts still need stronger visual differentiation over time
 - per-branch shortage/import/export state is exposed now, but district-level shortage and recovery visibility is still shallow
 - branch founding, rescue, and recovery now hit the event feed, but still need better grouping and longer-term legends treatment
-- combat jobs still need clearer battlefront spacing, ranged stand-off behavior, and more observer-visible campaign/frontline state
+- combat jobs still need clearer battlefront spacing and more observer-visible campaign/frontline state
 - social state now exists, but it still needs full house/dynasty continuity, sect splits, and real breakaway-branch consequences

@@ -210,6 +210,7 @@ type EventState = {
 
 type BranchEventStatus = {
   strained: boolean;
+  defiant: boolean;
   lastShortageTick: number;
   lastRecoveryTick: number;
   lastRescueTick: number;
@@ -4761,6 +4762,7 @@ export class Simulation {
     }
     const status: BranchEventStatus = {
       strained: false,
+      defiant: false,
       lastShortageTick: -SIM_TICKS_PER_SECOND * 30,
       lastRecoveryTick: -SIM_TICKS_PER_SECOND * 30,
       lastRescueTick: -SIM_TICKS_PER_SECOND * 30,
@@ -4939,6 +4941,10 @@ export class Simulation {
   }
 
   private branchShortageLabel(tribeId: number, hall: BuildingState): string {
+    const status = this.branchEventStatusFor(hall.id);
+    if (status.defiant) {
+      return "Defiant";
+    }
     const foodNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Rations);
     const woodNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Wood);
     const stoneNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Stone);
@@ -4985,6 +4991,7 @@ export class Simulation {
           exportLoad: this.hallTransferLoad(tribe.id, hall, ResourceType.Rations, "outgoing")
             + this.hallTransferLoad(tribe.id, hall, ResourceType.Wood, "outgoing")
             + this.hallTransferLoad(tribe.id, hall, ResourceType.Stone, "outgoing"),
+          defiant: status.defiant,
           food,
           wood,
           stone,
@@ -5060,6 +5067,27 @@ export class Simulation {
           kind: "branch-unrest",
           title: `${tribe.name} faces branch unrest`,
           description: `${tribe.name}'s distant branch is becoming restless under shortages and weak legitimacy.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+      }
+      if (status.separatism >= 92 && maturity >= 2 && !status.defiant) {
+        status.defiant = true;
+        this.pushEvent({
+          kind: "branch-defiance",
+          title: `${tribe.name} suffers branch defiance`,
+          description: `${tribe.name}'s branch hall is openly defying the center and hoarding local strength.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+      } else if (status.defiant && status.separatism < 55) {
+        status.defiant = false;
+        this.pushEvent({
+          kind: "branch-reconciled",
+          title: `${tribe.name} reconciles a branch`,
+          description: `${tribe.name} has restored order and brought a defiant branch back into the fold.`,
           x: center.x,
           y: center.y,
           tribeId: tribe.id,
@@ -5158,6 +5186,7 @@ export class Simulation {
         const donor = halls
           .filter((hall) =>
             hall.id !== branch.id
+            && !this.branchEventStatusFor(hall.id).defiant
             && (
               this.hallExportableSurplus(tribe.id, hall, resourceType) > Math.max(4, target * 0.04)
               || (
@@ -5263,6 +5292,7 @@ export class Simulation {
         hall,
         center: buildingCenter(hall),
         storages: this.hallStorageBuildings(tribe.id, hall),
+        defiant: this.branchEventStatusFor(hall.id).defiant,
       }))
       .filter((entry) => entry.storages.length > 0);
 
@@ -5291,6 +5321,7 @@ export class Simulation {
           })
           .filter((entry) =>
             entry.hall.id !== dest.hall.id
+            && !entry.defiant
             && entry.surplus > Math.max(8, entry.target * 0.12)
             && manhattan(entry.center.x, entry.center.y, dest.center.x, dest.center.y) >= 12,
           )
@@ -5786,9 +5817,18 @@ export class Simulation {
   private resolveAttack(attackingTribe: TribeState, targetTribeId: number, targetX: number, targetY: number): void {
     const enemy = this.tribes[targetTribeId];
     if (!enemy) return;
-    const nearbyAttackers = this.agents.filter((agent) => agent.tribeId === attackingTribe.id && manhattan(agent.x, agent.y, targetX, targetY) <= 3);
+    const nearbyAttackers = this.agents.filter((agent) =>
+      agent.tribeId === attackingTribe.id
+      && agent.task?.kind === "attack"
+      && agent.task.payload.targetTribeId === targetTribeId
+      && manhattan(agent.x, agent.y, targetX, targetY) <= this.combatParticipationRange(agent, targetX, targetY),
+    );
+    const frontAttackers = nearbyAttackers.filter((agent) => this.combatLineForAgent(agent) === "front");
+    const rearAttackers = nearbyAttackers.filter((agent) => this.combatLineForAgent(agent) === "rear");
+    const flankAttackers = nearbyAttackers.filter((agent) => this.combatLineForAgent(agent) === "flank");
     const riderBonus = nearbyAttackers.filter((agent) => agent.role === AgentRole.Rider).length * 2.5;
     const mageAttackers = nearbyAttackers.filter((agent) => agent.role === AgentRole.Mage);
+    const rangedAttackers = nearbyAttackers.filter((agent) => this.combatStyleForAgent(agent) === "ranged");
     const heroBonus = nearbyAttackers.filter((agent) => agent.hero).length * 3;
     const gearBonus = attackingTribe.resources[ResourceType.MetalWeapons] > 0 ? 3 : attackingTribe.resources[ResourceType.BasicWeapons] > 0 ? 1.5 : 0;
     const sanctumBonus = this.buildingCount(attackingTribe.id, BuildingType.ArcaneSanctum);
@@ -5797,7 +5837,8 @@ export class Simulation {
       ? this.buildingCount(attackingTribe.id, BuildingType.Workshop) * 0.6 + this.siegeEngines.filter((engine) => engine.tribeId === attackingTribe.id && manhattan(engine.x, engine.y, targetX, targetY) <= 10).length * 4
       : 0;
     const defenseBonus = this.earthworkDefenseBonus(targetX, targetY);
-    const damage = 4 + attackingTribe.race.militaryBias * 2 + riderBonus + heroBonus + gearBonus + magicBonus + siegeBonus;
+    const lineBonus = frontAttackers.length * 1.2 + rearAttackers.length * 0.8 + flankAttackers.length * 1.5 + rangedAttackers.length * 0.9;
+    const damage = 4 + attackingTribe.race.militaryBias * 2 + riderBonus + heroBonus + gearBonus + magicBonus + siegeBonus + lineBonus;
 
     const targetBuilding = this.buildings.find((building) => building.tribeId === targetTribeId && manhattan(building.x, building.y, targetX, targetY) <= 2);
     if (targetBuilding) {
@@ -5817,9 +5858,15 @@ export class Simulation {
       }
     }
 
-    const defenders = this.agents.filter((agent) => agent.tribeId === targetTribeId && manhattan(agent.x, agent.y, targetX, targetY) <= 2);
+    const defenders = this.agents.filter((agent) => agent.tribeId === targetTribeId && manhattan(agent.x, agent.y, targetX, targetY) <= 3);
     if (defenders.length > 0) {
-      const victim = chooseOne(this.random, defenders);
+      const victim = chooseOne(this.random, defenders
+        .slice()
+        .sort((a, b) => {
+          const frontA = this.combatLineForAgent(a) === "front" ? 1 : 0;
+          const frontB = this.combatLineForAgent(b) === "front" ? 1 : 0;
+          return frontB - frontA || a.health - b.health;
+        }));
       const killed = this.applyDamage(victim, Math.max(2, 10 + attackingTribe.race.militaryBias * 4 + riderBonus + gearBonus + magicBonus + heroBonus - defenseBonus));
       if (killed) {
         for (const attacker of nearbyAttackers) {
@@ -9165,6 +9212,19 @@ export class Simulation {
     return line === "flank" || line === "front";
   }
 
+  private combatParticipationRange(agent: AgentState, objectiveX: number, objectiveY: number): number {
+    const task = agent.task;
+    const preferred = task && (task.kind === "attack" || task.kind === "patrol") ? task.payload.preferredRange : 1;
+    const style = this.combatStyleForAgent(agent);
+    return Math.max(
+      preferred,
+      style === "mage" ? 5
+      : style === "ranged" ? 4
+      : style === "cavalry" ? 2
+      : 1,
+    );
+  }
+
   private militaryFormationPoint(originX: number, originY: number, targetX: number, targetY: number, index: number, total: number, spacing = 2): { x: number; y: number } {
     const dx = Math.sign(targetX - originX);
     const dy = Math.sign(targetY - originY);
@@ -11175,6 +11235,9 @@ export class Simulation {
       const separatism = this.capitalHallsForTribe(tribe.id)
         .filter((hall) => hall.id !== tribe.capitalBuildingId)
         .reduce((max, hall) => Math.max(max, this.branchEventStatusFor(hall.id).separatism), 0);
+      const defiantBranches = this.capitalHallsForTribe(tribe.id)
+        .filter((hall) => hall.id !== tribe.capitalBuildingId && this.branchEventStatusFor(hall.id).defiant)
+        .length;
       const soldierCount = tribeAgents.filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider).length;
       const heroes = tribeAgents.filter((agent) => agent.hero).length;
       const wounded = tribeAgents.filter((agent) => agent.wounds > 0).length;
@@ -11224,6 +11287,7 @@ export class Simulation {
         strainedBranches: branchStats.strainedBranches,
         branchImports: branchStats.branchImports,
         branchExports: branchStats.branchExports,
+        defiantBranches,
         attacking,
         patrolling,
         retreating,

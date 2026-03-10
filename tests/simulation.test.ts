@@ -1215,6 +1215,71 @@ describe("simulation", () => {
     expect(tribe.legitimacy).toBeLessThan(78);
   });
 
+  test("high separatism can turn a branch defiant and expose it in summaries", () => {
+    const sim = createSimulation("branch-defiance", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 24, tribe.capitalY + 10);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 6, branchHall.y + 2);
+
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+    const status = sim.branchEventStatusFor(branchHall.id);
+    status.separatism = 96;
+
+    sim.updateBranchHistory(tribe);
+
+    const snapshot = sim.snapshotNow();
+    const summary = snapshot.tribes.find((entry: any) => entry.id === tribe.id);
+    const branch = snapshot.branches.find((entry: any) => entry.hallId === branchHall.id);
+
+    expect(status.defiant).toBe(true);
+    expect(summary?.defiantBranches).toBeGreaterThanOrEqual(1);
+    expect(branch?.defiant).toBe(true);
+    expect(sim.events.some((event: any) => event.kind === "branch-defiance" && event.tribeId === tribe.id)).toBe(true);
+  });
+
+  test("rear-line mages can contribute from stand-off range", () => {
+    const sim = createSimulation("combat-ranged-stand-off", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+    const defender = sim.tribes[1];
+    const mage = sim.agents.find((agent: any) => agent.tribeId === attacker.id);
+    const defenderUnit = sim.agents.find((agent: any) => agent.tribeId === defender.id);
+
+    expect(mage).toBeTruthy();
+    expect(defenderUnit).toBeTruthy();
+
+    mage.role = AgentRole.Mage;
+    mage.x = attacker.capitalX;
+    mage.y = attacker.capitalY;
+    mage.spellCooldown = 0;
+    mage.task = {
+      kind: "attack",
+      targetX: attacker.capitalX + 4,
+      targetY: attacker.capitalY,
+      workLeft: 10,
+      payload: {
+        targetTribeId: defender.id,
+        targetX: attacker.capitalX + 4,
+        targetY: attacker.capitalY,
+        objectiveBuildingId: null,
+        objectiveType: "siege",
+        fallbackX: attacker.capitalX,
+        fallbackY: attacker.capitalY,
+        line: "rear",
+        slot: 0,
+        preferredRange: 5,
+      },
+    };
+
+    defenderUnit.x = attacker.capitalX + 4;
+    defenderUnit.y = attacker.capitalY;
+    const before = defenderUnit.health;
+
+    sim.resolveAttack(attacker, defender.id, attacker.capitalX + 4, attacker.capitalY);
+
+    expect(defenderUnit.health).toBeLessThan(before);
+  });
+
   test("branch redistribution does not drain a weak branch below reserve", () => {
     const sim = createSimulation("branch-reserve-protection", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);

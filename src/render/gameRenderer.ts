@@ -3016,6 +3016,7 @@ export class GameRenderer {
           <strong>Strained Branches</strong><span>${selectedTribe.strainedBranches}</span>
           <strong>Branch Imports</strong><span>${selectedTribe.branchImports}</span>
           <strong>Branch Exports</strong><span>${selectedTribe.branchExports}</span>
+          <strong>Defiant Branches</strong><span>${selectedTribe.defiantBranches}</span>
           <strong>Attacking</strong><span>${selectedTribe.attacking}</span>
           <strong>Patrolling</strong><span>${selectedTribe.patrolling}</span>
           <strong>Retreating</strong><span>${selectedTribe.retreating}</span>
@@ -3054,9 +3055,9 @@ export class GameRenderer {
         <h3>Branches</h3>
         <ul class="tribe-list">${selectedBranches.length > 0 ? selectedBranches.map((branch) => `
           <li>
-            <button class="tribe-row ${branch.strained ? "is-active" : ""}" data-branch-hall-id="${branch.hallId}">
+            <button class="tribe-row ${branch.strained || branch.defiant ? "is-active" : ""}" data-branch-hall-id="${branch.hallId}">
               <span>${branch.name} | M${branch.maturity} | ${branch.shortage}</span>
-              <span>Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad} | Sep ${branch.separatism}</span>
+              <span>Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad} | Sep ${branch.separatism}${branch.defiant ? " | Defiant" : ""}</span>
             </button>
           </li>
         `).join("") : "<li><span class='event-title'>No branch halls yet.</span></li>"}</ul>

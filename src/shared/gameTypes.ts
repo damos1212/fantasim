@@ -352,6 +352,7 @@ export type TribeSummary = {
   strainedBranches: number;
   branchImports: number;
   branchExports: number;
+  defiantBranches: number;
   attacking: number;
   patrolling: number;
   retreating: number;
@@ -466,6 +467,7 @@ export type BranchSnapshot = {
   shortage: string;
   importLoad: number;
   exportLoad: number;
+  defiant: boolean;
   food: number;
   wood: number;
   stone: number;
