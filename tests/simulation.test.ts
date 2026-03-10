@@ -521,6 +521,29 @@ describe("simulation", () => {
     )).toBe(true);
   });
 
+  test("mining branch halls pull race-specific industry support", () => {
+    const sim = createSimulation("branch-mining-support", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Dwarves);
+    expect(tribe).toBeTruthy();
+    tribe.age = AgeType.Iron;
+    tribe.resources[ResourceType.Wood] = Math.max(tribe.resources[ResourceType.Wood], 32);
+    tribe.resources[ResourceType.Stone] = Math.max(tribe.resources[ResourceType.Stone], 28);
+    tribe.resources[ResourceType.Ore] = Math.max(tribe.resources[ResourceType.Ore], 18);
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY);
+    const branchCenterX = branchHall.x + Math.floor(branchHall.width / 2);
+    const branchCenterY = branchHall.y + Math.floor(branchHall.height / 2);
+    const mine = sim.placeBuilding(tribe.id, BuildingType.Mine, branchCenterX + 4, branchCenterY + 1);
+    mine.stock[ResourceType.Ore] = 42;
+
+    sim.generateBranchHubPlans(tribe);
+
+    const plannedTypes = sim.jobs
+      .filter((job: any) => job.tribeId === tribe.id && job.kind === "build")
+      .map((job: any) => job.payload?.buildingType);
+
+    expect(plannedTypes.some((type: any) => type === BuildingType.Smithy || type === BuildingType.Warehouse)).toBe(true);
+  });
+
   test("expanding settlements keep buildings attached to road influence", { timeout: 45000 }, () => {
     const sim = createSimulation("road-influence", { width: 384, height: 384 }) as any;
     let lastSnapshot = sim.snapshotNow();

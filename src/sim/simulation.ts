@@ -5909,16 +5909,7 @@ export class Simulation {
     ).length;
     if (nearbyPlanCount >= this.maxConcurrentBuildingPlans(tribe, type)) return;
     if (this.buildingCount(tribe.id, type) >= this.maxBuildingCountForTribe(tribe, type)) return;
-    if (
-      this.hasBuilt(tribe.id, type) &&
-      type !== BuildingType.House &&
-      type !== BuildingType.Watchtower &&
-      type !== BuildingType.Farm &&
-      type !== BuildingType.Orchard &&
-      type !== BuildingType.Stockpile &&
-      type !== BuildingType.Warehouse &&
-      type !== BuildingType.CapitalHall
-    ) {
+    if (this.hasBuilt(tribe.id, type) && !this.supportsMultipleBuildingInstances(type)) {
       return;
     }
 
@@ -6250,6 +6241,11 @@ export class Simulation {
       const nearbyFarms = this.nearbyBuildingCount(tribe.id, BuildingType.Farm, center.x, center.y, 10);
       const nearbyLumber = this.nearbyBuildingCount(tribe.id, BuildingType.LumberCamp, center.x, center.y, 10);
       const nearbyQuarries = this.nearbyBuildingCount(tribe.id, BuildingType.Quarry, center.x, center.y, 10);
+      const nearbySmithies = this.nearbyBuildingCount(tribe.id, BuildingType.Smithy, center.x, center.y, 10);
+      const nearbyStables = this.nearbyBuildingCount(tribe.id, BuildingType.Stable, center.x, center.y, 10);
+      const nearbyShrines = this.nearbyBuildingCount(tribe.id, BuildingType.Shrine, center.x, center.y, 10);
+      const nearbyTaverns = this.nearbyBuildingCount(tribe.id, BuildingType.Tavern, center.x, center.y, 10);
+      const nearbyFishery = this.nearbyBuildingCount(tribe.id, BuildingType.Fishery, center.x, center.y, 10);
       const nearbyProductiveSite = this.buildingsForTribe(tribe.id)
         .filter((building) =>
           building.id !== hall.id
@@ -6269,6 +6265,7 @@ export class Simulation {
         .sort((a, b) => this.topStoredResource(b).amount - this.topStoredResource(a).amount)[0] ?? null;
       const top = nearbyProductiveSite ? this.topStoredResource(nearbyProductiveSite) : { resourceType: ResourceType.None, amount: 0 };
       const specialization = nearbyProductiveSite ? this.districtSpecialization(nearbyProductiveSite, top) : "civic";
+      const race = tribe.race.type;
 
       if (nearbyStockpiles === 0 && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, center.x, center.y, 8)) {
         this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 8, center.x, center.y, 7);
@@ -6300,10 +6297,25 @@ export class Simulation {
       }
 
       if (
+        specialization === "mining"
+        && tribe.age >= AgeType.Iron
+        && (race === RaceType.Dwarves || race === RaceType.Darkfolk || race === RaceType.Goblins)
+        && nearbySmithies === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Smithy, center.x, center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Smithy, 7, center.x, center.y, 10);
+      }
+
+      if (
         tribe.age >= AgeType.Stone
         && nearbyWorkshops === 0
         && nearbyProductiveSite
         && top.amount >= 24
+        && !(
+          specialization === "mining"
+          && tribe.age >= AgeType.Iron
+          && (race === RaceType.Dwarves || race === RaceType.Darkfolk || race === RaceType.Goblins)
+        )
         && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Workshop, center.x, center.y, 10)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.Workshop, 6, center.x, center.y, 9);
@@ -6322,7 +6334,7 @@ export class Simulation {
         nearbyProductiveSite
         && specialization === "harbor"
         && tribe.age >= AgeType.Medieval
-        && this.nearbyBuildingCount(tribe.id, BuildingType.Fishery, center.x, center.y, 10) === 0
+        && nearbyFishery === 0
         && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Fishery, center.x, center.y, 10)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.Fishery, 5, center.x, center.y, 10);
@@ -6360,6 +6372,45 @@ export class Simulation {
         && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Quarry, center.x, center.y, 10)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.Quarry, 4, center.x, center.y, 10);
+      }
+
+      if (
+        tribe.age >= AgeType.Bronze
+        && (specialization === "agriculture" || specialization === "harbor")
+        && (race === RaceType.Humans || race === RaceType.Halflings)
+        && nearbyTaverns === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Tavern, center.x, center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Tavern, 5, center.x, center.y, 10);
+      }
+
+      if (
+        tribe.age >= AgeType.Bronze
+        && (race === RaceType.Humans || race === RaceType.Nomads || race === RaceType.Orcs)
+        && (top.resourceType === ResourceType.Horses || top.resourceType === ResourceType.Livestock || tribe.resources[ResourceType.Horses] >= 3 || tribe.resources[ResourceType.Livestock] >= 6)
+        && nearbyStables === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stable, center.x, center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Stable, 5, center.x, center.y, 10);
+      }
+
+      if (
+        tribe.age >= AgeType.Stone
+        && (race === RaceType.Elves || race === RaceType.Darkfolk || race === RaceType.Humans)
+        && nearbyShrines === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Shrine, center.x, center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Shrine, 4, center.x, center.y, 10);
+      }
+
+      if (
+        specialization === "agriculture"
+        && tribe.age >= AgeType.Stone
+        && (race === RaceType.Elves || race === RaceType.Halflings)
+        && this.nearbyBuildingCount(tribe.id, BuildingType.Orchard, center.x, center.y, 10) === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Orchard, center.x, center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Orchard, 4, center.x, center.y, 10);
       }
     }
   }
@@ -8312,16 +8363,7 @@ export class Simulation {
     ).length;
     if (planCount >= this.maxConcurrentBuildingPlans(tribe, type)) return;
     if (this.buildingCount(tribe.id, type) >= this.maxBuildingCountForTribe(tribe, type)) return;
-    if (
-      this.hasBuilt(tribe.id, type) &&
-      type !== BuildingType.House &&
-      type !== BuildingType.Watchtower &&
-      type !== BuildingType.Farm &&
-      type !== BuildingType.Orchard &&
-      type !== BuildingType.Stockpile &&
-      type !== BuildingType.Warehouse &&
-      type !== BuildingType.CapitalHall
-    ) {
+    if (this.hasBuilt(tribe.id, type) && !this.supportsMultipleBuildingInstances(type)) {
       return;
     }
 
@@ -8381,8 +8423,13 @@ export class Simulation {
 
   private maxBuildingCountForTribe(tribe: TribeState, type: BuildingType): number {
     const population = this.populationOf(tribe.id);
+    const branchHallCount = Math.max(0, this.capitalHallsForTribe(tribe.id).length - 1);
     if (type === BuildingType.Stockpile) {
-      return tribe.age === AgeType.Primitive ? 2 : tribe.age === AgeType.Stone ? (population >= 36 ? 4 : population >= 24 ? 3 : 2) : population >= 48 ? 5 : 4;
+      const base =
+        tribe.age === AgeType.Primitive ? 2
+        : tribe.age === AgeType.Stone ? (population >= 36 ? 4 : population >= 24 ? 3 : 2)
+        : population >= 48 ? 5 : 4;
+      return base + branchHallCount;
     }
     if (type === BuildingType.CapitalHall) {
       if (population < 18) return 1;
@@ -8392,15 +8439,36 @@ export class Simulation {
     }
     if (type === BuildingType.Warehouse) {
       if (tribe.age < AgeType.Stone) return 0;
-      if (tribe.age < AgeType.Bronze) return population >= 38 ? 2 : population >= 24 ? 1 : 0;
-      if (tribe.age < AgeType.Iron) return population >= 34 ? 2 : 1;
-      if (tribe.age < AgeType.Industrial) return population >= 52 ? 2 : 1;
-      return population >= 72 ? 3 : 2;
+      const base =
+        tribe.age < AgeType.Bronze ? (population >= 38 ? 2 : population >= 24 ? 1 : 0)
+        : tribe.age < AgeType.Iron ? (population >= 34 ? 2 : 1)
+        : tribe.age < AgeType.Industrial ? (population >= 52 ? 2 : 1)
+        : population >= 72 ? 3 : 2;
+      return base + Math.min(2, branchHallCount);
     }
     if (type === BuildingType.Cistern) {
-      return population >= 42 ? 3 : 2;
+      return (population >= 42 ? 3 : 2) + Math.min(2, branchHallCount);
     }
     return Number.POSITIVE_INFINITY;
+  }
+
+  private supportsMultipleBuildingInstances(type: BuildingType): boolean {
+    return (
+      type === BuildingType.House
+      || type === BuildingType.Watchtower
+      || type === BuildingType.Farm
+      || type === BuildingType.Orchard
+      || type === BuildingType.Stockpile
+      || type === BuildingType.Warehouse
+      || type === BuildingType.CapitalHall
+      || type === BuildingType.Workshop
+      || type === BuildingType.Smithy
+      || type === BuildingType.Stable
+      || type === BuildingType.Shrine
+      || type === BuildingType.Tavern
+      || type === BuildingType.Fishery
+      || type === BuildingType.Cistern
+    );
   }
 
   private maxConcurrentBuildingPlans(tribe: TribeState, type: BuildingType): number {
@@ -8412,7 +8480,8 @@ export class Simulation {
       return population >= 40 ? 3 : population >= 24 ? 2 : 1;
     }
     if (type === BuildingType.Stockpile || type === BuildingType.Warehouse) {
-      return population >= 48 ? 3 : population >= 28 ? 2 : 1;
+      const branchHallCount = Math.max(0, this.capitalHallsForTribe(tribe.id).length - 1);
+      return (population >= 48 ? 3 : population >= 28 ? 2 : 1) + Math.min(1, branchHallCount);
     }
     if (type === BuildingType.CapitalHall) {
       return 1;
