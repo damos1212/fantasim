@@ -945,6 +945,7 @@ Recent progress in this work program:
 - productive remote districts keep pulling warehouses, workshops, cisterns, and housing longer into the midgame
 - hall-aware redistribution and wagon scoring favor strained branch resupply more reliably
 - tribe and branch snapshots now expose mature, recovering, and planned branch state more clearly for tuning and observation
+- remote districts and planned branch sites now pull warehouse/workshop support earlier when they stay productive and road-connected
 
 ### 25.1 Workstream A: Branch and District Self-Sufficiency
 

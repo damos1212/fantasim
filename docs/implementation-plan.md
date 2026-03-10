@@ -1556,3 +1556,5 @@ Latest landed progress in this block:
 - redistribution destination scoring now favors strained branch halls more strongly over low-value same-hall moves
 - tribe and branch snapshots now expose mature/recovering/planned branch state more clearly
 - branch history is easier to read in the UI with dedicated branch/social event filters and better branch alert surfacing
+- remote districts now seed branch halls, warehouses, and workshops earlier when remoteness, stock, and road pressure stay high
+- strained and early-maturity branch halls now pull warehouse/workshop support sooner instead of waiting for fully mature secondary towns

@@ -1088,6 +1088,34 @@ describe("simulation", () => {
     expect(plannedTypes.some((type: any) => type === BuildingType.Stockpile || type === BuildingType.House || type === BuildingType.Cistern)).toBe(true);
   });
 
+  test("strained productive branch halls pull warehouse or workshop support earlier", () => {
+    const sim = createSimulation("branch-early-utility", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    tribe.resources[ResourceType.Wood] = 64;
+    tribe.resources[ResourceType.Stone] = 48;
+    tribe.resources[ResourceType.Clay] = 18;
+
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 8);
+    const branchCenterX = branchHall.x + Math.floor(branchHall.width / 2);
+    const branchCenterY = branchHall.y + Math.floor(branchHall.height / 2);
+    sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchCenterX + 4, branchCenterY);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchCenterX - 4, branchCenterY);
+    const lumber = sim.placeBuilding(tribe.id, BuildingType.LumberCamp, branchCenterX + 5, branchCenterY + 2);
+    lumber.stock[ResourceType.Wood] = 18;
+
+    sim.generateBranchHubPlans(tribe);
+
+    const plannedTypes = sim.jobs
+      .filter((job: any) => job.tribeId === tribe.id && job.kind === "build")
+      .map((job: any) => job.payload?.buildingType);
+
+    expect(plannedTypes.some((type: any) => type === BuildingType.Warehouse || type === BuildingType.Workshop)).toBe(true);
+  });
+
   test("branch hall supply hauls get elevated urgency", () => {
     const sim = createSimulation("branch-hall-haul-priority", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
