@@ -795,6 +795,9 @@ describe("simulation", () => {
     expect(tribe).toBeTruthy();
 
     tribe.age = AgeType.Stone;
+    tribe.resources[ResourceType.Wood] = 72;
+    tribe.resources[ResourceType.Stone] = 48;
+    tribe.resources[ResourceType.Clay] = 20;
     sim.claimTerritory(tribe.id, tribe.capitalX + 19, tribe.capitalY + 11, 10);
     sim.layRoad(tribe.capitalX, tribe.capitalY, tribe.capitalX + 19, tribe.capitalY + 11, tribe.id);
     sim.placeBuilding(tribe.id, BuildingType.Farm, tribe.capitalX + 14, tribe.capitalY + 14);
