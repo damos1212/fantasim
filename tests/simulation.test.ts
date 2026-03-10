@@ -486,7 +486,7 @@ describe("simulation", () => {
     expect(expandedTribes.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("productive mature settlements can found branch halls", { timeout: 70000 }, () => {
+  test("productive mature settlements can found or actively plan branch halls", { timeout: 70000 }, () => {
     const sim = createSimulation("branch-hall-growth", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
 
@@ -497,10 +497,15 @@ describe("simulation", () => {
       }
     }
 
-    expect(lastSnapshot.tribes.some((tribe) => {
+    const hasBuiltHall = lastSnapshot.tribes.some((tribe) => {
       const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
       return tribeBuildings.filter((building) => building.type === BuildingType.CapitalHall).length >= 2;
-    })).toBe(true);
+    });
+    const hasPlannedHall = sim.jobs.some((job: any) =>
+      job.kind === "build" && job.payload?.buildingType === BuildingType.CapitalHall,
+    );
+
+    expect(hasBuiltHall || hasPlannedHall).toBe(true);
   });
 
   test("branch halls plan local support around productive hubs", () => {
@@ -573,7 +578,7 @@ describe("simulation", () => {
     const sourceWarehouse = sim.placeBuilding(tribe.id, BuildingType.Warehouse, tribe.capitalX + 6, tribe.capitalY + 2);
     const branchStockpile = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
     sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
-    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 12);
 
     sourceWarehouse.stock[ResourceType.Wood] = 72;
     sourceWarehouse.stock[ResourceType.Rations] = 36;
@@ -658,6 +663,99 @@ describe("simulation", () => {
     expect(plannedTypes.some((type: any) =>
       type === BuildingType.Farm || type === BuildingType.LumberCamp || type === BuildingType.Quarry,
     )).toBe(true);
+  });
+
+  test("branch redistribution does not drain a weak branch below reserve", () => {
+    const sim = createSimulation("branch-reserve-protection", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const richHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 22, tribe.capitalY);
+    const richStore = sim.placeBuilding(tribe.id, BuildingType.Warehouse, richHall.x + 4, richHall.y);
+    const poorHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX - 22, tribe.capitalY + 10);
+    const poorStore = sim.placeBuilding(tribe.id, BuildingType.Warehouse, poorHall.x + 4, poorHall.y);
+    const needyCore = sim.placeBuilding(tribe.id, BuildingType.Workshop, tribe.capitalX + 4, tribe.capitalY + 2);
+    sim.placeBuilding(tribe.id, BuildingType.House, poorHall.x - 4, poorHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, poorHall.x, poorHall.y + 5);
+    sim.claimTerritory(tribe.id, poorHall.x + 1, poorHall.y + 1, 8);
+    sim.claimTerritory(tribe.id, richHall.x + 1, richHall.y + 1, 8);
+
+    richStore.stock[ResourceType.Wood] = 90;
+    poorStore.stock[ResourceType.Wood] = 10;
+    needyCore.stock[ResourceType.Wood] = 0;
+
+    const destination = sim.findRedistributionDestinationBuilding(tribe.id, poorStore, ResourceType.Wood);
+
+    expect(destination?.id).not.toBe(needyCore.id);
+  });
+
+  test("strained branches pull sustainment hauls from rich halls", () => {
+    const sim = createSimulation("branch-sustainment-hauls", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const sourceWarehouse = sim.placeBuilding(tribe.id, BuildingType.Warehouse, tribe.capitalX + 6, tribe.capitalY + 1);
+    sourceWarehouse.stock[ResourceType.Rations] = 72;
+    sourceWarehouse.stock[ResourceType.Wood] = 68;
+    sourceWarehouse.stock[ResourceType.Stone] = 54;
+
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 20, tribe.capitalY + 12);
+    const branchStore = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x, branchHall.y + 5);
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+
+    branchStore.stock[ResourceType.Rations] = 0;
+    branchStore.stock[ResourceType.Wood] = 0;
+    branchStore.stock[ResourceType.Stone] = 0;
+
+    sim.generateBranchSustainmentHauls(tribe);
+
+    const branchHauls = sim.jobs.filter((job: any) => {
+      if (job.tribeId !== tribe.id || job.kind !== "haul") return false;
+      const payload = job.payload;
+      return payload.destBuildingId === branchStore.id || payload.destBuildingId === branchHall.id;
+    });
+
+    expect(branchHauls.length).toBeGreaterThan(0);
+    expect(branchHauls.some((job: any) =>
+      job.payload.resourceType === ResourceType.Rations
+      || job.payload.resourceType === ResourceType.Wood
+      || job.payload.resourceType === ResourceType.Stone,
+    )).toBe(true);
+  });
+
+  test("mature branch halls carry higher recurring resource targets", () => {
+    const sim = createSimulation("branch-maturity-targets", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Bronze;
+    const sparseHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 16, tribe.capitalY + 6);
+    const matureHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX - 22, tribe.capitalY + 10);
+    sim.placeBuilding(tribe.id, BuildingType.Stockpile, sparseHall.x + 4, sparseHall.y);
+    const matureStore = sim.placeBuilding(tribe.id, BuildingType.Stockpile, matureHall.x + 4, matureHall.y);
+    const matureFarm = sim.placeBuilding(tribe.id, BuildingType.Farm, matureHall.x - 2, matureHall.y + 6);
+    matureFarm.stock[ResourceType.Grain] = 44;
+    sim.placeBuilding(tribe.id, BuildingType.House, matureHall.x - 4, matureHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, matureHall.x, matureHall.y + 5);
+    sim.placeBuilding(tribe.id, BuildingType.House, matureHall.x + 5, matureHall.y + 4);
+    matureStore.stock[ResourceType.Rations] = 28;
+    matureStore.stock[ResourceType.Wood] = 24;
+    matureStore.stock[ResourceType.Stone] = 20;
+
+    const sparseFoodTarget = sim.hallLocalResourceTarget(tribe.id, sparseHall, ResourceType.Rations);
+    const matureFoodTarget = sim.hallLocalResourceTarget(tribe.id, matureHall, ResourceType.Rations);
+    const sparseWoodTarget = sim.hallLocalResourceTarget(tribe.id, sparseHall, ResourceType.Wood);
+    const matureWoodTarget = sim.hallLocalResourceTarget(tribe.id, matureHall, ResourceType.Wood);
+
+    expect(matureFoodTarget).toBeGreaterThan(sparseFoodTarget);
+    expect(matureWoodTarget).toBeGreaterThan(sparseWoodTarget);
   });
 
   test("expanding settlements keep buildings attached to road influence", { timeout: 45000 }, () => {

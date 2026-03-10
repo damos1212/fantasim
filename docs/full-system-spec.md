@@ -901,10 +901,19 @@ Immediate success criteria:
 - mature tribes keep moving goods between districts instead of flattening into quiet stock equilibrium
 - branch towns continue pulling support buildings instead of remaining thin outposts
 
+Latest completed execution slices:
+
+- hall-aware redistribution now protects branch reserves instead of freely draining weak branches
+- branch sustainment hauls can feed strained halls from richer halls even without raw-site overflow
+- hall-local demand now scales more with nearby plans, productive sites, roads, and branch maturity
+- branch staffing reacts more strongly to mature and strained branches instead of only tribe-wide totals
+- branch support planning now holds luxury follow-ups behind maturity while strained halls stay focused on self-supply
+- build supply sourcing now ignores empty source buildings instead of selecting fake local sources
+
 Current concrete gaps after the latest execution slices:
 
-- wagons still need stronger preference for branch-deficit balancing over generic big hauls
-- redistribution still needs deeper strategic reserve behavior beyond local hall pressure
+- productive remote hubs still need a stronger path from planned branch halls into completed second settlement centers
 - branch halls are visible in summary state, but not yet clearly marked as map-level branch centers
 - shortage/import/export state is still mostly tribe-level rather than per-branch/per-district
+- branch founding, rescue, and recovery still need clearer world-history feedback
 - combat and social depth should remain behind these logistics fixes until the world is easier to read

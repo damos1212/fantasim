@@ -1437,3 +1437,19 @@ Simulation-depth audit:
 - keep remote districts demanding support after first stabilization
 - move branch settlements toward stronger secondary-town behavior
 - only then start the first combat/social slice
+
+Latest completed execution slices:
+
+- hall-aware redistribution now protects branch reserves instead of freely draining weak branches
+- branch sustainment hauls can feed strained halls from richer halls even without raw-site overflow
+- hall-local demand now scales more with nearby plans, productive sites, roads, and branch maturity
+- branch staffing reacts more strongly to mature and strained branches instead of only tribe-wide totals
+- branch support planning now holds luxury follow-ups behind maturity while strained halls stay focused on self-supply
+- build supply sourcing now ignores empty source buildings instead of selecting fake local sources
+
+Current concrete follow-up gaps:
+
+- productive remote hubs still need a stronger path from planned branch halls into completed second settlement centers
+- branch identity is still stronger in summaries than on the map itself
+- shortage/import/export state is still mostly tribe-level rather than per-branch/per-district in the observer UI
+- branch founding, rescue, and recovery still need clearer event/history feedback
