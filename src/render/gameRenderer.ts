@@ -2969,6 +2969,7 @@ export class GameRenderer {
             <strong>Kills</strong><span>${selectedUnit.kills}</span>
             <strong>Wounds</strong><span>${selectedUnit.wounds}</span>
             <strong>Layer</strong><span>${selectedUnit.underground ? "Underground" : "Surface"}</span>
+            <strong>House</strong><span>House ${selectedUnit.houseId}</span>
             <strong>Carrying</strong><span>${selectedUnit.carrying === ResourceType.None ? "Nothing" : `${ResourceType[selectedUnit.carrying]} x${selectedUnit.carryingAmount}`}</span>
             <strong>Power</strong><span>${selectedUnit.gear.power}</span>
             <strong>Rarity</strong><span>${selectedUnit.gear.rarity}</span>
@@ -2991,6 +2992,11 @@ export class GameRenderer {
           <strong>Successions</strong><span>${selectedTribe.successionCount}</span>
           <strong>Tech Age</strong><span>${AGE_NAMES[selectedTribe.age]}</span>
           <strong>Doctrine</strong><span>${selectedTribe.doctrine}</span>
+          <strong>Legitimacy</strong><span>${selectedTribe.legitimacy}</span>
+          <strong>Claimant</strong><span>${selectedTribe.claimant}</span>
+          <strong>Sect</strong><span>${selectedTribe.sect}</span>
+          <strong>Sect Tension</strong><span>${selectedTribe.sectTension}</span>
+          <strong>Separatism</strong><span>${selectedTribe.separatism}</span>
           <strong>Weather</strong><span>${WEATHER_NAMES[selectedTribe.weather]}</span>
           <strong>Activity</strong><span>${selectedTribe.activity}</span>
           <strong>Shortage</strong><span>${selectedTribe.shortage}</span>
@@ -3050,7 +3056,7 @@ export class GameRenderer {
           <li>
             <button class="tribe-row ${branch.strained ? "is-active" : ""}" data-branch-hall-id="${branch.hallId}">
               <span>${branch.name} | M${branch.maturity} | ${branch.shortage}</span>
-              <span>Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad}</span>
+              <span>Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad} | Sep ${branch.separatism}</span>
             </button>
           </li>
         `).join("") : "<li><span class='event-title'>No branch halls yet.</span></li>"}</ul>

@@ -357,6 +357,11 @@ export type TribeSummary = {
   retreating: number;
   siegeMarching: number;
   siegeBombarding: number;
+  legitimacy: number;
+  claimant: string;
+  sect: string;
+  sectTension: number;
+  separatism: number;
   contacts: number;
   allies: number;
   tradePartners: number;
@@ -425,6 +430,7 @@ export type AgentSnapshot = {
   underground: boolean;
   carrying: ResourceType;
   carryingAmount: number;
+  houseId: number;
   combatLine?: "front" | "rear" | "flank";
   combatObjectiveType?: "siege" | "raid" | "patrol" | null;
   fallbackX?: number;
@@ -463,6 +469,7 @@ export type BranchSnapshot = {
   food: number;
   wood: number;
   stone: number;
+  separatism: number;
   houses: number;
   productiveSites: number;
 };

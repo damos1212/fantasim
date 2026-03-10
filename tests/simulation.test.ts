@@ -1127,6 +1127,74 @@ describe("simulation", () => {
     expect(engine?.objectiveType).toBe("siege");
   });
 
+  test("new births inherit lineage metadata from nearby adults", () => {
+    const sim = createSimulation("lineage-births", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const lineage = sim.lineageForBirth(tribe, tribe.capitalX, tribe.capitalY);
+
+    sim.spawnAgent(tribe.id, tribe.capitalX, tribe.capitalY, lineage);
+
+    const newborn = sim.agents[sim.agents.length - 1];
+    expect(newborn.houseId).toBeGreaterThan(0);
+    expect(newborn.birthHallId).not.toBeNull();
+    expect(newborn.parentAId !== null || newborn.parentBId !== null).toBe(true);
+  });
+
+  test("succession pressure surfaces legitimacy and rival claimants", () => {
+    const sim = createSimulation("social-succession", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const agents = sim.agents.filter((agent: any) => agent.tribeId === tribe.id);
+    for (const agent of agents) {
+      agent.hero = false;
+      agent.blessed = false;
+      agent.level = 1;
+      agent.kills = 0;
+    }
+    const contenders = agents.slice(0, 3);
+
+    tribe.rulerAgentId = null;
+    tribe.rulingHouseId = contenders[0].houseId;
+    tribe.successionCount = 1;
+    tribe.legitimacy = 76;
+
+    contenders[0].houseId = 11;
+    contenders[0].level = 5;
+    contenders[0].kills = 6;
+    contenders[0].hero = true;
+
+    contenders[1].houseId = 12;
+    contenders[1].level = 5;
+    contenders[1].kills = 5;
+    contenders[1].hero = false;
+
+    sim.ensureRuler(tribe);
+
+    expect(tribe.claimantAgentId).toBe(contenders[1].id);
+    expect(tribe.legitimacy).toBeLessThan(76);
+
+    const snapshot = sim.snapshotNow();
+    const summary = snapshot.tribes.find((entry: any) => entry.id === tribe.id);
+    expect(summary?.claimant).toBe(contenders[1].name);
+    expect(summary?.legitimacy).toBeLessThan(76);
+  });
+
+  test("branch separatism is exposed in branch and tribe summaries", () => {
+    const sim = createSimulation("branch-separatism", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 24, tribe.capitalY + 10);
+
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+    const status = sim.branchEventStatusFor(branchHall.id);
+    status.separatism = 74;
+
+    const snapshot = sim.snapshotNow();
+    const summary = snapshot.tribes.find((entry: any) => entry.id === tribe.id);
+    const branch = snapshot.branches.find((entry: any) => entry.hallId === branchHall.id);
+
+    expect(summary?.separatism).toBeGreaterThanOrEqual(74);
+    expect(branch?.separatism).toBeGreaterThanOrEqual(74);
+  });
+
   test("branch redistribution does not drain a weak branch below reserve", () => {
     const sim = createSimulation("branch-reserve-protection", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);

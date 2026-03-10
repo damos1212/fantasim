@@ -77,7 +77,13 @@ type TribeState = {
   capitalX: number;
   capitalY: number;
   rulerAgentId: number | null;
+  rulingHouseId: number | null;
+  claimantAgentId: number | null;
   successionCount: number;
+  legitimacy: number;
+  sectName: string;
+  sectTension: number;
+  nextHouseId: number;
   relations: number[];
   tradePacts: boolean[];
   discovered: boolean[];
@@ -207,6 +213,7 @@ type BranchEventStatus = {
   lastShortageTick: number;
   lastRecoveryTick: number;
   lastRescueTick: number;
+  separatism: number;
 };
 
 type CreatureState = {
@@ -387,6 +394,10 @@ type AgentState = {
   moveCooldown: number;
   spellCooldown: number;
   ageTicks: number;
+  houseId: number;
+  parentAId: number | null;
+  parentBId: number | null;
+  birthHallId: number | null;
   gear: {
     weapon: string;
     armor: string;
@@ -831,7 +842,13 @@ export class Simulation {
         capitalX: best.x,
         capitalY: best.y,
         rulerAgentId: null,
+        rulingHouseId: null,
+        claimantAgentId: null,
         successionCount: 0,
+        legitimacy: 78,
+        sectName: this.defaultSectNameForRace(race.type),
+        sectTension: 10,
+        nextHouseId: 5,
         relations: new Array(INITIAL_TRIBE_COUNT).fill(0),
         tradePacts: new Array(INITIAL_TRIBE_COUNT).fill(false),
         discovered: new Array(INITIAL_TRIBE_COUNT).fill(false),
@@ -888,6 +905,10 @@ export class Simulation {
           moveCooldown: 0,
           spellCooldown: 0,
           ageTicks: randInt(this.random, 0, YEAR_TICKS * 3),
+          houseId: Math.floor(i / 3) + 1,
+          parentAId: null,
+          parentBId: null,
+          birthHallId: capital.id,
           gear: gearForRole(AgentRole.Worker, AgeType.Primitive, race.type),
         });
       }
@@ -2868,19 +2889,34 @@ export class Simulation {
     if (current) {
       return;
     }
-    const candidate = [...this.agentsForTribe(tribe.id)]
+    const ranked = [...this.agentsForTribe(tribe.id)]
       .sort((a, b) =>
         Number(b.hero || b.blessed) - Number(a.hero || a.blessed) ||
         b.level - a.level ||
         b.kills - a.kills ||
         b.ageTicks - a.ageTicks,
-      )[0];
+      );
+    const candidate = ranked[0];
     if (!candidate) {
       tribe.rulerAgentId = null;
       return;
     }
+    const rival = ranked[1] ?? null;
+    const previousHouseId = tribe.rulingHouseId;
     tribe.rulerAgentId = candidate.id;
     tribe.successionCount += 1;
+    tribe.rulingHouseId = candidate.houseId;
+    const successionPenalty = tribe.successionCount > 1 ? (previousHouseId !== null && previousHouseId === candidate.houseId ? 8 : 16) : 0;
+    tribe.legitimacy = clamp(tribe.successionCount > 1 ? tribe.legitimacy - successionPenalty : Math.max(tribe.legitimacy, 78), 18, 98);
+    const rivalClose =
+      rival
+      && candidate.houseId !== rival.houseId
+      && (candidate.level - rival.level <= 1)
+      && (candidate.kills - rival.kills <= 3);
+    tribe.claimantAgentId = rivalClose ? rival.id : null;
+    if (rivalClose) {
+      tribe.legitimacy = clamp(tribe.legitimacy - 8, 18, 98);
+    }
     if (!candidate.hero) {
       candidate.hero = true;
       candidate.level = Math.max(candidate.level, 3);
@@ -2901,6 +2937,16 @@ export class Simulation {
       y: candidate.y,
       tribeId: tribe.id,
     });
+    if (tribe.claimantAgentId !== null) {
+      this.pushEvent({
+        kind: "claimant",
+        title: `${tribe.name} faces a rival claimant`,
+        description: `${rival?.name ?? "A rival"} is challenging the succession in ${tribe.name}.`,
+        x: candidate.x,
+        y: candidate.y,
+        tribeId: tribe.id,
+      });
+    }
   }
 
   private rulerTitleForTribe(tribe: TribeState): string {
@@ -2912,6 +2958,42 @@ export class Simulation {
       : tribe.race.type === RaceType.Halflings ? "Hearthlord"
       : tribe.race.type === RaceType.Nomads ? "Steppe Khan"
       : "King";
+  }
+
+  private defaultSectNameForRace(race: RaceType): string {
+    return race === RaceType.Dwarves ? "Stone Oath"
+      : race === RaceType.Elves ? "Star Grove"
+      : race === RaceType.Darkfolk ? "Night Veil"
+      : race === RaceType.Orcs ? "War Drums"
+      : race === RaceType.Goblins ? "Lucky Knives"
+      : race === RaceType.Halflings ? "Hearth Chorus"
+      : race === RaceType.Nomads ? "Sky Caravan"
+      : "Sun Covenant";
+  }
+
+  private nextHouseIdForTribe(tribe: TribeState): number {
+    const id = tribe.nextHouseId;
+    tribe.nextHouseId += 1;
+    return id;
+  }
+
+  private lineageForBirth(tribe: TribeState, x: number, y: number): { houseId: number; parentAId: number | null; parentBId: number | null; birthHallId: number | null } {
+    const nearbyAdults = this.agents
+      .filter((agent) => agent.tribeId === tribe.id && agent.ageTicks >= YEAR_TICKS && manhattan(agent.x, agent.y, x, y) <= 10)
+      .sort((a, b) => manhattan(a.x, a.y, x, y) - manhattan(b.x, b.y, x, y))
+      .slice(0, 2);
+    const parentA = nearbyAdults[0] ?? null;
+    const parentB = nearbyAdults[1] ?? null;
+    const houseId = parentA?.houseId ?? parentB?.houseId ?? this.nextHouseIdForTribe(tribe);
+    const hall = this.capitalHallsForTribe(tribe.id)
+      .slice()
+      .sort((a, b) => manhattan(buildingCenter(a).x, buildingCenter(a).y, x, y) - manhattan(buildingCenter(b).x, buildingCenter(b).y, x, y))[0];
+    return {
+      houseId,
+      parentAId: parentA?.id ?? null,
+      parentBId: parentB?.id ?? null,
+      birthHallId: hall?.id ?? null,
+    };
   }
 
   private needsRecovery(agent: AgentState): boolean {
@@ -4681,6 +4763,7 @@ export class Simulation {
       lastShortageTick: -SIM_TICKS_PER_SECOND * 30,
       lastRecoveryTick: -SIM_TICKS_PER_SECOND * 30,
       lastRescueTick: -SIM_TICKS_PER_SECOND * 30,
+      separatism: 6,
     };
     this.branchEventStatus.set(hallId, status);
     return status;
@@ -4884,6 +4967,7 @@ export class Simulation {
           this.hallStoredAmount(tribe.id, hall, ResourceType.Stone)
           + this.hallStoredAmount(tribe.id, hall, ResourceType.Clay);
         const strained = this.branchIsStrained(tribe.id, hall);
+        const status = this.branchEventStatusFor(hall.id);
         branches.push({
           hallId: hall.id,
           tribeId: tribe.id,
@@ -4902,6 +4986,7 @@ export class Simulation {
           food,
           wood,
           stone,
+          separatism: Math.floor(status.separatism),
           houses: this.nearbyBuildingCount(tribe.id, BuildingType.House, center.x, center.y, 8),
           productiveSites: this.hallProductiveSiteCount(tribe.id, hall),
         });
@@ -4919,6 +5004,17 @@ export class Simulation {
       const strained = this.branchIsStrained(tribe.id, hall);
       const previousState = hall.branchAlertState ?? "stable";
       const notifiedMaturity = hall.branchMaturityNotified ?? 1;
+      const distanceFromCapital = manhattan(center.x, center.y, tribe.capitalX, tribe.capitalY);
+      status.separatism = clamp(
+        status.separatism
+          + (strained ? 1.2 : -0.5)
+          + Math.max(0, distanceFromCapital - 20) * 0.01
+          + Math.max(0, 58 - tribe.legitimacy) * 0.015
+          + (tribe.tributeTo !== null ? 0.6 : 0)
+          - maturity * 0.12,
+        0,
+        100,
+      );
 
       if (maturity > notifiedMaturity) {
         this.pushEvent({
@@ -4951,6 +5047,17 @@ export class Simulation {
           kind: "branch-recovery",
           title: `${tribe.name} stabilizes a branch`,
           description: `${tribe.name} has restored supplies to a strained branch hall and the local district is recovering.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+      }
+      if (status.separatism >= 68 && this.tickCount - status.lastRescueTick > SIM_TICKS_PER_SECOND * 24) {
+        status.lastRescueTick = this.tickCount;
+        this.pushEvent({
+          kind: "branch-unrest",
+          title: `${tribe.name} faces branch unrest`,
+          description: `${tribe.name}'s distant branch is becoming restless under shortages and weak legitimacy.`,
           x: center.x,
           y: center.y,
           tribeId: tribe.id,
@@ -5951,7 +6058,9 @@ export class Simulation {
         && tribe.water > Math.max(14, population * 0.55)
         && tribe.morale > 58
       ) {
-        this.spawnAgent(tribe.id, tribe.capitalX + randInt(this.random, -2, 2), tribe.capitalY + randInt(this.random, -2, 2));
+        const birthX = tribe.capitalX + randInt(this.random, -2, 2);
+        const birthY = tribe.capitalY + randInt(this.random, -2, 2);
+        this.spawnAgent(tribe.id, birthX, birthY, this.lineageForBirth(tribe, birthX, birthY));
         tribe.resources[ResourceType.Rations] -= 14;
       }
 
@@ -6039,6 +6148,7 @@ export class Simulation {
         this.maybePromoteHero(tribe);
         this.maybeGrantBlessing(tribe);
       }
+      this.updateSocialPressure(tribe);
       this.maybeTriggerUnrest(tribe);
     }
   }
@@ -6067,16 +6177,47 @@ export class Simulation {
     });
   }
 
+  private updateSocialPressure(tribe: TribeState): void {
+    const agents = this.agentsForTribe(tribe.id);
+    const rulerHouseId = tribe.rulingHouseId;
+    const blessedInRulingHouse =
+      rulerHouseId === null
+        ? 0
+        : agents.filter((agent) => agent.houseId === rulerHouseId && (agent.blessed || agent.hero)).length;
+    const totalBlessed = agents.filter((agent) => agent.blessed || agent.hero).length;
+    const concentrationPenalty = totalBlessed > 1 && blessedInRulingHouse / Math.max(1, totalBlessed) >= 0.7 ? 6 : 0;
+    const tributePenalty = tribe.tributeTo !== null ? 8 : 0;
+    const successionPenalty = Math.max(0, tribe.successionCount - 1) * 4;
+    const moralePenalty = tribe.morale < 42 ? 8 : tribe.morale < 55 ? 4 : 0;
+    tribe.sectTension = clamp(tribe.sectTension + tributePenalty * 0.08 + successionPenalty * 0.04 + moralePenalty * 0.05 + concentrationPenalty * 0.04 - 0.12, 0, 100);
+    if (tribe.sectTension >= 72 && this.tickCount % (SIM_TICKS_PER_SECOND * 26) === 0) {
+      this.pushEvent({
+        kind: "sect-strife",
+        title: `${tribe.name} suffers sect tension`,
+        description: `${tribe.sectName} is under strain from succession, hardship, and competing loyalties in ${tribe.name}.`,
+        x: tribe.capitalX,
+        y: tribe.capitalY,
+        tribeId: tribe.id,
+      });
+    }
+  }
+
   private maybeTriggerUnrest(tribe: TribeState): void {
     if (this.tickCount % (SIM_TICKS_PER_SECOND * 22) !== 0) {
       return;
     }
     const population = this.populationOf(tribe.id);
     const wounded = this.agentsForTribe(tribe.id).filter((agent) => agent.wounds > 0).length;
+    const maxSeparatism = this.capitalHallsForTribe(tribe.id)
+      .filter((hall) => hall.id !== tribe.capitalBuildingId)
+      .reduce((max, hall) => Math.max(max, this.branchEventStatusFor(hall.id).separatism), 0);
     const instability =
       (tribe.morale < 34 ? 0.16 : tribe.morale < 44 ? 0.08 : 0)
       + (tribe.tributeTo !== null ? 0.08 : 0)
       + Math.max(0, tribe.successionCount - 1) * 0.015
+      + Math.max(0, 60 - tribe.legitimacy) * 0.002
+      + Math.max(0, tribe.sectTension - 45) * 0.002
+      + Math.max(0, maxSeparatism - 40) * 0.0018
       + wounded * 0.004
       + (tribe.resources[ResourceType.Rations] < population * 2.2 ? 0.06 : 0)
       + (tribe.water < Math.max(8, population * 0.35) ? 0.05 : 0);
@@ -6096,6 +6237,8 @@ export class Simulation {
     tribe.resources[ResourceType.Wood] = Math.max(0, tribe.resources[ResourceType.Wood] - randInt(this.random, 8, 20));
     tribe.resources[ResourceType.Stone] = Math.max(0, tribe.resources[ResourceType.Stone] - randInt(this.random, 6, 16));
     tribe.morale = Math.max(12, tribe.morale - randInt(this.random, 10, 18));
+    tribe.legitimacy = clamp(tribe.legitimacy - randInt(this.random, 3, 8), 10, 98);
+    tribe.sectTension = clamp(tribe.sectTension + randInt(this.random, 4, 10), 0, 100);
 
     if (tribe.tributeTo !== null) {
       const overlord = this.tribes[tribe.tributeTo];
@@ -10684,11 +10827,18 @@ export class Simulation {
     }
   }
 
-  private spawnAgent(tribeId: number, x: number, y: number): void {
+  private spawnAgent(
+    tribeId: number,
+    x: number,
+    y: number,
+    lineage?: { houseId?: number; parentAId?: number | null; parentBId?: number | null; birthHallId?: number | null },
+  ): void {
+    const tribe = this.tribes[tribeId]!;
+    const resolvedHouseId = lineage?.houseId ?? this.nextHouseIdForTribe(tribe);
     this.agents.push({
       id: this.nextAgentId++,
       tribeId,
-      name: agentNameForRace(this.random, this.tribes[tribeId]!.race.type),
+      name: agentNameForRace(this.random, tribe.race.type),
       title: "",
       hero: false,
       blessed: false,
@@ -10716,10 +10866,14 @@ export class Simulation {
       moveCooldown: 0,
       spellCooldown: 0,
       ageTicks: 0,
-      gear: gearForRole(AgentRole.Worker, this.tribes[tribeId]!.age, this.tribes[tribeId]!.race.type),
+      houseId: resolvedHouseId,
+      parentAId: lineage?.parentAId ?? null,
+      parentBId: lineage?.parentBId ?? null,
+      birthHallId: lineage?.birthHallId ?? null,
+      gear: gearForRole(AgentRole.Worker, tribe.age, tribe.race.type),
     });
     this.invalidateSummaryCaches();
-    this.assignRolesForTribe(this.tribes[tribeId]!);
+    this.assignRolesForTribe(tribe);
   }
 
   private buildingCount(tribeId: number, type: BuildingType): number {
@@ -10990,8 +11144,12 @@ export class Simulation {
       const tribeAgents = this.agentsForTribe(tribe.id);
       const branchStats = this.branchLogisticsStats(tribe);
       const ruler = tribe.rulerAgentId !== null ? tribeAgents.find((agent) => agent.id === tribe.rulerAgentId) : null;
+      const claimant = tribe.claimantAgentId !== null ? tribeAgents.find((agent) => agent.id === tribe.claimantAgentId) : null;
       const conditions = this.conditionCountsForTribe(tribe.id);
       const flooded = this.floodedBuildingCountForTribe(tribe.id);
+      const separatism = this.capitalHallsForTribe(tribe.id)
+        .filter((hall) => hall.id !== tribe.capitalBuildingId)
+        .reduce((max, hall) => Math.max(max, this.branchEventStatusFor(hall.id).separatism), 0);
       const soldierCount = tribeAgents.filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider).length;
       const heroes = tribeAgents.filter((agent) => agent.hero).length;
       const wounded = tribeAgents.filter((agent) => agent.wounds > 0).length;
@@ -11046,6 +11204,11 @@ export class Simulation {
         retreating,
         siegeMarching,
         siegeBombarding,
+        legitimacy: Math.floor(tribe.legitimacy),
+        claimant: claimant?.name ?? "None",
+        sect: tribe.sectName,
+        sectTension: Math.floor(tribe.sectTension),
+        separatism: Math.floor(separatism),
         contacts: this.contactCount(tribe),
         allies: tribe.relations.filter((score, index) => index !== tribe.id && tribe.discovered[index] && diplomacyStateFromScore(score) === DiplomacyState.Alliance).length,
         tradePartners: this.tradePartnerCount(tribe.id),
@@ -11154,6 +11317,7 @@ export class Simulation {
         underground: agent.underground,
         carrying: agent.carrying,
         carryingAmount: agent.carryingAmount,
+        houseId: agent.houseId,
         combatLine: combatTask?.payload.line,
         combatObjectiveType: combatTask?.payload.objectiveType ?? null,
         fallbackX: combatTask?.payload.fallbackX ?? retreatTask?.targetX,

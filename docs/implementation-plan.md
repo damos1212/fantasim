@@ -1456,6 +1456,10 @@ Latest completed execution slices:
 - attack and patrol jobs now carry formation/rally metadata so melee, ranged, and flanking roles can claim more appropriate military work
 - wounded or routed attackers now fall back into retreat tasks before recovery instead of snapping straight out of combat
 - siege engines now target the dedicated siege objective chooser instead of only capital-centered goals
+- agents now carry lightweight lineage tags through births and spawning instead of remaining socially blank
+- tribes now track legitimacy, rival claimants, sect tension, and branch separatism as first-class social pressure
+- succession can now surface explicit claimant pressure, and branch unrest can now surface as its own event pressure before full breakaways
+- tribe, branch, and selected-unit UI now expose the first social-state slice instead of hiding it behind raw sim fields
 
 Current concrete follow-up gaps:
 
@@ -1464,3 +1468,4 @@ Current concrete follow-up gaps:
 - per-branch observer state is present, but district-level shortage and recovery feedback is still shallow
 - branch history exists in the event feed now, but rescue/founding/recovery events still need better grouping and longer-term legends treatment
 - combat jobs still need clearer battlefront spacing, ranged stand-off behavior, and more observer-visible campaign/frontline state
+- social state now exists, but it still needs full house/dynasty continuity, sect splits, and real breakaway-branch consequences
