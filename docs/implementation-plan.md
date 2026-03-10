@@ -1452,6 +1452,10 @@ Latest completed execution slices:
 - branch planning, growth, shortage, and recovery now emit explicit history events instead of only hiding in summary counters
 - branch-founded, branch-rescue, and branch-lost events now land as dedicated feed entries instead of only generic construction/loss noise
 - branch-hall build supply hauls now inherit elevated urgency so second centers complete more reliably once planned
+- military objectives now bias more toward meaningful frontier infrastructure instead of defaulting back to capitals
+- attack and patrol jobs now carry formation/rally metadata so melee, ranged, and flanking roles can claim more appropriate military work
+- wounded or routed attackers now fall back into retreat tasks before recovery instead of snapping straight out of combat
+- siege engines now target the dedicated siege objective chooser instead of only capital-centered goals
 
 Current concrete follow-up gaps:
 
@@ -1459,3 +1463,4 @@ Current concrete follow-up gaps:
 - branch identity is better on the map now, but branch-specialized districts still need stronger visual differentiation over time
 - per-branch observer state is present, but district-level shortage and recovery feedback is still shallow
 - branch history exists in the event feed now, but rescue/founding/recovery events still need better grouping and longer-term legends treatment
+- combat jobs still need clearer battlefront spacing, ranged stand-off behavior, and more observer-visible campaign/frontline state

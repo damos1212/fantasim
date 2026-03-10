@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createSimulation } from "../src/sim/simulation";
 import { INITIAL_AGENTS_PER_TRIBE, INITIAL_TRIBE_COUNT } from "../src/shared/config";
-import { AgentRole, AgeType, BuildingType, RaceType, ResourceType } from "../src/shared/gameTypes";
+import { AgentRole, AgeType, BuildingType, RaceType, ResourceType, SiegeEngineType } from "../src/shared/gameTypes";
 
 describe("simulation", () => {
   test("seeds tribes, buildings, and agents", () => {
@@ -869,6 +869,262 @@ describe("simulation", () => {
     const haul = sim.jobs.find((job: any) => job.kind === "haul" && job.payload?.targetJobId === 999101);
     expect(haul).toBeTruthy();
     expect(haul.priority).toBeGreaterThanOrEqual(8.8);
+  });
+
+  test("military objectives prefer meaningful frontier targets over capitals", () => {
+    const sim = createSimulation("combat-objective-priority", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+    const defender = sim.tribes[1];
+
+    const targetBarracks = sim.placeBuilding(defender.id, BuildingType.Barracks, attacker.capitalX + 8, attacker.capitalY + 4);
+    const targetCenter = { x: targetBarracks.x + 1, y: targetBarracks.y + 1 };
+
+    const objective = sim.chooseMilitaryObjective(attacker, defender);
+
+    expect(Math.abs(objective.x - targetCenter.x) + Math.abs(objective.y - targetCenter.y)).toBeLessThanOrEqual(2);
+  });
+
+  test("outmatched attackers retreat instead of idling in place", () => {
+    const sim = createSimulation("combat-retreat", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+    const defender = sim.tribes[1];
+    const soldier = sim.agents.find((agent: any) => agent.tribeId === attacker.id);
+
+    expect(soldier).toBeTruthy();
+
+    soldier.role = AgentRole.Soldier;
+    soldier.x = attacker.capitalX + 12;
+    soldier.y = attacker.capitalY + 4;
+    soldier.health = 60;
+    soldier.wounds = 1;
+    soldier.task = {
+      kind: "attack",
+      targetX: soldier.x,
+      targetY: soldier.y,
+      workLeft: 8,
+      payload: {
+        targetTribeId: defender.id,
+        targetX: soldier.x,
+        targetY: soldier.y,
+        objectiveBuildingId: null,
+        objectiveType: "raid",
+        fallbackX: attacker.capitalX,
+        fallbackY: attacker.capitalY,
+        line: "front",
+        slot: 0,
+        preferredRange: 1,
+      },
+    };
+
+    const defenders = sim.agents.filter((agent: any) => agent.tribeId === defender.id).slice(0, 4);
+    for (const enemy of defenders) {
+      enemy.x = soldier.x;
+      enemy.y = soldier.y;
+    }
+
+    sim.processTask(soldier, attacker);
+
+    expect(soldier.task?.kind).toBe("retreat");
+    expect(soldier.status).toBe("Routing");
+  });
+
+  test("agent snapshots expose combat assignment metadata", () => {
+    const sim = createSimulation("combat-snapshot-metadata", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+    const defender = sim.tribes[1];
+    const soldier = sim.agents.find((agent: any) => agent.tribeId === attacker.id);
+
+    expect(soldier).toBeTruthy();
+
+    soldier.role = AgentRole.Soldier;
+    soldier.status = "Advancing";
+    soldier.task = {
+      kind: "attack",
+      targetX: attacker.capitalX + 10,
+      targetY: attacker.capitalY + 6,
+      workLeft: 10,
+      payload: {
+        targetTribeId: defender.id,
+        targetX: attacker.capitalX + 14,
+        targetY: attacker.capitalY + 8,
+        objectiveBuildingId: 123,
+        objectiveType: "siege",
+        fallbackX: attacker.capitalX,
+        fallbackY: attacker.capitalY,
+        line: "front",
+        slot: 1,
+        preferredRange: 1,
+      },
+    };
+
+    const snapshot = sim.snapshotNow();
+    const unit = snapshot.agents.find((agent: any) => agent.id === soldier.id);
+
+    expect(unit?.combatLine).toBe("front");
+    expect(unit?.combatObjectiveType).toBe("siege");
+    expect(unit?.fallbackX).toBe(attacker.capitalX);
+    expect(unit?.fallbackY).toBe(attacker.capitalY);
+    expect(unit?.combatTargetTribeId).toBe(defender.id);
+    expect(unit?.preferredRange).toBe(1);
+  });
+
+  test("siege engines target the chosen military objective instead of only capitals", () => {
+    const sim = createSimulation("siege-objective-targeting", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+    const defender = sim.tribes[1];
+
+    attacker.age = AgeType.Medieval;
+    attacker.relations[defender.id] = -90;
+    defender.relations[attacker.id] = -90;
+    attacker.discovered[defender.id] = true;
+    defender.discovered[attacker.id] = true;
+
+    const targetWarehouse = sim.placeBuilding(defender.id, BuildingType.Warehouse, attacker.capitalX + 10, attacker.capitalY + 6);
+    const targetCenter = { x: targetWarehouse.x + 1, y: targetWarehouse.y + 1 };
+
+    sim.siegeEngines.push({
+      id: 999201,
+      tribeId: attacker.id,
+      type: SiegeEngineType.Trebuchet,
+      x: attacker.capitalX + 2,
+      y: attacker.capitalY + 2,
+      targetX: attacker.capitalX,
+      targetY: attacker.capitalY,
+      objectiveBuildingId: null,
+      objectiveType: null,
+      path: [],
+      pathIndex: 0,
+      hp: 80,
+      moveCooldown: 0,
+      task: "idle",
+    });
+
+    sim.updateSiegeEngines();
+
+    const engine = sim.siegeEngines.find((entry: any) => entry.id === 999201);
+    expect(engine).toBeTruthy();
+    expect(Math.abs(engine.targetX - targetCenter.x) + Math.abs(engine.targetY - targetCenter.y)).toBeLessThanOrEqual(2);
+  });
+
+  test("tribe summaries expose active campaign counts", () => {
+    const sim = createSimulation("combat-summary-counts", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+    const defender = sim.tribes[1];
+    const agents = sim.agents.filter((agent: any) => agent.tribeId === attacker.id);
+
+    agents[0].task = {
+      kind: "attack",
+      targetX: attacker.capitalX + 10,
+      targetY: attacker.capitalY + 4,
+      workLeft: 10,
+      payload: {
+        targetTribeId: defender.id,
+        targetX: attacker.capitalX + 12,
+        targetY: attacker.capitalY + 4,
+        objectiveBuildingId: null,
+        objectiveType: "siege",
+        fallbackX: attacker.capitalX,
+        fallbackY: attacker.capitalY,
+        line: "front",
+        slot: 0,
+        preferredRange: 1,
+      },
+    };
+    agents[1].task = {
+      kind: "patrol",
+      targetX: attacker.capitalX + 8,
+      targetY: attacker.capitalY + 5,
+      workLeft: 10,
+      payload: {
+        targetTribeId: defender.id,
+        targetX: attacker.capitalX + 16,
+        targetY: attacker.capitalY + 8,
+        objectiveBuildingId: null,
+        objectiveType: "patrol",
+        fallbackX: attacker.capitalX,
+        fallbackY: attacker.capitalY,
+        line: "rear",
+        slot: 0,
+        preferredRange: 4,
+      },
+    };
+    agents[2].task = {
+      kind: "retreat",
+      targetX: attacker.capitalX,
+      targetY: attacker.capitalY,
+      workLeft: 8,
+    };
+    agents[2].status = "Routing";
+
+    sim.siegeEngines.push({
+      id: 999211,
+      tribeId: attacker.id,
+      type: SiegeEngineType.Trebuchet,
+      x: attacker.capitalX + 2,
+      y: attacker.capitalY + 2,
+      targetX: defender.capitalX,
+      targetY: defender.capitalY,
+      objectiveBuildingId: 42,
+      objectiveType: "siege",
+      path: [],
+      pathIndex: 0,
+      hp: 80,
+      moveCooldown: 0,
+      task: "march",
+    });
+    sim.siegeEngines.push({
+      id: 999212,
+      tribeId: attacker.id,
+      type: SiegeEngineType.Trebuchet,
+      x: attacker.capitalX + 3,
+      y: attacker.capitalY + 2,
+      targetX: defender.capitalX,
+      targetY: defender.capitalY,
+      objectiveBuildingId: 42,
+      objectiveType: "siege",
+      path: [],
+      pathIndex: 0,
+      hp: 80,
+      moveCooldown: 0,
+      task: "bombard",
+    });
+
+    const snapshot = sim.snapshotNow();
+    const summary = snapshot.tribes.find((tribe: any) => tribe.id === attacker.id);
+
+    expect(summary?.attacking).toBeGreaterThanOrEqual(1);
+    expect(summary?.patrolling).toBeGreaterThanOrEqual(1);
+    expect(summary?.retreating).toBeGreaterThanOrEqual(1);
+    expect(summary?.siegeMarching).toBeGreaterThanOrEqual(1);
+    expect(summary?.siegeBombarding).toBeGreaterThanOrEqual(1);
+  });
+
+  test("siege engine snapshots expose objective metadata", () => {
+    const sim = createSimulation("siege-snapshot-objective", { width: 384, height: 384 }) as any;
+    const attacker = sim.tribes[0];
+
+    sim.siegeEngines.push({
+      id: 999221,
+      tribeId: attacker.id,
+      type: SiegeEngineType.Cannon,
+      x: attacker.capitalX + 2,
+      y: attacker.capitalY + 2,
+      targetX: attacker.capitalX + 10,
+      targetY: attacker.capitalY + 6,
+      objectiveBuildingId: 77,
+      objectiveType: "siege",
+      path: [],
+      pathIndex: 0,
+      hp: 88,
+      moveCooldown: 0,
+      task: "march",
+    });
+
+    const snapshot = sim.snapshotNow();
+    const engine = snapshot.siegeEngines.find((entry: any) => entry.id === 999221);
+
+    expect(engine?.objectiveBuildingId).toBe(77);
+    expect(engine?.objectiveType).toBe("siege");
   });
 
   test("branch redistribution does not drain a weak branch below reserve", () => {

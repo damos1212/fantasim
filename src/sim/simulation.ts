@@ -171,6 +171,8 @@ type SiegeEngineState = {
   y: number;
   targetX: number;
   targetY: number;
+  objectiveBuildingId: number | null;
+  objectiveType: "siege" | "raid" | "patrol" | null;
   path: number[];
   pathIndex: number;
   hp: number;
@@ -248,6 +250,13 @@ type AttackPayload = {
   targetTribeId: number;
   targetX: number;
   targetY: number;
+  objectiveBuildingId?: number | null;
+  objectiveType?: "siege" | "raid" | "patrol";
+  fallbackX: number;
+  fallbackY: number;
+  line: "front" | "rear" | "flank";
+  slot: number;
+  preferredRange: number;
 };
 
 type EarthworkKind = "trench" | "canal" | "palisade" | "gate" | "stone_wall" | "road" | "pave";
@@ -333,6 +342,12 @@ type AgentTask =
       targetY: number;
       workLeft: number;
       payload: AttackPayload;
+    }
+  | {
+      kind: "retreat";
+      targetX: number;
+      targetY: number;
+      workLeft: number;
     }
   | {
       kind: "idle";
@@ -1893,8 +1908,11 @@ export class Simulation {
         continue;
       }
 
-      engine.targetX = enemy.capitalX;
-      engine.targetY = enemy.capitalY;
+      const siegeObjective = this.chooseSiegeObjective(tribe, enemy);
+      engine.targetX = siegeObjective.x;
+      engine.targetY = siegeObjective.y;
+      engine.objectiveBuildingId = siegeObjective.buildingId ?? null;
+      engine.objectiveType = "siege";
       const bombardRange =
         engine.type === SiegeEngineType.Trebuchet ? 9
         : engine.type === SiegeEngineType.Ballista ? 7
@@ -1910,7 +1928,9 @@ export class Simulation {
         if (engine.moveCooldown > 0) {
           engine.moveCooldown -= 1;
         } else {
-          const strikeBuilding = this.buildings.find((building) => building.tribeId === enemy.id && manhattan(building.x, building.y, engine.targetX, engine.targetY) <= 4);
+          const strikeBuilding = this.buildingsForTribe(enemy.id)
+            .filter((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, engine.targetX, engine.targetY) <= 4)
+            .sort((a, b) => this.militaryObjectivePriority(b.type) - this.militaryObjectivePriority(a.type))[0];
           if (strikeBuilding) {
             strikeBuilding.hp -=
               engine.type === SiegeEngineType.Trebuchet ? 20
@@ -2993,6 +3013,9 @@ export class Simulation {
       if (!this.roleMatches(agent.role, job.kind)) {
         continue;
       }
+      if ((job.kind === "attack" || job.kind === "patrol") && !this.combatJobMatchesAgent(agent, job.payload as AttackPayload)) {
+        continue;
+      }
       if (job.kind === "build" && (job.payload as BuildPayload).supplied < (job.payload as BuildPayload).supplyNeeded) {
         continue;
       }
@@ -3507,6 +3530,27 @@ export class Simulation {
     };
   }
 
+  private issueRetreat(agent: AgentState, tribe: TribeState, fromX: number, fromY: number, reason: "wounded" | "routed"): void {
+    const fallback = this.findRecoverySite(tribe, agent) ?? { x: tribe.capitalX, y: tribe.capitalY };
+    const hall = this.capitalHallsForTribe(tribe.id)
+      .slice()
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        return manhattan(fromX, fromY, centerA.x, centerA.y) - manhattan(fromX, fromY, centerB.x, centerB.y);
+      })[0];
+    const retreatTarget = hall ? buildingCenter(hall) : fallback;
+    agent.status = reason === "routed" ? "Routing" : "Retreating";
+    agent.path = findPath(this.world, agent.x, agent.y, retreatTarget.x, retreatTarget.y);
+    agent.pathIndex = 0;
+    agent.task = {
+      kind: "retreat",
+      targetX: retreatTarget.x,
+      targetY: retreatTarget.y,
+      workLeft: reason === "routed" ? 12 : 8,
+    };
+  }
+
   private jobUrgencyScore(agent: AgentState, tribe: TribeState, job: JobState): number {
     const population = this.populationOf(tribe.id);
     const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
@@ -3816,27 +3860,52 @@ export class Simulation {
       return;
     }
 
+    if (task.kind === "retreat") {
+      if (!atTarget) {
+        return;
+      }
+      agent.task = {
+        kind: "recover",
+        targetX: task.targetX,
+        targetY: task.targetY,
+        workLeft: task.workLeft,
+      };
+      return;
+    }
+
     if (task.kind === "attack" || task.kind === "patrol") {
       if ((task.kind === "attack" && (agent.health < 52 || agent.wounds > 2 || tribe.morale < 40)) || (task.kind === "patrol" && agent.health < 40)) {
-        this.finishTask(agent);
+        this.issueRetreat(agent, tribe, task.targetX, task.targetY, "wounded");
         return;
       }
       if (!atTarget) {
         return;
       }
-      const friendlyStrength = this.agents.filter((entry) => entry.tribeId === tribe.id && manhattan(entry.x, entry.y, task.targetX, task.targetY) <= 3).length;
-      const enemyStrength = this.agents.filter((entry) => entry.tribeId === task.payload.targetTribeId && manhattan(entry.x, entry.y, task.targetX, task.targetY) <= 3).length;
+      const objectiveX = task.payload.targetX;
+      const objectiveY = task.payload.targetY;
+      const friendlyStrength = this.agents.filter((entry) => entry.tribeId === tribe.id && manhattan(entry.x, entry.y, objectiveX, objectiveY) <= 4).length;
+      const enemyStrength = this.agents.filter((entry) => entry.tribeId === task.payload.targetTribeId && manhattan(entry.x, entry.y, objectiveX, objectiveY) <= 4).length;
       const targetTribe = this.tribes[task.payload.targetTribeId];
       if (task.kind === "patrol" && targetTribe && !tribe.discovered[targetTribe.id] && manhattan(agent.x, agent.y, targetTribe.capitalX, targetTribe.capitalY) <= this.contactRadiusForTribe(tribe) + 10) {
         this.markDiscovery(tribe, targetTribe);
       }
       if (task.kind === "attack" && enemyStrength > friendlyStrength * 1.5 && agent.health < 72) {
-        this.finishTask(agent);
+        this.issueRetreat(agent, tribe, objectiveX, objectiveY, "routed");
+        if (this.tickCount % 18 === 0) {
+          this.pushEvent({
+            kind: "retreat",
+            title: `${tribe.name} falls back`,
+            description: `${tribe.name} is retreating from a stronger force to avoid collapse.`,
+            x: agent.x,
+            y: agent.y,
+            tribeId: tribe.id,
+          });
+        }
         return;
       }
       task.workLeft -= workRate;
       if (task.kind === "attack") {
-        this.resolveAttack(tribe, task.payload.targetTribeId, task.targetX, task.targetY);
+        this.resolveAttack(tribe, task.payload.targetTribeId, objectiveX, objectiveY);
       }
       if (task.workLeft <= 0) {
         this.finishTask(agent);
@@ -6688,6 +6757,8 @@ export class Simulation {
     const frontY = clamp(target.capitalY - Math.sign(target.capitalY - tribe.capitalY) * contactOffset, 2, this.world.height - 3);
     for (let i = activePatrols; i < desired; i += 1) {
       const rally = this.militaryFormationPoint(frontX, frontY, target.capitalX, target.capitalY, i, desired, 3);
+      const fallback = this.chooseFallbackRally(tribe, target.capitalX, target.capitalY);
+      const line: AttackPayload["line"] = i === 0 ? "front" : i === desired - 1 ? "rear" : "flank";
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
@@ -6696,7 +6767,18 @@ export class Simulation {
         y: rally.y,
         priority: 5,
         claimedBy: null,
-        payload: { targetTribeId: target.id, targetX: target.capitalX, targetY: target.capitalY },
+        payload: {
+          targetTribeId: target.id,
+          targetX: target.capitalX,
+          targetY: target.capitalY,
+          objectiveBuildingId: null,
+          objectiveType: "patrol",
+          fallbackX: fallback.x,
+          fallbackY: fallback.y,
+          line,
+          slot: i,
+          preferredRange: line === "rear" ? 4 : line === "flank" ? 2 : 1,
+        },
       });
     }
   }
@@ -8759,6 +8841,11 @@ export class Simulation {
 
   private militaryObjectivePriority(type: BuildingType): number {
     switch (type) {
+      case BuildingType.Barracks:
+      case BuildingType.Armory:
+      case BuildingType.Castle:
+      case BuildingType.Watchtower:
+        return 22;
       case BuildingType.Warehouse:
       case BuildingType.Stockpile:
         return 18;
@@ -8772,11 +8859,12 @@ export class Simulation {
       case BuildingType.Mine:
       case BuildingType.DeepMine:
         return 15;
-      case BuildingType.Barracks:
-      case BuildingType.Armory:
-      case BuildingType.Watchtower:
-      case BuildingType.Castle:
-        return 17;
+      case BuildingType.PowerPlant:
+      case BuildingType.Airfield:
+      case BuildingType.Factory:
+      case BuildingType.Foundry:
+      case BuildingType.RailDepot:
+        return 16;
       case BuildingType.CapitalHall:
         return 12;
       default:
@@ -8790,8 +8878,20 @@ export class Simulation {
       .sort((a, b) => {
         const centerA = buildingCenter(a);
         const centerB = buildingCenter(b);
-        const scoreA = this.militaryObjectivePriority(a.type) - manhattan(tribe.capitalX, tribe.capitalY, centerA.x, centerA.y) * 0.02;
-        const scoreB = this.militaryObjectivePriority(b.type) - manhattan(tribe.capitalX, tribe.capitalY, centerB.x, centerB.y) * 0.02;
+        const frontierA = manhattan(tribe.capitalX, tribe.capitalY, centerA.x, centerA.y);
+        const frontierB = manhattan(tribe.capitalX, tribe.capitalY, centerB.x, centerB.y);
+        const scoreA =
+          this.militaryObjectivePriority(a.type)
+          + this.topStoredResource(a).amount * 0.03
+          + this.nearbyRoadScore(centerA.x, centerA.y, 2) * 1.4
+          - frontierA * 0.11
+          - manhattan(enemy.capitalX, enemy.capitalY, centerA.x, centerA.y) * 0.012;
+        const scoreB =
+          this.militaryObjectivePriority(b.type)
+          + this.topStoredResource(b).amount * 0.03
+          + this.nearbyRoadScore(centerB.x, centerB.y, 2) * 1.4
+          - frontierB * 0.11
+          - manhattan(enemy.capitalX, enemy.capitalY, centerB.x, centerB.y) * 0.012;
         return scoreB - scoreA;
       });
     const target = enemyBuildings[0];
@@ -8802,6 +8902,99 @@ export class Simulation {
       x: Math.floor((tribe.capitalX + enemy.capitalX) / 2),
       y: Math.floor((tribe.capitalY + enemy.capitalY) / 2),
     };
+  }
+
+  private combatStyleForAgent(agent: AgentState): "melee" | "ranged" | "mage" | "cavalry" {
+    if (agent.role === AgentRole.Mage) {
+      return "mage";
+    }
+    if (agent.role === AgentRole.Rider) {
+      return "cavalry";
+    }
+    const weapon = agent.gear.weapon.toLowerCase();
+    if (weapon.includes("bow") || weapon.includes("rifle") || weapon.includes("gun") || weapon.includes("musket") || weapon.includes("arquebus") || weapon.includes("crossbow")) {
+      return "ranged";
+    }
+    return "melee";
+  }
+
+  private combatLineForAgent(agent: AgentState): "front" | "rear" | "flank" {
+    const style = this.combatStyleForAgent(agent);
+    if (style === "mage" || style === "ranged") return "rear";
+    if (style === "cavalry") return "flank";
+    return "front";
+  }
+
+  private chooseFallbackRally(tribe: TribeState, fromX: number, fromY: number): { x: number; y: number } {
+    const fallback = this.buildingsForTribe(tribe.id)
+      .filter((building) =>
+        building.type === BuildingType.Castle
+        || building.type === BuildingType.Infirmary
+        || building.type === BuildingType.CapitalHall
+      )
+      .sort((a, b) => {
+        const centerA = buildingCenter(a);
+        const centerB = buildingCenter(b);
+        return manhattan(fromX, fromY, centerA.x, centerA.y) - manhattan(fromX, fromY, centerB.x, centerB.y);
+      })[0];
+    return fallback ? buildingCenter(fallback) : { x: tribe.capitalX, y: tribe.capitalY };
+  }
+
+  private formationPointForStyle(
+    originX: number,
+    originY: number,
+    targetX: number,
+    targetY: number,
+    line: "front" | "rear" | "flank",
+    slot: number,
+    total: number,
+  ): { x: number; y: number } {
+    const dx = Math.sign(targetX - originX);
+    const dy = Math.sign(targetY - originY);
+    const lineX = dy === 0 ? 0 : -dy;
+    const lineY = dx === 0 ? 0 : dx;
+    const centerOffset = slot - Math.floor((total - 1) / 2);
+    const lateralSpacing = line === "rear" ? 4 : line === "flank" ? 5 : 3;
+    const depth = line === "rear" ? 3 : line === "flank" ? 1 : 0;
+    const flankLead = line === "flank" ? (slot % 2 === 0 ? 3 : -3) : 0;
+    return {
+      x: clamp(originX + lineX * centerOffset * lateralSpacing - dx * depth + lineX * flankLead, 1, this.world.width - 2),
+      y: clamp(originY + lineY * centerOffset * lateralSpacing - dy * depth + lineY * flankLead, 1, this.world.height - 2),
+    };
+  }
+
+  private chooseSiegeObjective(tribe: TribeState, enemy: TribeState): { x: number; y: number; buildingId?: number | null } {
+    let best: { x: number; y: number; buildingId?: number | null; score: number } | null = null;
+    for (const building of this.buildingsForTribe(enemy.id)) {
+      const center = buildingCenter(building);
+      const score =
+        (building.type === BuildingType.Castle ? 28
+        : building.type === BuildingType.CapitalHall ? 24
+        : building.type === BuildingType.Barracks || building.type === BuildingType.Armory ? 22
+        : building.type === BuildingType.Watchtower ? 20
+        : building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile ? 18
+        : this.militaryObjectivePriority(building.type))
+        - manhattan(tribe.capitalX, tribe.capitalY, center.x, center.y) * 0.08;
+      if (!best || score > best.score) {
+        best = { x: center.x, y: center.y, buildingId: building.id, score };
+      }
+    }
+    if (!best) {
+      const fallback = this.chooseMilitaryObjective(tribe, enemy);
+      return { ...fallback, buildingId: null };
+    }
+    return best;
+  }
+
+  private combatJobMatchesAgent(agent: AgentState, payload: AttackPayload): boolean {
+    const line = this.combatLineForAgent(agent);
+    if (payload.line === "front") {
+      return line === "front";
+    }
+    if (payload.line === "rear") {
+      return line === "rear";
+    }
+    return line === "flank" || line === "front";
   }
 
   private militaryFormationPoint(originX: number, originY: number, targetX: number, targetY: number, index: number, total: number, spacing = 2): { x: number; y: number } {
@@ -8880,6 +9073,8 @@ export class Simulation {
       y: yard.y + Math.floor(yard.height / 2),
       targetX: tribe.capitalX,
       targetY: tribe.capitalY,
+      objectiveBuildingId: null,
+      objectiveType: null,
       path: [],
       pathIndex: 0,
       hp:
@@ -9009,17 +9204,35 @@ export class Simulation {
 
     const enemy = enemies[0]!;
     const state = diplomacyStateFromScore(tribe.relations[enemy.id]!);
-    const objective = this.chooseMilitaryObjective(tribe, enemy);
     const canAttack = state === DiplomacyState.War && this.canSustainCampaign(tribe, enemy);
+    const objective: { x: number; y: number; buildingId?: number | null } =
+      canAttack ? this.chooseSiegeObjective(tribe, enemy) : this.chooseMilitaryObjective(tribe, enemy);
     if (!canAttack && state !== DiplomacyState.Hostile) {
       return;
     }
     const kind: JobKind = canAttack ? "attack" : "patrol";
+    const activeMilitaryJobs = this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "attack" || job.kind === "patrol")).length;
     const frontX = canAttack ? clamp(objective.x - Math.sign(objective.x - tribe.capitalX) * 2, 1, this.world.width - 2) : Math.floor((tribe.capitalX + enemy.capitalX) / 2);
     const frontY = canAttack ? clamp(objective.y - Math.sign(objective.y - tribe.capitalY) * 2, 1, this.world.height - 2) : Math.floor((tribe.capitalY + enemy.capitalY) / 2);
     const desiredJobs = clamp(Math.floor(fighters * (canAttack ? 0.55 : 0.35)), canAttack ? 4 : 3, canAttack ? 8 : 5);
-    for (let i = 0; i < desiredJobs; i += 1) {
-      const rally = this.militaryFormationPoint(frontX, frontY, objective.x, objective.y, i, desiredJobs);
+    if (activeMilitaryJobs >= desiredJobs) {
+      return;
+    }
+    const fallback = this.chooseFallbackRally(tribe, objective.x, objective.y);
+    const frontCount = Math.max(1, Math.ceil(desiredJobs * 0.4));
+    const rearCount = Math.max(1, Math.ceil(desiredJobs * 0.35));
+    const flankCount = Math.max(1, desiredJobs - frontCount - rearCount);
+    for (let i = activeMilitaryJobs; i < desiredJobs; i += 1) {
+      const line: AttackPayload["line"] =
+        i < frontCount ? "front"
+        : i < frontCount + rearCount ? "rear"
+        : "flank";
+      const slot =
+        line === "front" ? i
+        : line === "rear" ? i - frontCount
+        : i - frontCount - rearCount;
+      const total = line === "front" ? frontCount : line === "rear" ? rearCount : flankCount;
+      const rally = this.formationPointForStyle(frontX, frontY, objective.x, objective.y, line, slot, total);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
@@ -9028,7 +9241,18 @@ export class Simulation {
         y: rally.y,
         priority: kind === "attack" ? 10 : 6,
         claimedBy: null,
-        payload: { targetTribeId: enemy.id, targetX: objective.x, targetY: objective.y },
+        payload: {
+          targetTribeId: enemy.id,
+          targetX: objective.x,
+          targetY: objective.y,
+          objectiveBuildingId: objective.buildingId ?? null,
+          objectiveType: canAttack ? "siege" : "patrol",
+          fallbackX: fallback.x,
+          fallbackY: fallback.y,
+          line,
+          slot,
+          preferredRange: line === "rear" ? 4 : line === "flank" ? 2 : 1,
+        },
       });
     }
   }
@@ -10778,6 +11002,11 @@ export class Simulation {
       const crafters = tribeAgents.filter((agent) => agent.role === AgentRole.Crafter).length;
       const scholars = tribeAgents.filter((agent) => agent.role === AgentRole.Scholar).length;
       const armyAgents = tribeAgents.filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage);
+      const attacking = tribeAgents.filter((agent) => agent.task?.kind === "attack").length;
+      const patrolling = tribeAgents.filter((agent) => agent.task?.kind === "patrol").length;
+      const retreating = tribeAgents.filter((agent) => agent.task?.kind === "retreat" || agent.status === "Routing" || agent.status === "Retreating").length;
+      const siegeMarching = this.siegeEngines.filter((engine) => engine.tribeId === tribe.id && engine.task === "march").length;
+      const siegeBombarding = this.siegeEngines.filter((engine) => engine.tribeId === tribe.id && engine.task === "bombard").length;
       return {
         rulerName: ruler?.name ?? "Vacant",
         rulerTitle: ruler ? this.rulerTitleForTribe(tribe) : "Interregnum",
@@ -10812,6 +11041,11 @@ export class Simulation {
         strainedBranches: branchStats.strainedBranches,
         branchImports: branchStats.branchImports,
         branchExports: branchStats.branchExports,
+        attacking,
+        patrolling,
+        retreating,
+        siegeMarching,
+        siegeBombarding,
         contacts: this.contactCount(tribe),
         allies: tribe.relations.filter((score, index) => index !== tribe.id && tribe.discovered[index] && diplomacyStateFromScore(score) === DiplomacyState.Alliance).length,
         tradePartners: this.tradePartnerCount(tribe.id),
@@ -10887,6 +11121,11 @@ export class Simulation {
 
     const agents: AgentSnapshot[] = this.agents.map((agent) => {
       const preview = this.pathPreviewTarget(agent.path, agent.pathIndex, agent.x, agent.y, agent.moveCooldown, 1);
+      const combatTask =
+        agent.task?.kind === "attack" || agent.task?.kind === "patrol"
+          ? agent.task
+          : null;
+      const retreatTask = agent.task?.kind === "retreat" ? agent.task : null;
       return {
         id: agent.id,
         tribeId: agent.tribeId,
@@ -10915,6 +11154,13 @@ export class Simulation {
         underground: agent.underground,
         carrying: agent.carrying,
         carryingAmount: agent.carryingAmount,
+        combatLine: combatTask?.payload.line,
+        combatObjectiveType: combatTask?.payload.objectiveType ?? null,
+        fallbackX: combatTask?.payload.fallbackX ?? retreatTask?.targetX,
+        fallbackY: combatTask?.payload.fallbackY ?? retreatTask?.targetY,
+        preferredRange: combatTask?.payload.preferredRange,
+        combatTargetTribeId: combatTask?.payload.targetTribeId ?? null,
+        routed: agent.task?.kind === "retreat" || agent.status === "Routing",
         gear: { ...agent.gear },
       };
     });
@@ -11019,6 +11265,8 @@ export class Simulation {
         moveToY: preview.y,
         targetX: engine.targetX,
         targetY: engine.targetY,
+        objectiveBuildingId: engine.objectiveBuildingId,
+        objectiveType: engine.objectiveType,
         hp: engine.hp,
         task: engine.task,
       };

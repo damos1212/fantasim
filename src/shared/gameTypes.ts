@@ -352,6 +352,11 @@ export type TribeSummary = {
   strainedBranches: number;
   branchImports: number;
   branchExports: number;
+  attacking: number;
+  patrolling: number;
+  retreating: number;
+  siegeMarching: number;
+  siegeBombarding: number;
   contacts: number;
   allies: number;
   tradePartners: number;
@@ -420,6 +425,13 @@ export type AgentSnapshot = {
   underground: boolean;
   carrying: ResourceType;
   carryingAmount: number;
+  combatLine?: "front" | "rear" | "flank";
+  combatObjectiveType?: "siege" | "raid" | "patrol" | null;
+  fallbackX?: number;
+  fallbackY?: number;
+  preferredRange?: number;
+  combatTargetTribeId?: number | null;
+  routed?: boolean;
   gear: GearSnapshot;
 };
 
@@ -521,6 +533,8 @@ export type SiegeEngineSnapshot = {
   moveToY: number;
   targetX: number;
   targetY: number;
+  objectiveBuildingId?: number | null;
+  objectiveType?: "siege" | "raid" | "patrol" | null;
   hp: number;
   task: string;
 };

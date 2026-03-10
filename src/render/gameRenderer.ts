@@ -2753,6 +2753,20 @@ export class GameRenderer {
     `;
   }
 
+  private combatObjectiveLabel(objectiveType: AgentSnapshot["combatObjectiveType"] | SiegeEngineSnapshot["objectiveType"]): string {
+    return objectiveType === "siege" ? "Siege"
+      : objectiveType === "raid" ? "Raid"
+      : objectiveType === "patrol" ? "Patrol"
+      : "None";
+  }
+
+  private combatLineLabel(line: AgentSnapshot["combatLine"]): string {
+    return line === "front" ? "Front"
+      : line === "rear" ? "Rear"
+      : line === "flank" ? "Flank"
+      : "None";
+  }
+
   private updateHud(force = true): void {
     const now = performance.now();
     if (!force && !this.hudDirty) {
@@ -2808,6 +2822,9 @@ export class GameRenderer {
           )
           .map((tribe) => tribe.name)
       : [];
+    const selectedUnitTargetTribe = selectedUnit?.combatTargetTribeId !== null && selectedUnit?.combatTargetTribeId !== undefined
+      ? tribeById.get(selectedUnit.combatTargetTribeId)
+      : null;
     const selectedBranches = selectedTribe ? this.state.branches.filter((branch) => branch.tribeId === selectedTribe.id) : [];
     const topStrainedBranches = [...this.state.branches]
       .filter((branch) => branch.strained)
@@ -2955,6 +2972,12 @@ export class GameRenderer {
             <strong>Carrying</strong><span>${selectedUnit.carrying === ResourceType.None ? "Nothing" : `${ResourceType[selectedUnit.carrying]} x${selectedUnit.carryingAmount}`}</span>
             <strong>Power</strong><span>${selectedUnit.gear.power}</span>
             <strong>Rarity</strong><span>${selectedUnit.gear.rarity}</span>
+            ${selectedUnit.combatLine ? `<strong>Combat Line</strong><span>${this.combatLineLabel(selectedUnit.combatLine)}</span>` : ""}
+            ${(selectedUnit.combatObjectiveType ?? null) ? `<strong>Objective</strong><span>${this.combatObjectiveLabel(selectedUnit.combatObjectiveType)}</span>` : ""}
+            ${selectedUnitTargetTribe ? `<strong>Enemy Tribe</strong><span>${selectedUnitTargetTribe.name}</span>` : ""}
+            ${selectedUnit.preferredRange !== undefined ? `<strong>Preferred Range</strong><span>${selectedUnit.preferredRange}</span>` : ""}
+            ${selectedUnit.fallbackX !== undefined && selectedUnit.fallbackY !== undefined ? `<strong>Fallback Rally</strong><span>${selectedUnit.fallbackX}, ${selectedUnit.fallbackY}</span>` : ""}
+            ${selectedUnit.routed ? `<strong>Routing</strong><span>Yes</span>` : ""}
           </div>
       </section>` : ""}`;
     const tribesPanel = `
@@ -2987,6 +3010,11 @@ export class GameRenderer {
           <strong>Strained Branches</strong><span>${selectedTribe.strainedBranches}</span>
           <strong>Branch Imports</strong><span>${selectedTribe.branchImports}</span>
           <strong>Branch Exports</strong><span>${selectedTribe.branchExports}</span>
+          <strong>Attacking</strong><span>${selectedTribe.attacking}</span>
+          <strong>Patrolling</strong><span>${selectedTribe.patrolling}</span>
+          <strong>Retreating</strong><span>${selectedTribe.retreating}</span>
+          <strong>Siege Marching</strong><span>${selectedTribe.siegeMarching}</span>
+          <strong>Siege Bombarding</strong><span>${selectedTribe.siegeBombarding}</span>
           <strong>Livestock</strong><span>${selectedTribe.livestock}</span>
           <strong>Waterworks</strong><span>${selectedTribe.waterworks}</span>
           <strong>Contacts</strong><span>${selectedTribe.contacts}</span>
