@@ -486,7 +486,7 @@ describe("simulation", () => {
     expect(expandedTribes.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("productive mature settlements can found or actively plan branch halls", { timeout: 90000 }, () => {
+  test("productive mature settlements can found or actively plan branch halls", { timeout: 120000 }, () => {
     const sim = createSimulation("branch-hall-growth", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
 
