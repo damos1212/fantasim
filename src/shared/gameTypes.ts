@@ -437,6 +437,24 @@ export type BuildingSnapshot = {
   stockAmount: number;
 };
 
+export type BranchSnapshot = {
+  hallId: number;
+  tribeId: number;
+  name: string;
+  x: number;
+  y: number;
+  maturity: 1 | 2 | 3;
+  strained: boolean;
+  shortage: string;
+  importLoad: number;
+  exportLoad: number;
+  food: number;
+  wood: number;
+  stone: number;
+  houses: number;
+  productiveSites: number;
+};
+
 export type PlannedSiteSnapshot = {
   tribeId: number;
   type: BuildingType;
@@ -554,6 +572,7 @@ export type DynamicSnapshot = {
   season: SeasonType;
   tileUpdates: TileUpdate[];
   tribes: TribeSummary[];
+  branches: BranchSnapshot[];
   agents: AgentSnapshot[];
   buildings: BuildingSnapshot[];
   plannedSites: PlannedSiteSnapshot[];

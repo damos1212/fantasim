@@ -909,11 +909,15 @@ Latest completed execution slices:
 - branch staffing reacts more strongly to mature and strained branches instead of only tribe-wide totals
 - branch support planning now holds luxury follow-ups behind maturity while strained halls stay focused on self-supply
 - build supply sourcing now ignores empty source buildings instead of selecting fake local sources
+- branch halls now serialize into per-branch snapshot state and are visible as focusable branch centers in the observer UI
+- branch halls now render on-map markers and expose per-branch shortage/import/export state in inspection
+- planned branch halls now seed nearby stockpile/house/cistern support and receive stronger build/haul urgency
+- branch planning, growth, shortage, and recovery now emit explicit event-feed history instead of only hiding in summary counters
 
 Current concrete gaps after the latest execution slices:
 
-- productive remote hubs still need a stronger path from planned branch halls into completed second settlement centers
-- branch halls are visible in summary state, but not yet clearly marked as map-level branch centers
-- shortage/import/export state is still mostly tribe-level rather than per-branch/per-district
-- branch founding, rescue, and recovery still need clearer world-history feedback
+- productive remote hubs still need a stronger and faster path from planned branch halls into completed second settlement centers in long runs
+- branch halls are identifiable on the map now, but branch-specialized districts still need stronger visual differentiation over time
+- per-branch shortage/import/export state is exposed now, but district-level shortage and recovery visibility is still shallow
+- branch founding, rescue, and recovery now hit the event feed, but still need better grouping and longer-term legends treatment
 - combat and social depth should remain behind these logistics fixes until the world is easier to read

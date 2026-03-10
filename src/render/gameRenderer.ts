@@ -10,6 +10,7 @@ import {
   AnimalSnapshot,
   AnimalType,
   BiomeType,
+  BranchSnapshot,
   BoatSnapshot,
   BoatTaskType,
   BuildingSnapshot,
@@ -162,6 +163,7 @@ type RenderState = {
   resourceType: Uint8Array | null;
   resourceAmount: Uint16Array | null;
   tribes: TribeSummary[];
+  branches: BranchSnapshot[];
   buildings: BuildingSnapshot[];
   plannedSites: PlannedSiteSnapshot[];
   agents: AgentSnapshot[];
@@ -364,6 +366,7 @@ export class GameRenderer {
     resourceType: null,
     resourceAmount: null,
     tribes: [],
+    branches: [],
     buildings: [],
     plannedSites: [],
     agents: [],
@@ -528,6 +531,20 @@ export class GameRenderer {
         this.compareTribeId = Number(compareButton.dataset.compareTribeId);
         this.sidebarTab = "tribes";
         this.updateHud();
+        return;
+      }
+      const branchButton = target?.closest<HTMLButtonElement>("[data-branch-hall-id]");
+      if (branchButton) {
+        const hallId = Number(branchButton.dataset.branchHallId);
+        const branch = this.state.branches.find((entry) => entry.hallId === hallId);
+        if (branch) {
+          this.selectedTribeId = branch.tribeId;
+          this.focusWorld(branch.x, branch.y);
+          this.selection = { x: Math.floor(branch.x), y: Math.floor(branch.y) };
+        }
+        this.sidebarTab = "tribes";
+        this.updateHud();
+        this.drawMinimap();
         return;
       }
       const eventButton = target?.closest<HTMLButtonElement>("[data-event-index]");
@@ -719,6 +736,7 @@ export class GameRenderer {
     this.state.year = snapshot.year;
     this.state.season = snapshot.season;
     this.state.tribes = snapshot.tribes;
+    this.state.branches = snapshot.branches;
     this.state.buildings = snapshot.buildings;
     this.state.plannedSites = snapshot.plannedSites;
     this.state.agents = snapshot.agents;
@@ -821,6 +839,24 @@ export class GameRenderer {
     state.sprite.height = height;
     state.sprite.tint = tint;
     state.sprite.alpha = alpha;
+  }
+
+  private drawBranchMarkers(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number, tribeById: Map<number, TribeSummary>): void {
+    for (const branch of this.state.branches) {
+      if (branch.x < minTileX || branch.y < minTileY || branch.x > maxTileX || branch.y > maxTileY) {
+        continue;
+      }
+      const tribe = tribeById.get(branch.tribeId);
+      const color = branch.strained ? 0xd45745 : lighten(tribe?.color ?? 0xffffff, 24);
+      const px = branch.x * TILE_SIZE + 5;
+      const py = branch.y * TILE_SIZE + 1;
+      drawPixelRect(this.overlayGraphics, px, py, 2, 9, 0x23160e, 0.75);
+      drawPixelRect(this.overlayGraphics, px + 2, py + 1, 6, 4, color, 0.9);
+      drawPixelRect(this.overlayGraphics, px + 2, py + 5, 2, 1, darken(color, 24), 0.8);
+      if (branch.maturity >= 3) {
+        drawPixelRect(this.overlayGraphics, px + 4, py, 2, 1, 0xf5e7b2, 0.95);
+      }
+    }
   }
 
   private markAllStaticChunksDirty(): void {
@@ -1015,6 +1051,10 @@ export class GameRenderer {
           this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
         }
       }
+    }
+
+    if (this.viewMode === "surface" && this.zoom > 0.9) {
+      this.drawBranchMarkers(minTileX, minTileY, maxTileX, maxTileY, tribeById);
     }
 
     const useDetailedEntities = lodStep === 1 && this.zoom > 1.18;
@@ -2768,6 +2808,11 @@ export class GameRenderer {
           )
           .map((tribe) => tribe.name)
       : [];
+    const selectedBranches = selectedTribe ? this.state.branches.filter((branch) => branch.tribeId === selectedTribe.id) : [];
+    const topStrainedBranches = [...this.state.branches]
+      .filter((branch) => branch.strained)
+      .sort((a, b) => (b.importLoad + b.productiveSites * 2) - (a.importLoad + a.productiveSites * 2))
+      .slice(0, 4);
 
     const statsMarkup = [
       this.statMarkup("Year", `${this.state.year}`),
@@ -2972,6 +3017,15 @@ export class GameRenderer {
         </div>
         <h3>Relations</h3>
         <div class="chip-list">${alliedNames.slice(0, 6).map((name) => `<span class="chip">${name}</span>`).join("") || "<span class='chip'>No formal allies</span>"}${tradeNames.slice(0, 6).map((name) => `<span class="chip chip--trade">${name}</span>`).join("")}</div>
+        <h3>Branches</h3>
+        <ul class="tribe-list">${selectedBranches.length > 0 ? selectedBranches.map((branch) => `
+          <li>
+            <button class="tribe-row ${branch.strained ? "is-active" : ""}" data-branch-hall-id="${branch.hallId}">
+              <span>${branch.name} | M${branch.maturity} | ${branch.shortage}</span>
+              <span>Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad}</span>
+            </button>
+          </li>
+        `).join("") : "<li><span class='event-title'>No branch halls yet.</span></li>"}</ul>
         <h3>Unlocked Tech</h3>
         <div class="chip-list">${selectedTribe.techs.map((tech) => `<span class="chip">${tech}</span>`).join("")}</div>` : "<p>No tribe selected.</p>"}
       </section>
@@ -3046,7 +3100,16 @@ export class GameRenderer {
           <strong>Wagons</strong><span>${dominant.wagons}</span>
           <strong>Haul Jobs</strong><span>${dominant.haulJobs}</span>
           <strong>Horses</strong><span>${dominant.horses}</span>
-        </div>` : "<p>Waiting for sim data.</p>"}
+        </div>
+        <h3>Strained Branches</h3>
+        <ul class="event-list">${topStrainedBranches.length > 0 ? topStrainedBranches.map((branch) => `
+          <li>
+            <button class="event-row" data-branch-hall-id="${branch.hallId}">
+              <span class="event-title">${branch.name}</span>
+              <span class="event-desc">${branch.shortage} | Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad}</span>
+            </button>
+          </li>
+        `).join("") : "<li><span class='event-title'>No strained branches right now.</span></li>"}</ul>` : "<p>Waiting for sim data.</p>"}
       </section>`;
     const legendsPanel = `
       <section class="panel">

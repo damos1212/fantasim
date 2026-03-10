@@ -29,6 +29,7 @@ import {
   CaravanTaskType,
   BUILDING_DEFS,
   BiomeType,
+  BranchSnapshot,
   BuildingSnapshot,
   BuildingType,
   DiplomacyState,
@@ -96,6 +97,8 @@ type BuildingState = {
   hp: number;
   level: number;
   stock: number[];
+  branchAlertState?: "stable" | "strained";
+  branchMaturityNotified?: number;
 };
 
 type AnimalState = {
@@ -195,6 +198,13 @@ type EventState = {
   x: number;
   y: number;
   tribeId: number | null;
+};
+
+type BranchEventStatus = {
+  strained: boolean;
+  lastShortageTick: number;
+  lastRecoveryTick: number;
+  lastRescueTick: number;
 };
 
 type CreatureState = {
@@ -643,6 +653,7 @@ export class Simulation {
   readonly jobs: JobState[] = [];
   readonly dirtyTiles = new Set<number>();
   readonly activeWetTiles = new Set<number>();
+  readonly branchEventStatus = new Map<number, BranchEventStatus>();
   cachedBuildingsByTribe: BuildingState[][] = [];
   cachedAgentsByTribe: AgentState[][] = [];
   cachedBuildingCountsByTribe: Uint16Array[] = [];
@@ -1204,11 +1215,13 @@ export class Simulation {
     const halls = this.capitalHallsForTribe(tribe.id);
     const branchHallCount = Math.max(0, this.capitalHallsForTribe(tribe.id).length - 1);
     const matureBranches = halls.filter((hall) => hall.id !== tribe.capitalBuildingId && this.branchMaturityStage(tribe.id, hall) >= 2).length;
-    const strainedBranches = halls.filter((hall) => hall.id !== tribe.capitalBuildingId && (
-      this.hallStoredAmount(tribe.id, hall, ResourceType.Rations) < this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Rations) * 0.65
-      || this.hallStoredAmount(tribe.id, hall, ResourceType.Wood) < this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Wood) * 0.6
-      || this.hallStoredAmount(tribe.id, hall, ResourceType.Stone) < this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Stone) * 0.55
-    )).length;
+    const strainedBranches = halls.filter((hall) => hall.id !== tribe.capitalBuildingId && this.branchIsStrained(tribe.id, hall)).length;
+    const plannedBranchHalls = this.jobs.filter((job) =>
+      job.tribeId === tribe.id
+      && job.kind === "build"
+      && (job.payload as BuildPayload | undefined)?.buildingType === BuildingType.CapitalHall
+      && (job.payload as BuildPayload | undefined)?.upgradeBuildingId == null,
+    ).length;
     const miningBranches = halls.filter((hall) =>
       hall.id !== tribe.capitalBuildingId
       && this.hallProductiveSiteCount(tribe.id, hall) > 0
@@ -1294,13 +1307,14 @@ export class Simulation {
     const desiredScholars = tribe.age >= AgeType.Bronze && (this.hasBuilt(tribe.id, BuildingType.Workshop) || this.hasBuilt(tribe.id, BuildingType.Castle) || this.hasBuilt(tribe.id, BuildingType.MageTower) || this.hasBuilt(tribe.id, BuildingType.ArcaneSanctum) || this.hasBuilt(tribe.id, BuildingType.School))
       ? clamp(Math.floor(tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.School) ? 0.08 : 0.04)), 1, 5)
       : 0;
-    const desiredBuilders = clamp(Math.floor(tribeAgents.length * (primitive ? 0.14 : 0.12) + tribe.race.buildBias * 2 + branchHallCount * 1.2 + matureBranches * 0.8 + strainedBranches * 0.9), primitive ? 3 : 2, 14);
+    const desiredBuilders = clamp(Math.floor(tribeAgents.length * (primitive ? 0.14 : 0.12) + tribe.race.buildBias * 2 + branchHallCount * 1.2 + plannedBranchHalls * 1.2 + matureBranches * 0.8 + strainedBranches * 0.9), primitive ? 3 : 2, 14);
     const desiredHaulers = clamp(
       Math.floor(
         tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.Warehouse) ? 0.11 : 0.08)
         + this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length * 0.05
         + overflowSites * 0.75
         + branchHallCount * 1.4
+        + plannedBranchHalls * 1.2
         + matureBranches * 1.1
         + strainedBranches * 1.5
         + productiveRemoteHubs * 0.35,
@@ -3532,6 +3546,10 @@ export class Simulation {
     if (job.kind === "build") {
       const payload = job.payload as BuildPayload;
       const type = payload.buildingType;
+      const buildCenterX = job.x + Math.floor(payload.width / 2);
+      const buildCenterY = job.y + Math.floor(payload.height / 2);
+      const nearPlannedHall = type !== BuildingType.CapitalHall
+        && this.plannedNearbyBuildingCount(tribe.id, BuildingType.CapitalHall, buildCenterX, buildCenterY, 10) > 0;
       if (payload.upgradeBuildingId != null) {
         score += missingBootstrap ? -26 : 18 + (payload.upgradeLevel ?? 2) * 8;
       }
@@ -3542,6 +3560,10 @@ export class Simulation {
       if (type === BuildingType.Quarry) score += lowStone || !this.hasBuilt(tribe.id, BuildingType.Quarry) ? 82 : 5;
       if (type === BuildingType.House) score += this.computeHousing(tribe.id) < population + 2 ? 44 : 4;
       if (type === BuildingType.Warehouse) score += missingBootstrap ? -20 : 18;
+      if (type === BuildingType.CapitalHall) score += missingBootstrap ? 6 : 52;
+      if (nearPlannedHall && (type === BuildingType.Stockpile || type === BuildingType.House || type === BuildingType.Warehouse || type === BuildingType.Cistern)) {
+        score += 26;
+      }
       if (type === BuildingType.Shrine || type === BuildingType.Tavern || type === BuildingType.Watchtower) score += missingBootstrap ? -44 : 0;
       if (type === BuildingType.Barracks || type === BuildingType.Armory || type === BuildingType.Castle) score += missingBootstrap ? -56 : 0;
     }
@@ -4567,6 +4589,21 @@ export class Simulation {
     return total;
   }
 
+  private branchEventStatusFor(hallId: number): BranchEventStatus {
+    const existing = this.branchEventStatus.get(hallId);
+    if (existing) {
+      return existing;
+    }
+    const status: BranchEventStatus = {
+      strained: false,
+      lastShortageTick: -SIM_TICKS_PER_SECOND * 30,
+      lastRecoveryTick: -SIM_TICKS_PER_SECOND * 30,
+      lastRescueTick: -SIM_TICKS_PER_SECOND * 30,
+    };
+    this.branchEventStatus.set(hallId, status);
+    return status;
+  }
+
   private hallLocalResourceTarget(tribeId: number, hall: BuildingState, resourceType: ResourceType): number {
     const center = buildingCenter(hall);
     const nearbyHouses = this.nearbyBuildingCount(tribeId, BuildingType.House, center.x, center.y, 10)
@@ -4687,24 +4724,7 @@ export class Simulation {
     let strainedBranches = 0;
     for (const hall of halls) {
       if (hall.id === tribe.capitalBuildingId) continue;
-      const localFood =
-        this.hallStoredAmount(tribe.id, hall, ResourceType.Rations)
-        + this.hallStoredAmount(tribe.id, hall, ResourceType.Grain)
-        + this.hallStoredAmount(tribe.id, hall, ResourceType.Berries)
-        + this.hallStoredAmount(tribe.id, hall, ResourceType.Fish)
-        + this.hallStoredAmount(tribe.id, hall, ResourceType.Meat);
-      const localWood = this.hallStoredAmount(tribe.id, hall, ResourceType.Wood);
-      const localStone =
-        this.hallStoredAmount(tribe.id, hall, ResourceType.Stone)
-        + this.hallStoredAmount(tribe.id, hall, ResourceType.Clay);
-      const foodTarget = this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Rations);
-      const woodTarget = this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Wood);
-      const stoneTarget = this.hallLocalResourceTarget(tribe.id, hall, ResourceType.Stone);
-      const strained =
-        localFood < foodTarget * 0.55
-        || localWood < woodTarget * 0.5
-        || localStone < stoneTarget * 0.45;
-      if (strained) {
+      if (this.branchIsStrained(tribe.id, hall)) {
         strainedBranches += 1;
       }
     }
@@ -4728,6 +4748,136 @@ export class Simulation {
     }
 
     return { branches, strainedBranches, branchImports, branchExports };
+  }
+
+  private branchIsStrained(tribeId: number, hall: BuildingState): boolean {
+    const localFood =
+      this.hallStoredAmount(tribeId, hall, ResourceType.Rations)
+      + this.hallStoredAmount(tribeId, hall, ResourceType.Grain)
+      + this.hallStoredAmount(tribeId, hall, ResourceType.Berries)
+      + this.hallStoredAmount(tribeId, hall, ResourceType.Fish)
+      + this.hallStoredAmount(tribeId, hall, ResourceType.Meat);
+    const localWood = this.hallStoredAmount(tribeId, hall, ResourceType.Wood);
+    const localStone =
+      this.hallStoredAmount(tribeId, hall, ResourceType.Stone)
+      + this.hallStoredAmount(tribeId, hall, ResourceType.Clay);
+    const foodTarget = this.hallLocalResourceTarget(tribeId, hall, ResourceType.Rations);
+    const woodTarget = this.hallLocalResourceTarget(tribeId, hall, ResourceType.Wood);
+    const stoneTarget = this.hallLocalResourceTarget(tribeId, hall, ResourceType.Stone);
+    return (
+      localFood < foodTarget * 0.55
+      || localWood < woodTarget * 0.5
+      || localStone < stoneTarget * 0.45
+    );
+  }
+
+  private branchShortageLabel(tribeId: number, hall: BuildingState): string {
+    const foodNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Rations);
+    const woodNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Wood);
+    const stoneNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Stone);
+    const oreNeed = this.hallNeedPressure(tribeId, hall, ResourceType.Ore);
+    const best = [
+      { label: "Food", value: foodNeed },
+      { label: "Wood", value: woodNeed },
+      { label: "Stone", value: stoneNeed },
+      { label: "Ore", value: oreNeed },
+    ].sort((a, b) => b.value - a.value)[0]!;
+    return best.value > 0.16 ? best.label : "Stable";
+  }
+
+  private serializeBranches(): BranchSnapshot[] {
+    const branches: BranchSnapshot[] = [];
+    for (const tribe of this.tribes) {
+      for (const hall of this.capitalHallsForTribe(tribe.id)) {
+        if (hall.id === tribe.capitalBuildingId) continue;
+        const center = buildingCenter(hall);
+        const food =
+          this.hallStoredAmount(tribe.id, hall, ResourceType.Rations)
+          + this.hallStoredAmount(tribe.id, hall, ResourceType.Grain)
+          + this.hallStoredAmount(tribe.id, hall, ResourceType.Berries)
+          + this.hallStoredAmount(tribe.id, hall, ResourceType.Fish)
+          + this.hallStoredAmount(tribe.id, hall, ResourceType.Meat);
+        const wood = this.hallStoredAmount(tribe.id, hall, ResourceType.Wood);
+        const stone =
+          this.hallStoredAmount(tribe.id, hall, ResourceType.Stone)
+          + this.hallStoredAmount(tribe.id, hall, ResourceType.Clay);
+        const strained = this.branchIsStrained(tribe.id, hall);
+        branches.push({
+          hallId: hall.id,
+          tribeId: tribe.id,
+          name: `${tribe.name} Branch ${branches.filter((entry) => entry.tribeId === tribe.id).length + 1}`,
+          x: center.x,
+          y: center.y,
+          maturity: this.branchMaturityStage(tribe.id, hall),
+          strained,
+          shortage: this.branchShortageLabel(tribe.id, hall),
+          importLoad: this.hallTransferLoad(tribe.id, hall, ResourceType.Rations, "incoming")
+            + this.hallTransferLoad(tribe.id, hall, ResourceType.Wood, "incoming")
+            + this.hallTransferLoad(tribe.id, hall, ResourceType.Stone, "incoming"),
+          exportLoad: this.hallTransferLoad(tribe.id, hall, ResourceType.Rations, "outgoing")
+            + this.hallTransferLoad(tribe.id, hall, ResourceType.Wood, "outgoing")
+            + this.hallTransferLoad(tribe.id, hall, ResourceType.Stone, "outgoing"),
+          food,
+          wood,
+          stone,
+          houses: this.nearbyBuildingCount(tribe.id, BuildingType.House, center.x, center.y, 8),
+          productiveSites: this.hallProductiveSiteCount(tribe.id, hall),
+        });
+      }
+    }
+    return branches;
+  }
+
+  private updateBranchHistory(tribe: TribeState): void {
+    for (const hall of this.capitalHallsForTribe(tribe.id)) {
+      if (hall.id === tribe.capitalBuildingId) continue;
+      const status = this.branchEventStatusFor(hall.id);
+      const center = buildingCenter(hall);
+      const maturity = this.branchMaturityStage(tribe.id, hall);
+      const strained = this.branchIsStrained(tribe.id, hall);
+      const previousState = hall.branchAlertState ?? "stable";
+      const notifiedMaturity = hall.branchMaturityNotified ?? 1;
+
+      if (maturity > notifiedMaturity) {
+        this.pushEvent({
+          kind: "branch-growth",
+          title: `${tribe.name} strengthens a branch hall`,
+          description:
+            maturity >= 3
+              ? `${tribe.name}'s branch settlement has matured into a real secondary town with local support and storage.`
+              : `${tribe.name}'s branch hall is growing beyond an outpost and drawing in more workers and stores.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+        hall.branchMaturityNotified = maturity;
+      }
+
+      if (strained && previousState !== "strained") {
+        status.lastShortageTick = this.tickCount;
+        this.pushEvent({
+          kind: "branch-shortage",
+          title: `${tribe.name} struggles to supply a branch`,
+          description: `${tribe.name} is rushing food and materials toward a strained branch settlement.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+      } else if (!strained && previousState === "strained") {
+        status.lastRecoveryTick = this.tickCount;
+        this.pushEvent({
+          kind: "branch-recovery",
+          title: `${tribe.name} stabilizes a branch`,
+          description: `${tribe.name} has restored supplies to a strained branch hall and the local district is recovering.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+      }
+
+      hall.branchAlertState = strained ? "strained" : "stable";
+      status.strained = strained;
+    }
   }
 
   private branchCoreResourcesForHall(hall: BuildingState): ResourceType[] {
@@ -4853,6 +5003,21 @@ export class Simulation {
             targetJobId: null,
           },
         });
+        const branchStatus = this.branchEventStatusFor(branch.id);
+        if (
+          deficit >= Math.max(10, target * 0.28)
+          && this.tickCount - branchStatus.lastRescueTick >= SIM_TICKS_PER_SECOND * 18
+        ) {
+          branchStatus.lastRescueTick = this.tickCount;
+          this.pushEvent({
+            kind: "branch-rescue",
+            title: `${tribe.name} dispatches branch relief`,
+            description: `${tribe.name} is sending ${ResourceType[resourceType].toLowerCase()} from a richer hall to rescue a strained branch settlement.`,
+            x: destCenter.x,
+            y: destCenter.y,
+            tribeId: tribe.id,
+          });
+        }
         planned += 1;
         activeHauls += 1;
       }
@@ -5284,7 +5449,7 @@ export class Simulation {
           reassigned += 1;
         }
         this.pushEvent({
-          kind: "construction",
+          kind: "branch-founded",
           title: `${tribe.name} founds a branch hall`,
           description: `${tribe.name} has sent settlers and supplies to establish a new hall and satellite settlement.`,
           x,
@@ -5529,6 +5694,9 @@ export class Simulation {
 
   private removeBuilding(building: BuildingState): void {
     const tribe = this.tribes[building.tribeId];
+    if (building.type === BuildingType.CapitalHall) {
+      this.branchEventStatus.delete(building.id);
+    }
     if (building.type === BuildingType.Stable) {
       this.tribes[building.tribeId]!.stableCount = Math.max(0, this.tribes[building.tribeId]!.stableCount - 1);
     }
@@ -5562,9 +5730,9 @@ export class Simulation {
         });
       } else {
         this.pushEvent({
-          kind: "capital-loss",
-          title: `${tribe.name} loses a settlement hall`,
-          description: `${tribe.name} has lost a headquarters and the nearby settlement is collapsing.`,
+          kind: "branch-lost",
+          title: `${tribe.name} loses a branch hall`,
+          description: `${tribe.name} has lost a branch headquarters and the nearby settlement is collapsing.`,
           x: building.x,
           y: building.y,
           tribeId: tribe.id,
@@ -6086,6 +6254,7 @@ export class Simulation {
         this.ensureCaravansForTribe(tribe);
         this.ensureSiegeForTribe(tribe);
       }
+      this.updateBranchHistory(tribe);
     }
   }
 
@@ -6616,13 +6785,14 @@ export class Simulation {
     for (const haul of haulSpecs) {
       const sourceBuilding = this.findStockedSourceBuilding(tribe.id, site.x, site.y, haul.resourceType);
       const sourceSite = sourceBuilding ? buildingCenter(sourceBuilding) : this.findConstructionSource(tribe.id, type);
+      const haulPriority = type === BuildingType.CapitalHall ? Math.max(8, priority) : Math.max(4, priority - 1);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind: "haul",
         x: sourceSite.x,
         y: sourceSite.y,
-        priority: Math.max(4, priority - 1),
+        priority: haulPriority,
         claimedBy: null,
         payload: {
           sourceX: sourceSite.x,
@@ -6635,6 +6805,36 @@ export class Simulation {
           targetJobId: buildJob.id,
         },
       });
+    }
+    this.handlePlannedBuilding(tribe, buildJob, priority);
+  }
+
+  private handlePlannedBuilding(tribe: TribeState, buildJob: JobState, priority: number): void {
+    if (buildJob.kind !== "build") return;
+    const payload = buildJob.payload as BuildPayload;
+    if (payload.upgradeBuildingId != null || payload.buildingType !== BuildingType.CapitalHall) {
+      return;
+    }
+
+    const centerX = buildJob.x + Math.floor(payload.width / 2);
+    const centerY = buildJob.y + Math.floor(payload.height / 2);
+    this.pushEvent({
+      kind: "branch-plan",
+      title: `${tribe.name} prepares a branch hall`,
+      description: `${tribe.name} has marked out a new settlement center and is routing supplies toward it.`,
+      x: centerX,
+      y: centerY,
+      tribeId: tribe.id,
+    });
+
+    if (!this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, centerX, centerY, 8)) {
+      this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, Math.max(8, priority - 1), centerX, centerY, 7);
+    }
+    if (!this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, centerX, centerY, 8)) {
+      this.tryPlanBuildingAround(tribe, BuildingType.House, Math.max(7, priority - 2), centerX, centerY, 8);
+    }
+    if (!this.hasNearbyPlannedBuild(tribe.id, BuildingType.Cistern, centerX, centerY, 9)) {
+      this.tryPlanBuildingAround(tribe, BuildingType.Cistern, Math.max(7, priority - 2), centerX, centerY, 8);
     }
   }
 
@@ -6748,7 +6948,7 @@ export class Simulation {
         this.buildingCount(tribe.id, BuildingType.CapitalHall) < this.maxBuildingCountForTribe(tribe, BuildingType.CapitalHall) &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.CapitalHall, target.center.x, target.center.y, 10)
       ) {
-        this.tryPlanBuildingAround(tribe, BuildingType.CapitalHall, 9, target.center.x, target.center.y, 10);
+        this.tryPlanBuildingAround(tribe, BuildingType.CapitalHall, 11, target.center.x, target.center.y, 10);
       }
 
       if (
@@ -6806,7 +7006,7 @@ export class Simulation {
       this.buildingCount(tribe.id, BuildingType.CapitalHall) < this.maxBuildingCountForTribe(tribe, BuildingType.CapitalHall) &&
       !this.hasNearbyPlannedBuild(tribe.id, BuildingType.CapitalHall, hallTarget.center.x, hallTarget.center.y, 10)
     ) {
-      this.tryPlanBuildingAround(tribe, BuildingType.CapitalHall, 9, hallTarget.center.x, hallTarget.center.y, 10);
+      this.tryPlanBuildingAround(tribe, BuildingType.CapitalHall, 11, hallTarget.center.x, hallTarget.center.y, 10);
     }
 
     const activeHub = storageHubs.find((hub) => hub.top.resourceType !== ResourceType.None && hub.top.amount >= 40) ?? storageHubs[0];
@@ -6894,7 +7094,22 @@ export class Simulation {
     }
 
     const halls = this.capitalHallsForTribe(tribe.id);
-    if (halls.length <= 1) {
+    const plannedBranchHalls = this.jobs
+      .filter((job) =>
+        job.tribeId === tribe.id
+        && job.kind === "build"
+        && (job.payload as BuildPayload | undefined)?.buildingType === BuildingType.CapitalHall
+        && (job.payload as BuildPayload | undefined)?.upgradeBuildingId == null,
+      )
+      .map((job) => {
+        const payload = job.payload as BuildPayload;
+        return {
+          x: job.x + Math.floor(payload.width / 2),
+          y: job.y + Math.floor(payload.height / 2),
+        };
+      })
+      .filter((entry) => !halls.some((hall) => manhattan(buildingCenter(hall).x, buildingCenter(hall).y, entry.x, entry.y) <= 8));
+    if (halls.length <= 1 && plannedBranchHalls.length === 0) {
       return;
     }
 
@@ -7140,6 +7355,29 @@ export class Simulation {
         && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Orchard, center.x, center.y, 10)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.Orchard, 4, center.x, center.y, 10);
+      }
+    }
+
+    for (const plan of plannedBranchHalls) {
+      if (this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, plan.x, plan.y, 8) === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, plan.x, plan.y, 8)) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 8, plan.x, plan.y, 8);
+      }
+      if (this.nearbyBuildingCount(tribe.id, BuildingType.Cistern, plan.x, plan.y, 9) === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Cistern, plan.x, plan.y, 9)) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Cistern, 7, plan.x, plan.y, 8);
+      }
+      if (this.nearbyBuildingCount(tribe.id, BuildingType.House, plan.x, plan.y, 8) < 2
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, plan.x, plan.y, 8)) {
+        this.tryPlanBuildingAround(tribe, BuildingType.House, 7, plan.x, plan.y, 8);
+      }
+      if (
+        tribe.age >= AgeType.Stone
+        && population >= 22
+        && this.nearbyBuildingCount(tribe.id, BuildingType.Warehouse, plan.x, plan.y, 10) === 0
+        && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, plan.x, plan.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Warehouse, 7, plan.x, plan.y, 9);
       }
     }
   }
@@ -9152,13 +9390,14 @@ export class Simulation {
     for (const haul of haulSpecs) {
       const sourceBuilding = this.findStockedSourceBuilding(tribe.id, site.x, site.y, haul.resourceType);
       const sourceSite = sourceBuilding ? buildingCenter(sourceBuilding) : this.findConstructionSource(tribe.id, type);
+      const haulPriority = type === BuildingType.CapitalHall ? Math.max(8, priority) : Math.max(4, priority - 1);
       this.jobs.push({
         id: this.nextJobId++,
         tribeId: tribe.id,
         kind: "haul",
         x: sourceSite.x,
         y: sourceSite.y,
-        priority: Math.max(4, priority - 1),
+        priority: haulPriority,
         claimedBy: null,
         payload: {
           sourceX: sourceSite.x,
@@ -10048,6 +10287,8 @@ export class Simulation {
       hp: 60 + buildingColorStrength(type) * 40,
       level: 1,
       stock: resourceArray(),
+      branchAlertState: type === BuildingType.CapitalHall ? "stable" : undefined,
+      branchMaturityNotified: type === BuildingType.CapitalHall ? 1 : undefined,
     };
     this.buildings.push(building);
     this.invalidateSummaryCaches();
@@ -10655,6 +10896,7 @@ export class Simulation {
       stockResource: this.topStoredResource(building).resourceType,
       stockAmount: this.topStoredResource(building).amount,
     }));
+    const branches = this.serializeBranches();
 
     const plannedSites: PlannedSiteSnapshot[] = this.jobs
       .filter((job) => job.kind === "build")
@@ -10784,6 +11026,7 @@ export class Simulation {
       season: this.season,
       tileUpdates,
       tribes: this.serializeTribes(),
+      branches,
       agents,
       buildings,
       plannedSites,

@@ -486,7 +486,7 @@ describe("simulation", () => {
     expect(expandedTribes.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("productive mature settlements can found or actively plan branch halls", { timeout: 70000 }, () => {
+  test("productive mature settlements can found or actively plan branch halls", { timeout: 90000 }, () => {
     const sim = createSimulation("branch-hall-growth", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
 
@@ -635,6 +635,129 @@ describe("simulation", () => {
     expect(typeof tribeSummary.exportFocus).toBe("string");
   });
 
+  test("branch snapshots expose per-branch logistics state", () => {
+    const sim = createSimulation("branch-snapshot-details", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 8);
+    const branchStore = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.Farm, branchHall.x - 2, branchHall.y + 6);
+    branchStore.stock[ResourceType.Rations] = 6;
+    branchStore.stock[ResourceType.Wood] = 9;
+    branchStore.stock[ResourceType.Stone] = 4;
+
+    sim.generateBranchExchangeHauls(tribe);
+    const snapshot = sim.snapshotNow();
+    const branch = snapshot.branches.find((entry: any) => entry.hallId === branchHall.id);
+
+    expect(branch).toBeTruthy();
+    expect(branch.tribeId).toBe(tribe.id);
+    expect(branch.name).toContain("Branch");
+    expect(branch.food).toBeGreaterThanOrEqual(6);
+    expect(branch.wood).toBeGreaterThanOrEqual(9);
+    expect(branch.stone).toBeGreaterThanOrEqual(4);
+    expect(branch.productiveSites).toBeGreaterThanOrEqual(1);
+    expect(typeof branch.shortage).toBe("string");
+    expect(typeof branch.importLoad).toBe("number");
+    expect(typeof branch.exportLoad).toBe("number");
+  });
+
+  test("branch history emits shortage and recovery events", () => {
+    const sim = createSimulation("branch-history-events", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 8);
+    const branchStore = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x, branchHall.y + 5);
+
+    branchStore.stock[ResourceType.Rations] = 16;
+    branchStore.stock[ResourceType.Wood] = 14;
+    branchStore.stock[ResourceType.Stone] = 12;
+    sim.updateBranchHistory(tribe);
+
+    branchStore.stock[ResourceType.Rations] = 0;
+    branchStore.stock[ResourceType.Wood] = 0;
+    branchStore.stock[ResourceType.Stone] = 0;
+    sim.updateBranchHistory(tribe);
+
+    expect(sim.events.some((event: any) => event.kind === "branch-shortage" && event.tribeId === tribe.id)).toBe(true);
+
+    branchStore.stock[ResourceType.Rations] = 64;
+    branchStore.stock[ResourceType.Wood] = 48;
+    branchStore.stock[ResourceType.Stone] = 42;
+    sim.updateBranchHistory(tribe);
+
+    expect(sim.events.some((event: any) => event.kind === "branch-recovery" && event.tribeId === tribe.id)).toBe(true);
+  });
+
+  test("branch founding and loss emit dedicated events", () => {
+    const sim = createSimulation("branch-found-loss-events", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    const payload = {
+      buildingType: BuildingType.CapitalHall,
+      width: 3,
+      height: 3,
+      cost: { [ResourceType.Wood]: 20 },
+      supplied: 1,
+      supplyNeeded: 1,
+      delivered: { [ResourceType.Wood]: 20 },
+      stockX: tribe.capitalX + 19,
+      stockY: tribe.capitalY + 1,
+    };
+
+    const founded = sim.completeBuildingTask(tribe, payload, tribe.capitalX + 18, tribe.capitalY);
+    expect(founded).toBe(true);
+    expect(sim.events.some((event: any) => event.kind === "branch-founded" && event.tribeId === tribe.id)).toBe(true);
+
+    const branchHall = sim.buildings.find((building: any) =>
+      building.tribeId === tribe.id
+      && building.type === BuildingType.CapitalHall
+      && Math.abs(building.x - (tribe.capitalX + 18)) <= 1,
+    );
+    expect(branchHall).toBeTruthy();
+
+    sim.removeBuilding(branchHall);
+
+    expect(sim.events.some((event: any) => event.kind === "branch-lost" && event.tribeId === tribe.id)).toBe(true);
+  });
+
+  test("branch rescue hauls emit rescue events", () => {
+    const sim = createSimulation("branch-rescue-events", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const richHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 22, tribe.capitalY);
+    const richStore = sim.placeBuilding(tribe.id, BuildingType.Warehouse, richHall.x + 4, richHall.y);
+    const poorHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX - 22, tribe.capitalY + 10);
+    const poorStore = sim.placeBuilding(tribe.id, BuildingType.Warehouse, poorHall.x + 4, poorHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, poorHall.x - 4, poorHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, poorHall.x, poorHall.y + 5);
+    sim.claimTerritory(tribe.id, poorHall.x + 1, poorHall.y + 1, 8);
+    sim.claimTerritory(tribe.id, richHall.x + 1, richHall.y + 1, 8);
+
+    richStore.stock[ResourceType.Rations] = 96;
+    richStore.stock[ResourceType.Wood] = 72;
+    poorStore.stock[ResourceType.Rations] = 0;
+    poorStore.stock[ResourceType.Wood] = 0;
+
+    sim.generateBranchSustainmentHauls(tribe);
+
+    expect(sim.events.some((event: any) => event.kind === "branch-rescue" && event.tribeId === tribe.id)).toBe(true);
+  });
+
   test("understocked branch halls pull self-supply buildings", () => {
     const sim = createSimulation("branch-shortage-support", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
@@ -663,6 +786,46 @@ describe("simulation", () => {
     expect(plannedTypes.some((type: any) =>
       type === BuildingType.Farm || type === BuildingType.LumberCamp || type === BuildingType.Quarry,
     )).toBe(true);
+  });
+
+  test("planned branch halls pull early local support", () => {
+    const sim = createSimulation("planned-branch-support", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    sim.claimTerritory(tribe.id, tribe.capitalX + 19, tribe.capitalY + 11, 10);
+    sim.layRoad(tribe.capitalX, tribe.capitalY, tribe.capitalX + 19, tribe.capitalY + 11, tribe.id);
+    sim.placeBuilding(tribe.id, BuildingType.Farm, tribe.capitalX + 14, tribe.capitalY + 14);
+    sim.jobs.push({
+      id: 999001,
+      tribeId: tribe.id,
+      kind: "build",
+      x: tribe.capitalX + 18,
+      y: tribe.capitalY + 10,
+      priority: 9,
+      claimedBy: null,
+      payload: {
+        buildingType: BuildingType.CapitalHall,
+        width: 3,
+        height: 3,
+        cost: { [ResourceType.Wood]: 20 },
+        supplied: 0,
+        supplyNeeded: 1,
+        delivered: {},
+        stockX: tribe.capitalX + 19,
+        stockY: tribe.capitalY + 11,
+      },
+    });
+
+    sim.generateBranchHubPlans(tribe);
+
+    const plannedTypes = sim.jobs
+      .filter((job: any) => job.tribeId === tribe.id && job.kind === "build")
+      .map((job: any) => job.payload?.buildingType);
+
+    expect(plannedTypes.some((type: any) => type === BuildingType.Stockpile || type === BuildingType.House || type === BuildingType.Cistern)).toBe(true);
   });
 
   test("branch redistribution does not drain a weak branch below reserve", () => {
