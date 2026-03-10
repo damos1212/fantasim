@@ -1169,6 +1169,138 @@ export class GameRenderer {
     }
   }
 
+  private animalTexture(animal: AnimalSnapshot): Texture {
+    const key = `animal:${animal.type}`;
+    return this.textureForKey(key, TILE_SIZE, TILE_SIZE, (ctx) => {
+      const px = 0;
+      const py = 0;
+      const color = ANIMAL_COLORS[animal.type];
+      const bodyY = animal.type === AnimalType.Horse ? 9 : 10;
+      drawPixelRect(ctx, px + 3, py + 13, 10, 2, 0x000000, 0.16);
+      drawPixelRect(ctx, px + 4, py + bodyY, 8, 4, color, 0.95);
+      drawPixelRect(ctx, px + 6, py + 7, 4, 3, lighten(color, 16), 0.92);
+      drawPixelRect(ctx, px + 4, py + 13, 1, 2, darken(color, 26));
+      drawPixelRect(ctx, px + 10, py + 13, 1, 2, darken(color, 26));
+      if (animal.type === AnimalType.Wolf) {
+        drawPixelRect(ctx, px + 11, py + 8, 2, 2, 0xe5eef7);
+      } else if (animal.type === AnimalType.Goat) {
+        drawPixelRect(ctx, px + 5, py + 6, 1, 2, 0xc8b694);
+        drawPixelRect(ctx, px + 10, py + 6, 1, 2, 0xc8b694);
+      }
+    });
+  }
+
+  private vehicleTexture(kind: "boat" | "wagon" | "caravan" | "siege" | "creature" | "dungeon", tint: number, variant: string, cargoColor = 0, flagged = false): Texture {
+    const key = `${kind}:${variant}:${tint}:${cargoColor}:${flagged ? 1 : 0}`;
+    return this.textureForKey(key, TILE_SIZE, TILE_SIZE, (ctx) => {
+      if (kind === "boat") {
+        drawPixelRect(ctx, 2, 12, 12, 2, 0x000000, 0.14);
+        drawPixelRect(ctx, 3, 10, 10, 3, darken(tint, 50), 0.98);
+        drawPixelRect(ctx, 5, 8, 6, 2, lighten(tint, 18), 0.88);
+        drawPixelRect(ctx, 7, 4, 1, 6, 0xdfe9f0, 0.9);
+        drawPixelRect(ctx, 8, 5, 3, 3, tint, 0.84);
+        if (cargoColor) drawPixelRect(ctx, 5, 9, 2, 2, cargoColor, 0.95);
+        if (flagged) drawPixelRect(ctx, 11, 7, 2, 2, 0xffffff, 0.65);
+        return;
+      }
+      if (kind === "wagon") {
+        drawPixelRect(ctx, 2, 13, 12, 2, 0x000000, 0.14);
+        drawPixelRect(ctx, 4, 10, 8, 3, 0x7c5b39, 0.96);
+        drawPixelRect(ctx, 5, 7, 6, 3, 0xaa8756, 0.92);
+        drawPixelRect(ctx, 6, 5, 4, 2, tint, 0.82);
+        drawPixelRect(ctx, 3, 13, 2, 2, 0x403224, 0.9);
+        drawPixelRect(ctx, 11, 13, 2, 2, 0x403224, 0.9);
+        drawPixelRect(ctx, 2, 9, 2, 3, 0xc8b694, 0.85);
+        drawPixelRect(ctx, 12, 9, 2, 3, 0xc8b694, 0.85);
+        if (cargoColor) drawPixelRect(ctx, 6, 8, 4, 2, cargoColor, 0.95);
+        if (flagged) drawPixelRect(ctx, 12, 6, 2, 1, 0xf4f8fb, 0.7);
+        return;
+      }
+      if (kind === "caravan") {
+        drawPixelRect(ctx, 2, 13, 12, 2, 0x000000, 0.14);
+        drawPixelRect(ctx, 3, 10, 10, 3, 0x7a5735, 0.96);
+        drawPixelRect(ctx, 5, 7, 6, 3, 0xa78456, 0.92);
+        drawPixelRect(ctx, 6, 5, 4, 2, tint, 0.82);
+        drawPixelRect(ctx, 4, 13, 2, 2, 0x433425, 0.9);
+        drawPixelRect(ctx, 10, 13, 2, 2, 0x433425, 0.9);
+        if (cargoColor) drawPixelRect(ctx, 6, 8, 4, 2, cargoColor, 0.95);
+        if (flagged) drawPixelRect(ctx, 12, 6, 2, 1, 0xf4f8fb, 0.7);
+        return;
+      }
+      if (kind === "dungeon") {
+        drawPixelRect(ctx, 4, 7, 8, 6, 0x6f6256, 0.9);
+        drawPixelRect(ctx, 6, 4, 4, 3, 0x9d8a77, 0.92);
+        return;
+      }
+      if (kind === "creature") {
+        drawPixelRect(ctx, 1, 13, 14, 2, 0x000000, 0.2);
+        drawPixelRect(ctx, 2, 8, 12, 6, tint, 0.95);
+        drawPixelRect(ctx, 5, 3, 6, 5, lighten(tint, 18), 0.9);
+        drawPixelRect(ctx, 12, 4, 2, 2, 0xf7ead7, 0.9);
+        if (variant === String(LegendaryCreatureType.Dragon)) {
+          drawPixelRect(ctx, 1, 6, 3, 2, 0x7a2820, 0.9);
+          drawPixelRect(ctx, 12, 11, 3, 2, 0x7a2820, 0.9);
+        }
+        return;
+      }
+      drawPixelRect(ctx, 2, 13, 12, 2, 0x000000, 0.16);
+      if (variant === String(SiegeEngineType.Trebuchet)) {
+        drawPixelRect(ctx, 2, 10, 12, 3, 0x6b4d31, 0.95);
+        drawPixelRect(ctx, 6, 4, 1, 7, 0xbca07a, 0.9);
+        drawPixelRect(ctx, 6, 4, 6, 1, 0xc8b08a, 0.9);
+        drawPixelRect(ctx, 10, 2, 2, 2, 0x8b9097, 0.9);
+        drawPixelRect(ctx, 8, 6, 3, 3, tint, 0.8);
+      } else if (variant === String(SiegeEngineType.Ballista)) {
+        drawPixelRect(ctx, 2, 10, 12, 3, 0x725033, 0.95);
+        drawPixelRect(ctx, 7, 5, 1, 6, 0xd0b38b, 0.92);
+        drawPixelRect(ctx, 4, 5, 8, 1, 0xd0b38b, 0.92);
+        drawPixelRect(ctx, 12, 5, 2, 1, 0xcfd8df, 0.85);
+        drawPixelRect(ctx, 3, 7, 3, 2, tint, 0.8);
+      } else if (variant === String(SiegeEngineType.SiegeTower)) {
+        drawPixelRect(ctx, 3, 4, 10, 9, 0x6a4e34, 0.94);
+        drawPixelRect(ctx, 4, 5, 8, 2, tint, 0.75);
+        drawPixelRect(ctx, 4, 8, 8, 1, 0xc9aa81, 0.8);
+        drawPixelRect(ctx, 5, 13, 2, 2, 0x3f3023, 0.9);
+        drawPixelRect(ctx, 9, 13, 2, 2, 0x3f3023, 0.9);
+      } else if (variant === String(SiegeEngineType.Cannon)) {
+        drawPixelRect(ctx, 3, 10, 10, 3, 0x6a4a31, 0.95);
+        drawPixelRect(ctx, 6, 7, 6, 3, 0x767f88, 0.94);
+        drawPixelRect(ctx, 11, 8, 3, 2, 0xcfd7de, 0.92);
+        drawPixelRect(ctx, 4, 12, 2, 2, 0x3f3023, 0.9);
+        drawPixelRect(ctx, 10, 12, 2, 2, 0x3f3023, 0.9);
+        drawPixelRect(ctx, 3, 8, 2, 2, tint, 0.8);
+      } else if (variant === String(SiegeEngineType.Mortar)) {
+        drawPixelRect(ctx, 3, 10, 10, 3, 0x66503a, 0.95);
+        drawPixelRect(ctx, 7, 6, 4, 4, 0x707983, 0.95);
+        drawPixelRect(ctx, 9, 4, 2, 3, 0xcfd7de, 0.9);
+        drawPixelRect(ctx, 4, 12, 2, 2, 0x3f3023, 0.9);
+        drawPixelRect(ctx, 10, 12, 2, 2, 0x3f3023, 0.9);
+        drawPixelRect(ctx, 3, 8, 2, 2, tint, 0.8);
+      } else if (variant === String(SiegeEngineType.Tank)) {
+        drawPixelRect(ctx, 2, 10, 12, 3, 0x46505a, 0.96);
+        drawPixelRect(ctx, 4, 7, 8, 4, 0x65707b, 0.96);
+        drawPixelRect(ctx, 8, 5, 4, 2, 0x7f8a93, 0.94);
+        drawPixelRect(ctx, 11, 6, 4, 1, 0xdce3e8, 0.88);
+        drawPixelRect(ctx, 3, 13, 10, 1, 0x2b3035, 0.9);
+        drawPixelRect(ctx, 5, 8, 2, 1, tint, 0.8);
+      } else if (variant === String(SiegeEngineType.Zeppelin)) {
+        drawPixelRect(ctx, 2, 4, 12, 5, 0x98a6b4, 0.92);
+        drawPixelRect(ctx, 4, 5, 8, 3, lighten(tint, 16), 0.7);
+        drawPixelRect(ctx, 6, 9, 4, 2, 0x5e4d3b, 0.92);
+        drawPixelRect(ctx, 12, 5, 2, 2, tint, 0.84);
+        drawPixelRect(ctx, 1, 5, 2, 1, 0xd9e2e9, 0.82);
+        drawPixelRect(ctx, 13, 5, 2, 1, 0xd9e2e9, 0.82);
+      } else {
+        drawPixelRect(ctx, 2, 9, 12, 4, 0x7b5631, 0.95);
+        drawPixelRect(ctx, 10, 5, 4, 4, 0x90877f, 0.9);
+        drawPixelRect(ctx, 2, 7, 10, 2, tint, 0.75);
+      }
+      if (flagged) {
+        drawPixelRect(ctx, 12, 1, 2, 2, 0xf5d9b5, 0.8);
+      }
+    });
+  }
+
   private drawBranchMarkers(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number, tribeById: Map<number, TribeSummary>): void {
     for (const branch of this.state.branches) {
       if (branch.x < minTileX || branch.y < minTileY || branch.x > maxTileX || branch.y > maxTileY) {
@@ -1325,7 +1457,7 @@ export class GameRenderer {
     const redrawAtmosphere =
       this.atmosphereDirty ||
       this.lastAtmosphereViewportSignature !== atmosphereViewportSignature ||
-      now - this.lastAtmosphereRenderAt > 140;
+      now - this.lastAtmosphereRenderAt > 180;
 
     this.worldContainer.scale.set(this.zoom);
     this.worldContainer.position.set(-this.cameraX * this.zoom, -this.cameraY * this.zoom);
@@ -1397,7 +1529,9 @@ export class GameRenderer {
         const py = position.y * TILE_SIZE + TILE_SIZE * 0.3;
         this.upsertIconSprite(`animal:${animal.id}`, px, py, 4, 4, ANIMAL_COLORS[animal.type], 0.8);
       } else {
-        this.drawAnimal(animal, position.x, position.y);
+        const animPhase = this.presentationClock * 6 + animal.id * 0.37;
+        const bob = Math.sin(animPhase) * 0.35;
+        this.upsertTexturedSprite(`animal:${animal.id}:detail`, `animal:${animal.type}`, this.animalTexture(animal), position.x * TILE_SIZE, position.y * TILE_SIZE + bob, TILE_SIZE, TILE_SIZE, 0.96);
       }
     }
 
@@ -1412,7 +1546,9 @@ export class GameRenderer {
       if (!useDetailedEntities) {
         this.upsertIconSprite(`boat:${boat.id}`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
       } else {
-        this.drawBoat(boat, tribe?.color ?? 0xffffff, position.x, position.y);
+        const cargoColor = boat.cargo > 0 ? 0xf4d36c : 0;
+        const texture = this.vehicleTexture("boat", tribe?.color ?? 0xffffff, String(boat.task), cargoColor, boat.task === BoatTaskType.ReturnToDock);
+        this.upsertTexturedSprite(`boat:${boat.id}:detail`, `boat:${boat.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
       }
     }
 
@@ -1428,7 +1564,15 @@ export class GameRenderer {
         this.upsertIconSprite(`wagon:${wagon.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
         this.upsertIconSprite(`wagon:${wagon.id}:flag`, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
       } else {
-        this.drawWagon(wagon, tribe?.color ?? 0xffffff, position.x, position.y);
+        const cargoColor = wagon.cargoAmount > 0
+          ? wagon.cargoType === ResourceType.Wood ? 0x9b7145
+            : wagon.cargoType === ResourceType.Stone ? 0xb8c1c8
+            : wagon.cargoType === ResourceType.Ore ? 0xc08a56
+            : wagon.cargoType === ResourceType.Planks ? 0xb58a59
+            : 0xf0d780
+          : 0;
+        const texture = this.vehicleTexture("wagon", tribe?.color ?? 0xffffff, String(wagon.task), cargoColor, wagon.task === WagonTaskType.ToDrop);
+        this.upsertTexturedSprite(`wagon:${wagon.id}:detail`, `wagon:${wagon.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
       }
     }
 
@@ -1444,7 +1588,15 @@ export class GameRenderer {
         this.upsertIconSprite(`caravan:${caravan.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
         this.upsertIconSprite(`caravan:${caravan.id}:flag`, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
       } else {
-        this.drawCaravan(caravan, tribe?.color ?? 0xffffff, position.x, position.y);
+        const cargoColor = caravan.cargoAmount > 0
+          ? caravan.cargoType === ResourceType.Wood ? 0x9b7145
+            : caravan.cargoType === ResourceType.Stone ? 0xb8c1c8
+            : caravan.cargoType === ResourceType.Ore ? 0xc08a56
+            : caravan.cargoType === ResourceType.Fish ? 0x9ddff3
+            : 0xf0d780
+          : 0;
+        const texture = this.vehicleTexture("caravan", tribe?.color ?? 0xffffff, String(caravan.task), cargoColor, caravan.task === CaravanTaskType.ToPartner);
+        this.upsertTexturedSprite(`caravan:${caravan.id}:detail`, `caravan:${caravan.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
       }
     }
 
@@ -1458,7 +1610,14 @@ export class GameRenderer {
       if (!useDetailedEntities) {
         this.upsertIconSprite(`siege:${engine.id}`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
       } else {
-        this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff, position.x, position.y);
+        const texture = this.vehicleTexture("siege", tribe?.color ?? 0xffffff, String(engine.type), 0, engine.task === "bombard");
+        this.upsertTexturedSprite(`siege:${engine.id}:detail`, `siege:${engine.type}:${tribe?.color ?? 0xffffff}:${engine.task === "bombard" ? 1 : 0}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
+        if (this.zoom > 1.12) {
+          const px = position.x * TILE_SIZE;
+          const py = position.y * TILE_SIZE;
+          drawPixelRect(this.unitGraphics, px + 3, py + 1, Math.min(10, 10 * (engine.hp / 100)), 1, 0x78d67a, 0.85);
+          drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
+        }
       }
     }
 
@@ -1475,14 +1634,8 @@ export class GameRenderer {
       if (dungeon.x < minTileX || dungeon.y < minTileY || dungeon.x > maxTileX || dungeon.y > maxTileY) {
         continue;
       }
-      if (lodStep > 1) {
-        this.upsertIconSprite(`dungeon:${dungeon.id}`, dungeon.x * TILE_SIZE + 5, dungeon.y * TILE_SIZE + 5, 3, 3, 0xd7c78f, 0.8);
-      } else {
-        const px = dungeon.x * TILE_SIZE;
-        const py = dungeon.y * TILE_SIZE;
-        drawPixelRect(this.unitGraphics, px + 4, py + 7, 8, 6, 0x6f6256, 0.9);
-        drawPixelRect(this.unitGraphics, px + 6, py + 4, 4, 3, 0x9d8a77, 0.92);
-      }
+      const texture = this.vehicleTexture("dungeon", 0, String(dungeon.type));
+      this.upsertTexturedSprite(`dungeon:${dungeon.id}:detail`, `dungeon:${dungeon.type}`, texture, dungeon.x * TILE_SIZE, dungeon.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, this.zoom > 1.02 ? 0.95 : 0.82);
     }
 
     for (const creature of this.state.creatures) {
@@ -1491,10 +1644,15 @@ export class GameRenderer {
       if (creature.x < minTileX || creature.y < minTileY || creature.x > maxTileX || creature.y > maxTileY) {
         continue;
       }
-      if (lodStep > 1 || this.zoom <= 1.02) {
+      if (this.zoom <= 1.02) {
         this.upsertIconSprite(`creature:${creature.id}`, creature.x * TILE_SIZE + 3, creature.y * TILE_SIZE + 5, 10, 8, 0xd06b48, 0.85);
       } else {
-        this.drawLegendaryCreature(creature);
+        let body = 0xd05d3a;
+        if (creature.type === LegendaryCreatureType.SeaSerpent) body = 0x4bb0cf;
+        if (creature.type === LegendaryCreatureType.ForestSpirit) body = 0x67b56c;
+        if (creature.type === LegendaryCreatureType.AshTitan) body = 0x6f6363;
+        const texture = this.vehicleTexture("creature", body, String(creature.type));
+        this.upsertTexturedSprite(`creature:${creature.id}:detail`, `creature:${creature.type}`, texture, creature.x * TILE_SIZE, creature.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
       }
     }
 
@@ -1940,7 +2098,7 @@ export class GameRenderer {
         this.atmosphereGraphics.endFill();
       }
 
-      const particleCount = this.zoom > 1.45 ? 10 : 5;
+      const particleCount = this.zoom > 1.8 ? 8 : this.zoom > 1.35 ? 5 : 3;
       for (let i = 0; i < particleCount; i += 1) {
         const angle = (i / particleCount) * Math.PI * 2 + (this.presentationClock * 0.9);
         const radial = ((i * 37 + Math.floor(this.presentationClock * 60)) % 100) / 100;
