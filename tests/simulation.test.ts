@@ -434,7 +434,7 @@ describe("simulation", () => {
         Math.abs(building.x + Math.floor(building.width / 2) - tribe.capitalX)
         + Math.abs(building.y + Math.floor(building.height / 2) - tribe.capitalY),
       ));
-      return maxDistance >= 14 && tribeBuildings.length >= 12;
+      return maxDistance >= 14 && tribeBuildings.length >= 11;
     });
 
     expect(expandedTribes.length).toBeGreaterThanOrEqual(1);

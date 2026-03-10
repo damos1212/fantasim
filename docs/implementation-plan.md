@@ -690,6 +690,11 @@ The active plan from the current prototype state is:
    - stronger warehouse hubs
    - stronger extractor-to-district growth
    - clearer proto-industry, refined goods, and trade pressure
+   - district identity by hub type:
+     - agriculture hubs pull houses, storage, preserved food, and tavern growth
+     - mining hubs pull warehouses, workshops, smithies, and tool pressure
+     - harbor hubs pull storage, fisheries, houses, and ration flow
+     - industry hubs pull workshops, charcoal, bricks, and later metal production
 5. Readability and observer depth
    - better event/history tooling
    - stronger battle readability

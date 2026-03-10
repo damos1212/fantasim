@@ -3842,6 +3842,54 @@ export class Simulation {
     return { resourceType: bestType, amount: bestAmount };
   }
 
+  private districtSpecialization(
+    building: BuildingState,
+    top: { resourceType: ResourceType; amount: number },
+  ): "agriculture" | "industry" | "harbor" | "mining" | "civic" {
+    if (building.type === BuildingType.Dock || building.type === BuildingType.FishingHut || building.type === BuildingType.Fishery) {
+      return "harbor";
+    }
+    if (building.type === BuildingType.Mine || building.type === BuildingType.DeepMine || building.type === BuildingType.Quarry || building.type === BuildingType.TunnelEntrance) {
+      return "mining";
+    }
+    if (building.type === BuildingType.Workshop || building.type === BuildingType.Smithy || building.type === BuildingType.Foundry || building.type === BuildingType.Factory) {
+      return "industry";
+    }
+    if (building.type === BuildingType.Farm || building.type === BuildingType.Orchard || building.type === BuildingType.Stable) {
+      return "agriculture";
+    }
+    if (
+      top.resourceType === ResourceType.Grain
+      || top.resourceType === ResourceType.Berries
+      || top.resourceType === ResourceType.Fish
+      || top.resourceType === ResourceType.Meat
+      || top.resourceType === ResourceType.Rations
+      || top.resourceType === ResourceType.Livestock
+      || top.resourceType === ResourceType.Horses
+    ) {
+      return "agriculture";
+    }
+    if (
+      top.resourceType === ResourceType.Ore
+      || top.resourceType === ResourceType.Stone
+      || top.resourceType === ResourceType.Clay
+      || top.resourceType === ResourceType.Bricks
+    ) {
+      return "mining";
+    }
+    if (
+      top.resourceType === ResourceType.Planks
+      || top.resourceType === ResourceType.Charcoal
+      || top.resourceType === ResourceType.IronTools
+      || top.resourceType === ResourceType.BronzeTools
+      || top.resourceType === ResourceType.MetalWeapons
+      || top.resourceType === ResourceType.MetalArmor
+    ) {
+      return "industry";
+    }
+    return "civic";
+  }
+
   private localStockTarget(buildingType: BuildingType, resourceType: ResourceType): number {
     if (resourceType === ResourceType.Grain || resourceType === ResourceType.Berries || resourceType === ResourceType.Fish || resourceType === ResourceType.Meat) {
       if (buildingType === BuildingType.Farm || buildingType === BuildingType.Orchard || buildingType === BuildingType.FishingHut || buildingType === BuildingType.Fishery) {
@@ -5560,6 +5608,23 @@ export class Simulation {
     );
   }
 
+  private hasPlannedBuildOverlap(x: number, y: number, width: number, height: number): boolean {
+    return this.jobs.some((job) => {
+      if (job.kind !== "build") return false;
+      const payload = job.payload as BuildPayload;
+      if (payload.upgradeBuildingId != null) return false;
+      const ax1 = x;
+      const ay1 = y;
+      const ax2 = x + width - 1;
+      const ay2 = y + height - 1;
+      const bx1 = job.x;
+      const by1 = job.y;
+      const bx2 = job.x + payload.width - 1;
+      const by2 = job.y + payload.height - 1;
+      return ax1 <= bx2 && ax2 >= bx1 && ay1 <= by2 && ay2 >= by1;
+    });
+  }
+
   private findBuildingSiteAround(tribe: TribeState, def: { type: BuildingType; size: [number, number] }, originX: number, originY: number, radius: number): { x: number; y: number } | null {
     let best: { x: number; y: number; score: number } | null = null;
     for (let dy = -radius; dy <= radius; dy += 1) {
@@ -5603,6 +5668,7 @@ export class Simulation {
     if (!this.canAfford(tribe, def.cost)) return;
     const site = this.findBuildingSiteAround(tribe, def, originX, originY, radius);
     if (!site) return;
+    if (this.hasPlannedBuildOverlap(site.x, site.y, def.size[0], def.size[1])) return;
     const haulSpecs = this.constructionHaulPlan(def.cost);
 
     const buildJob: JobState = {
@@ -5693,6 +5759,7 @@ export class Simulation {
           building,
           center,
           top,
+          specialization: this.districtSpecialization(building, top),
           storageDistance: this.nearestStorageDistance(tribe.id, center.x, center.y),
           roadScore: this.nearbyRoadScore(center.x, center.y, 2),
         };
@@ -5710,6 +5777,7 @@ export class Simulation {
     const tribeBuildingTotal = this.buildingsForTribe(tribe.id).length;
 
     for (const target of targets) {
+      const specialization = target.specialization;
       const productiveRemote = target.top.amount >= 24 || target.storageDistance >= 16;
       const nearbyHall = this.capitalHallsForTribe(tribe.id).some((hall) =>
         manhattan(buildingCenter(hall).x, buildingCenter(hall).y, target.center.x, target.center.y) <= 12,
@@ -5721,8 +5789,8 @@ export class Simulation {
 
       if (
         tribe.age >= AgeType.Stone &&
-        population >= 24 &&
-        (target.storageDistance >= 18 || target.top.amount >= 48) &&
+        population >= (specialization === "mining" || specialization === "harbor" ? 22 : 24) &&
+        (target.storageDistance >= (specialization === "mining" ? 16 : 18) || target.top.amount >= (specialization === "agriculture" ? 44 : 48)) &&
         !storages.some((building) => building.type === BuildingType.Warehouse && manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 8) &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Warehouse, target.center.x, target.center.y, 8)
       ) {
@@ -5731,7 +5799,11 @@ export class Simulation {
 
       if (
         population >= 18 &&
-        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 7) < (target.top.amount >= 36 ? 3 : productiveRemote ? 2 : 1) &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 7) < (
+          specialization === "harbor" || specialization === "agriculture"
+            ? (target.top.amount >= 32 ? 3 : 2)
+            : target.top.amount >= 36 ? 3 : productiveRemote ? 2 : 1
+        ) &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 7)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.House, 6, target.center.x, target.center.y, 7);
@@ -5760,8 +5832,8 @@ export class Simulation {
 
       if (
         tribe.age >= AgeType.Stone &&
-        population >= 24 &&
-        target.top.amount >= 36 &&
+        population >= 22 &&
+        (specialization === "industry" || specialization === "mining" || target.top.amount >= 36) &&
         this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, target.center.x, target.center.y, 8) === 0 &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Workshop, target.center.x, target.center.y, 8)
       ) {
@@ -5770,8 +5842,8 @@ export class Simulation {
       if (
         tribe.age >= AgeType.Iron &&
         productiveRemote &&
-        (target.building.type === BuildingType.Mine || target.building.type === BuildingType.DeepMine)
-        && population >= 28 &&
+        specialization === "mining"
+        && population >= 26 &&
         this.nearbyBuildingCount(tribe.id, BuildingType.Smithy, target.center.x, target.center.y, 10) === 0 &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Smithy, target.center.x, target.center.y, 10)
       ) {
@@ -5780,8 +5852,8 @@ export class Simulation {
       if (
         tribe.age >= AgeType.Medieval &&
         productiveRemote &&
-        (target.building.type === BuildingType.Dock || target.building.type === BuildingType.FishingHut || target.building.type === BuildingType.Fishery)
-        && population >= 24 &&
+        specialization === "harbor"
+        && population >= 22 &&
         this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 9) < 2 &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 9)
       ) {
@@ -5791,9 +5863,8 @@ export class Simulation {
       if (
         tribe.age >= AgeType.Stone &&
         productiveRemote &&
-        target.building.type !== BuildingType.Farm &&
-        target.building.type !== BuildingType.Orchard &&
-        population >= 22 &&
+        specialization !== "agriculture" &&
+        population >= 20 &&
         this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8) < 2 &&
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 8)
       ) {
@@ -5821,11 +5892,19 @@ export class Simulation {
     if (!activeHub) {
       return;
     }
+    const activeSpecialization = this.districtSpecialization(activeHub.building, activeHub.top);
 
     if (
       tribe.age >= AgeType.Stone &&
       population >= 24 &&
-      (activeHub.top.resourceType === ResourceType.Wood || activeHub.top.resourceType === ResourceType.Stone || activeHub.top.resourceType === ResourceType.Clay || activeHub.top.resourceType === ResourceType.Grain) &&
+      (
+        activeSpecialization === "industry"
+        || activeSpecialization === "mining"
+        || activeHub.top.resourceType === ResourceType.Wood
+        || activeHub.top.resourceType === ResourceType.Stone
+        || activeHub.top.resourceType === ResourceType.Clay
+        || activeHub.top.resourceType === ResourceType.Grain
+      ) &&
       this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, activeHub.center.x, activeHub.center.y, 8) === 0 &&
       !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Workshop, activeHub.center.x, activeHub.center.y, 8)
     ) {
@@ -5846,7 +5925,7 @@ export class Simulation {
     if (
       population >= 28 &&
       activeHub.building.type !== BuildingType.CapitalHall &&
-      this.nearbyBuildingCount(tribe.id, BuildingType.House, activeHub.center.x, activeHub.center.y, 7) < 2 &&
+      this.nearbyBuildingCount(tribe.id, BuildingType.House, activeHub.center.x, activeHub.center.y, 7) < (activeSpecialization === "agriculture" || activeSpecialization === "harbor" ? 3 : 2) &&
       !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, activeHub.center.x, activeHub.center.y, 7)
     ) {
       this.tryPlanBuildingAround(tribe, BuildingType.House, 5, activeHub.center.x, activeHub.center.y, 7);
@@ -6638,21 +6717,28 @@ export class Simulation {
     const population = this.populationOf(tribe.id);
     const soldiers = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
     const buildBacklog = this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length;
+    const storageHubs = this.buildingsForTribe(tribe.id)
+      .filter((building) => building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile || building.type === BuildingType.CapitalHall)
+      .map((building) => ({ building, top: this.topStoredResource(building) }))
+      .filter((entry) => entry.top.resourceType !== ResourceType.None && entry.top.amount > 0)
+      .sort((a, b) => b.top.amount - a.top.amount);
+    const primaryHub = storageHubs[0] ?? null;
+    const primarySpecialization = primaryHub ? this.districtSpecialization(primaryHub.building, primaryHub.top) : "civic";
     const woodReserve = tribe.resources[ResourceType.Wood];
     const stoneReserve = tribe.resources[ResourceType.Stone];
     const clayReserve = tribe.resources[ResourceType.Clay];
     const oreReserve = tribe.resources[ResourceType.Ore];
-    const desiredRations = Math.max(24, Math.floor(population * (tribe.age >= AgeType.Bronze ? 4.2 : 3.5)));
-    const desiredStoneTools = Math.max(6, Math.floor(population * 0.45));
+    const desiredRations = Math.max(24, Math.floor(population * (tribe.age >= AgeType.Bronze ? 4.2 : 3.5))) + (primarySpecialization === "agriculture" || primarySpecialization === "harbor" ? 6 : 0);
+    const desiredStoneTools = Math.max(6, Math.floor(population * 0.45)) + (primarySpecialization === "mining" || primarySpecialization === "industry" ? 2 : 0);
     const desiredBronzeTools = Math.max(4, Math.floor(population * 0.3));
-    const desiredIronTools = Math.max(5, Math.floor(population * 0.35));
+    const desiredIronTools = Math.max(5, Math.floor(population * 0.35)) + (primarySpecialization === "mining" || primarySpecialization === "industry" ? 2 : 0);
     const desiredBasicWeapons = Math.max(4, Math.floor(soldiers * 1.2));
     const desiredBasicArmor = Math.max(3, Math.floor(soldiers));
     const desiredMetalWeapons = Math.max(4, Math.floor(soldiers * 1.15));
     const desiredMetalArmor = Math.max(3, Math.floor(soldiers * 0.95));
-    const desiredPlanks = Math.max(6, Math.floor(buildBacklog * 0.7) + this.buildingCount(tribe.id, BuildingType.Warehouse) * 3 + this.buildingCount(tribe.id, BuildingType.Stockpile) * 2);
-    const desiredCharcoal = Math.max(12, Math.floor(population * 0.45) + this.buildingCount(tribe.id, BuildingType.Smithy) * 4 + this.buildingCount(tribe.id, BuildingType.Foundry) * 6);
-    const desiredBricks = Math.max(10, Math.floor(buildBacklog * 0.5) + this.buildingCount(tribe.id, BuildingType.Warehouse) * 2 + this.buildingCount(tribe.id, BuildingType.House));
+    const desiredPlanks = Math.max(6, Math.floor(buildBacklog * 0.7) + this.buildingCount(tribe.id, BuildingType.Warehouse) * 3 + this.buildingCount(tribe.id, BuildingType.Stockpile) * 2) + (primarySpecialization === "industry" ? 3 : 0);
+    const desiredCharcoal = Math.max(12, Math.floor(population * 0.45) + this.buildingCount(tribe.id, BuildingType.Smithy) * 4 + this.buildingCount(tribe.id, BuildingType.Foundry) * 6) + (primarySpecialization === "mining" || primarySpecialization === "industry" ? 3 : 0);
+    const desiredBricks = Math.max(10, Math.floor(buildBacklog * 0.5) + this.buildingCount(tribe.id, BuildingType.Warehouse) * 2 + this.buildingCount(tribe.id, BuildingType.House)) + (primarySpecialization === "mining" ? 3 : 0);
     this.enqueueRationCrafting(tribe, desiredRations);
     if (tribe.resources[ResourceType.StoneTools] < desiredStoneTools && woodReserve > 12 && stoneReserve > 8) {
       this.enqueueCraftJob(tribe, ResourceType.StoneTools, 4, { [ResourceType.Wood]: 4, [ResourceType.Stone]: 4 }, BuildingType.Workshop, 5);
@@ -7860,6 +7946,7 @@ export class Simulation {
     if (!this.canAfford(tribe, def.cost)) return;
     const site = this.findBuildingSite(tribe, def);
     if (!site) return;
+    if (this.hasPlannedBuildOverlap(site.x, site.y, def.size[0], def.size[1])) return;
     const haulSpecs = this.constructionHaulPlan(def.cost);
 
     const buildJob: JobState = {
