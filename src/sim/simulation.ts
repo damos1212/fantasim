@@ -6598,6 +6598,7 @@ export class Simulation {
       this.generateBuildingPlans(tribe);
       if (!bootstrap) {
         this.generateDistrictPlans(tribe);
+        this.generateFrontierExpansionPlans(tribe);
         this.generateBranchHubPlans(tribe);
         this.generateUpgradePlans(tribe);
         this.generateExplorationPlans(tribe);
@@ -7463,6 +7464,88 @@ export class Simulation {
       !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Smithy, activeHub.center.x, activeHub.center.y, 10)
     ) {
       this.tryPlanBuildingAround(tribe, BuildingType.Smithy, 7, activeHub.center.x, activeHub.center.y, 10);
+    }
+  }
+
+  private generateFrontierExpansionPlans(tribe: TribeState): void {
+    const population = this.populationOf(tribe.id);
+    if (population < 18) {
+      return;
+    }
+
+    for (const hall of this.capitalHallsForTribe(tribe.id)) {
+      const center = buildingCenter(hall);
+      const localWood = this.nearbyResourceAmount(center.x, center.y, 12, (resourceType, feature) =>
+        resourceType === ResourceType.Wood || feature === FeatureType.Trees,
+      );
+      const localStone = this.nearbyResourceAmount(center.x, center.y, 12, (resourceType, feature) =>
+        resourceType === ResourceType.Stone || resourceType === ResourceType.Clay || feature === FeatureType.StoneOutcrop || feature === FeatureType.ClayDeposit,
+      );
+      const localOre = this.nearbyResourceAmount(center.x, center.y, 16, (resourceType, feature) =>
+        resourceType === ResourceType.Ore || feature === FeatureType.OreVein,
+      );
+      const localFoodNodes = this.nearbyResourceAmount(center.x, center.y, 10, (resourceType, feature) =>
+        resourceType === ResourceType.Grain
+        || resourceType === ResourceType.Berries
+        || resourceType === ResourceType.Fish
+        || feature === FeatureType.BerryPatch
+        || feature === FeatureType.FishShoal,
+      );
+      const localFoodStock =
+        this.hallStoredAmount(tribe.id, hall, ResourceType.Rations)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Grain)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Berries)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Fish)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Meat);
+      const localWoodStock = this.hallStoredAmount(tribe.id, hall, ResourceType.Wood);
+      const localStoneStock =
+        this.hallStoredAmount(tribe.id, hall, ResourceType.Stone)
+        + this.hallStoredAmount(tribe.id, hall, ResourceType.Clay);
+      const remoteRadius = population >= 42 ? 28 : population >= 28 ? 24 : 20;
+
+      if (
+        (localFoodNodes < 18 || localFoodStock < Math.max(18, population * 1.6)) &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Farm, center.x, center.y, 12) < 2 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Farm, center.x, center.y, remoteRadius)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Farm, 8, center.x, center.y, remoteRadius);
+        if (tribe.race.personality.ecology > 0.6 && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Orchard, center.x, center.y, remoteRadius)) {
+          this.tryPlanBuildingAround(tribe, BuildingType.Orchard, 6, center.x, center.y, remoteRadius);
+        }
+      }
+
+      if (
+        (localWood < 18 || localWoodStock < 18) &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.LumberCamp, center.x, center.y, 12) < 2 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.LumberCamp, center.x, center.y, remoteRadius)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.LumberCamp, 8, center.x, center.y, remoteRadius);
+      }
+
+      if (
+        (localStone < 16 || localStoneStock < 14) &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Quarry, center.x, center.y, 12) < 2 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Quarry, center.x, center.y, remoteRadius)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Quarry, 7, center.x, center.y, remoteRadius);
+      }
+
+      if (
+        tribe.age >= AgeType.Stone &&
+        (localOre < 14 || tribe.resources[ResourceType.Ore] < 16) &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Mine, center.x, center.y, 14) === 0 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Mine, center.x, center.y, remoteRadius)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Mine, 7, center.x, center.y, remoteRadius);
+      }
+
+      if (
+        (localFoodNodes < 20 || localWood < 20 || localStone < 18) &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, center.x, center.y, 10) === 0 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, center.x, center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, center.x, center.y, 10);
+      }
     }
   }
 
@@ -10120,6 +10203,28 @@ export class Simulation {
       best = Math.min(best, manhattan(building.x, building.y, x, y));
     }
     return best;
+  }
+
+  private nearbyResourceAmount(
+    x: number,
+    y: number,
+    radius: number,
+    predicate: (resourceType: ResourceType, feature: FeatureType) => boolean,
+  ): number {
+    let total = 0;
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny, this.world.width, this.world.height)) continue;
+        const index = indexOf(nx, ny, this.world.width);
+        const resourceType = this.world.resourceType[index] as ResourceType;
+        const feature = this.world.feature[index] as FeatureType;
+        if (!predicate(resourceType, feature)) continue;
+        total += this.world.resourceAmount[index] ?? 0;
+      }
+    }
+    return total;
   }
 
   private nearbyRoadScore(x: number, y: number, radius: number): number {

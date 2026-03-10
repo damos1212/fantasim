@@ -459,6 +459,43 @@ describe("simulation", () => {
     expect(carryingAgents).toBeGreaterThanOrEqual(6);
   });
 
+  test("depleted core resources push new frontier extractor plans", () => {
+    const sim = createSimulation("frontier-pressure", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+
+    for (let dy = -12; dy <= 12; dy += 1) {
+      for (let dx = -12; dx <= 12; dx += 1) {
+        const x = tribe.capitalX + dx;
+        const y = tribe.capitalY + dy;
+        if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
+        const index = y * sim.world.width + x;
+        const resourceType = sim.world.resourceType[index] as ResourceType;
+        if (resourceType === ResourceType.Wood || resourceType === ResourceType.Stone || resourceType === ResourceType.Clay) {
+          sim.world.resourceType[index] = ResourceType.None;
+          sim.world.resourceAmount[index] = 0;
+          sim.world.feature[index] = 0;
+        }
+      }
+    }
+    tribe.resources[ResourceType.Wood] = 4;
+    tribe.resources[ResourceType.Stone] = 4;
+    tribe.resources[ResourceType.Clay] = 1;
+
+    for (let i = 0; i < 40; i += 1) {
+      sim.tick();
+    }
+
+    const remoteExtractorPlan = sim.jobs.some((job: any) =>
+      job.kind === "build"
+      && (
+        job.payload?.buildingType === BuildingType.LumberCamp
+        || job.payload?.buildingType === BuildingType.Quarry
+      )
+      && Math.abs(job.x - tribe.capitalX) + Math.abs(job.y - tribe.capitalY) >= 14,
+    );
+    expect(remoteExtractorPlan).toBe(true);
+  });
+
   test("tribes make first contact before wider diplomacy activates", { timeout: 30000 }, () => {
     const sim = createSimulation("discovery-flow", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
