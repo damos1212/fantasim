@@ -1328,6 +1328,14 @@ export class GameRenderer {
     }
   }
 
+  private eventMatchesFilter(kind: string, filter: string): boolean {
+    if (filter === "all") return true;
+    if (filter === "branch") return kind.startsWith("branch-");
+    if (filter === "social") return ["succession", "coronation", "claimant", "sect-strife", "unrest"].includes(kind);
+    if (filter === "battle") return kind === "battle" || kind === "battle-magic";
+    return kind === filter;
+  }
+
   private markAllStaticChunksDirty(): void {
     for (const chunk of this.staticChunks.values()) {
       chunk.dirty = true;
@@ -3324,6 +3332,9 @@ export class GameRenderer {
     const totalBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.branches ?? 0), 0);
     const totalBranchImports = this.state.tribes.reduce((sum, tribe) => sum + (tribe.branchImports ?? 0), 0);
     const totalStrainedBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.strainedBranches ?? 0), 0);
+    const totalMatureBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.matureBranches ?? 0), 0);
+    const totalRecoveringBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.recoveringBranches ?? 0), 0);
+    const totalPlannedBranches = this.state.tribes.reduce((sum, tribe) => sum + (tribe.plannedBranches ?? 0), 0);
     const totalTradePacts = this.state.tribes.reduce((sum, tribe) => sum + (tribe.tradePartners ?? 0), 0) / 2;
     const activeWars = this.state.tribes.flatMap((tribe) => tribe.diplomacy).filter((entry) => entry >= 4).length;
     const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
@@ -3353,9 +3364,13 @@ export class GameRenderer {
       ? tribeById.get(selectedUnit.combatTargetTribeId)
       : null;
     const selectedBranches = selectedTribe ? this.state.branches.filter((branch) => branch.tribeId === selectedTribe.id) : [];
-    const topStrainedBranches = [...this.state.branches]
-      .filter((branch) => branch.strained)
-      .sort((a, b) => (b.importLoad + b.productiveSites * 2) - (a.importLoad + a.productiveSites * 2))
+    const topBranchAlerts = [...this.state.branches]
+      .filter((branch) => branch.strained || branch.defiant || branch.recovering)
+      .sort((a, b) => {
+        const aScore = (a.defiant ? 18 : 0) + (a.strained ? 12 : 0) + (a.recovering ? 5 : 0) + a.importLoad + a.productiveSites * 2;
+        const bScore = (b.defiant ? 18 : 0) + (b.strained ? 12 : 0) + (b.recovering ? 5 : 0) + b.importLoad + b.productiveSites * 2;
+        return bScore - aScore;
+      })
       .slice(0, 4);
 
     const statsMarkup = [
@@ -3375,7 +3390,9 @@ export class GameRenderer {
       this.statMarkup("Power", `${totalPowerPlants}`),
       this.statMarkup("Airfields", `${totalAirfields}`),
       this.statMarkup("Branches", `${totalBranches}`),
+      this.statMarkup("Branch Plans", `${totalPlannedBranches}`),
       this.statMarkup("Branch Imports", `${totalBranchImports}`),
+      this.statMarkup("Recovering", `${totalRecoveringBranches}`),
       this.statMarkup("Trade Pacts", `${Math.floor(totalTradePacts)}`),
       this.statMarkup("Water", `${totalWater}`),
       this.statMarkup("Flooded", `${totalFlooded}`),
@@ -3433,7 +3450,7 @@ export class GameRenderer {
       .join("");
 
     const dominant = sortedTribes[0];
-    const filteredEvents = this.state.events.filter((event) => this.eventKindFilter === "all" || event.kind === this.eventKindFilter);
+    const filteredEvents = this.state.events.filter((event) => this.eventMatchesFilter(event.kind, this.eventKindFilter));
     const eventsHtml = filteredEvents.slice(0, 20).map((event) => `
       <li>
         <button class="event-row" data-event-index="${this.state.events.indexOf(event)}">
@@ -3457,8 +3474,11 @@ export class GameRenderer {
           <strong>Power Plants</strong><span>${totalPowerPlants}</span>
           <strong>Airfields</strong><span>${totalAirfields}</span>
           <strong>Branches</strong><span>${totalBranches}</span>
+          <strong>Planned Branches</strong><span>${totalPlannedBranches}</span>
+          <strong>Mature Branches</strong><span>${totalMatureBranches}</span>
           <strong>Branch Imports</strong><span>${totalBranchImports}</span>
           <strong>Strained Branches</strong><span>${totalStrainedBranches}</span>
+          <strong>Recovering Branches</strong><span>${totalRecoveringBranches}</span>
           <strong>Trade Pacts</strong><span>${Math.floor(totalTradePacts)}</span>
           <strong>Flooded</strong><span>${totalFlooded}</span>
           <strong>Tunnels</strong><span>${totalUnderground}</span>
@@ -3542,7 +3562,10 @@ export class GameRenderer {
           <strong>Haul Jobs</strong><span>${selectedTribe.haulJobs}</span>
           <strong>Wagons</strong><span>${selectedTribe.wagons}</span>
           <strong>Branches</strong><span>${selectedTribe.branches}</span>
+          <strong>Planned Branches</strong><span>${selectedTribe.plannedBranches}</span>
           <strong>Strained Branches</strong><span>${selectedTribe.strainedBranches}</span>
+          <strong>Mature Branches</strong><span>${selectedTribe.matureBranches}</span>
+          <strong>Recovering Branches</strong><span>${selectedTribe.recoveringBranches}</span>
           <strong>Branch Imports</strong><span>${selectedTribe.branchImports}</span>
           <strong>Branch Exports</strong><span>${selectedTribe.branchExports}</span>
           <strong>Defiant Branches</strong><span>${selectedTribe.defiantBranches}</span>
@@ -3585,7 +3608,7 @@ export class GameRenderer {
         <ul class="tribe-list">${selectedBranches.length > 0 ? selectedBranches.map((branch) => `
           <li>
             <button class="tribe-row ${branch.strained || branch.defiant ? "is-active" : ""}" data-branch-hall-id="${branch.hallId}">
-              <span>${branch.name} | M${branch.maturity} | ${branch.shortage}</span>
+              <span>${branch.name} | M${branch.maturity} | ${branch.shortage}${branch.recovering ? " | Recovering" : ""}</span>
               <span>Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad} | Sep ${branch.separatism}${branch.defiant ? " | Defiant" : ""}</span>
             </button>
           </li>
@@ -3625,7 +3648,7 @@ export class GameRenderer {
       <section class="panel">
         <h2>Recent Events</h2>
         <div class="chip-list">
-          ${["all", "construction", "battle", "weather", "tribute", "creature", "delve"].map((kind) => `<button class="chip ${this.eventKindFilter === kind ? "chip--active" : ""}" data-event-filter="${kind}">${kind}</button>`).join("")}
+          ${["all", "construction", "branch", "battle", "social", "weather", "tribute", "creature", "delve"].map((kind) => `<button class="chip ${this.eventKindFilter === kind ? "chip--active" : ""}" data-event-filter="${kind}">${kind}</button>`).join("")}
         </div>
         <ul class="event-list">${eventsHtml || "<li><span class='event-title'>No major events yet.</span></li>"}</ul>
       </section>
@@ -3650,7 +3673,10 @@ export class GameRenderer {
           <strong>Power Plants</strong><span>${dominant.powerPlants}</span>
           <strong>Airfields</strong><span>${dominant.airfields}</span>
           <strong>Branches</strong><span>${dominant.branches}</span>
+          <strong>Planned Branches</strong><span>${dominant.plannedBranches}</span>
+          <strong>Mature Branches</strong><span>${dominant.matureBranches}</span>
           <strong>Strained Branches</strong><span>${dominant.strainedBranches}</span>
+          <strong>Recovering Branches</strong><span>${dominant.recoveringBranches}</span>
           <strong>Branch Imports</strong><span>${dominant.branchImports}</span>
           <strong>Trade Pacts</strong><span>${dominant.tradePartners}</span>
           <strong>Shortage</strong><span>${dominant.shortage}</span>
@@ -3665,15 +3691,15 @@ export class GameRenderer {
           <strong>Haul Jobs</strong><span>${dominant.haulJobs}</span>
           <strong>Horses</strong><span>${dominant.horses}</span>
         </div>
-        <h3>Strained Branches</h3>
-        <ul class="event-list">${topStrainedBranches.length > 0 ? topStrainedBranches.map((branch) => `
+        <h3>Branch Alerts</h3>
+        <ul class="event-list">${topBranchAlerts.length > 0 ? topBranchAlerts.map((branch) => `
           <li>
             <button class="event-row" data-branch-hall-id="${branch.hallId}">
               <span class="event-title">${branch.name}</span>
-              <span class="event-desc">${branch.shortage} | Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad}</span>
+              <span class="event-desc">${branch.shortage}${branch.recovering ? " | Recovering" : ""}${branch.defiant ? " | Defiant" : ""} | Food ${branch.food} | Wood ${branch.wood} | Stone ${branch.stone} | In ${branch.importLoad} | Out ${branch.exportLoad}</span>
             </button>
           </li>
-        `).join("") : "<li><span class='event-title'>No strained branches right now.</span></li>"}</ul>` : "<p>Waiting for sim data.</p>"}
+        `).join("") : "<li><span class='event-title'>No branch alerts right now.</span></li>"}</ul>` : "<p>Waiting for sim data.</p>"}
       </section>`;
     const legendsPanel = `
       <section class="panel">

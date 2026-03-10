@@ -940,6 +940,12 @@ Current concrete gaps after the latest execution slices:
 
 The next multi-hour implementation run should stay tightly ordered so the simulation becomes more physical and legible instead of only wider.
 
+Recent progress in this work program:
+- branch halls now react more strongly to local scarcity and survival pressure
+- productive remote districts keep pulling warehouses, workshops, cisterns, and housing longer into the midgame
+- hall-aware redistribution and wagon scoring favor strained branch resupply more reliably
+- tribe and branch snapshots now expose mature, recovering, and planned branch state more clearly for tuning and observation
+
 ### 25.1 Workstream A: Branch and District Self-Sufficiency
 
 Goal:

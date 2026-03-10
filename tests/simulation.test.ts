@@ -847,8 +847,11 @@ describe("simulation", () => {
 
     expect(tribeSummary).toBeTruthy();
     expect(tribeSummary.branches).toBeGreaterThanOrEqual(1);
+    expect(typeof tribeSummary.plannedBranches).toBe("number");
     expect(tribeSummary.branchImports).toBeGreaterThan(0);
     expect(tribeSummary.strainedBranches).toBeGreaterThanOrEqual(1);
+    expect(typeof tribeSummary.matureBranches).toBe("number");
+    expect(typeof tribeSummary.recoveringBranches).toBe("number");
     expect(typeof tribeSummary.branchExports).toBe("number");
     expect(typeof tribeSummary.haulJobs).toBe("number");
     expect(typeof tribeSummary.shortage).toBe("string");
@@ -882,8 +885,42 @@ describe("simulation", () => {
     expect(branch.stone).toBeGreaterThanOrEqual(4);
     expect(branch.productiveSites).toBeGreaterThanOrEqual(1);
     expect(typeof branch.shortage).toBe("string");
+    expect(typeof branch.recovering).toBe("boolean");
     expect(typeof branch.importLoad).toBe("number");
     expect(typeof branch.exportLoad).toBe("number");
+  });
+
+  test("branch snapshots mark recently recovered branches", () => {
+    const sim = createSimulation("branch-recovering-flag", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);
+
+    expect(tribe).toBeTruthy();
+
+    tribe.age = AgeType.Stone;
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY + 8);
+    const branchStore = sim.placeBuilding(tribe.id, BuildingType.Stockpile, branchHall.x + 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x - 4, branchHall.y);
+    sim.placeBuilding(tribe.id, BuildingType.House, branchHall.x, branchHall.y + 5);
+
+    branchStore.stock[ResourceType.Rations] = 0;
+    branchStore.stock[ResourceType.Wood] = 0;
+    branchStore.stock[ResourceType.Stone] = 0;
+    sim.updateBranchHistory(tribe);
+
+    sim.tickCount += 1;
+    branchStore.stock[ResourceType.Rations] = 180;
+    branchStore.stock[ResourceType.Wood] = 120;
+    branchStore.stock[ResourceType.Stone] = 96;
+    sim.updateBranchHistory(tribe);
+
+    const snapshot = sim.snapshotNow();
+    const branch = snapshot.branches.find((entry: any) => entry.hallId === branchHall.id);
+    const tribeSummary = snapshot.tribes.find((entry: any) => entry.id === tribe.id);
+
+    expect(branch).toBeTruthy();
+    expect(branch.recovering).toBe(true);
+    expect(tribeSummary).toBeTruthy();
+    expect(tribeSummary.recoveringBranches).toBeGreaterThanOrEqual(1);
   });
 
   test("branch history emits shortage and recovery events", () => {

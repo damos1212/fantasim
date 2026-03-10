@@ -5038,18 +5038,52 @@ export class Simulation {
     return total;
   }
 
-  private branchLogisticsStats(tribe: TribeState): { branches: number; strainedBranches: number; branchImports: number; branchExports: number } {
+  private branchLogisticsStats(tribe: TribeState): {
+    branches: number;
+    strainedBranches: number;
+    matureBranches: number;
+    recoveringBranches: number;
+    plannedBranches: number;
+    branchImports: number;
+    branchExports: number;
+  } {
     const halls = this.capitalHallsForTribe(tribe.id);
     const branches = Math.max(0, halls.length - 1);
+    const plannedBranches = this.jobs.reduce((count, job) => {
+      if (job.tribeId !== tribe.id || job.kind !== "build") return count;
+      const payload = job.payload as BuildPayload | undefined;
+      return count + ((payload?.buildingType as BuildingType | undefined) === BuildingType.CapitalHall ? 1 : 0);
+    }, 0);
     if (branches === 0) {
-      return { branches: 0, strainedBranches: 0, branchImports: 0, branchExports: 0 };
+      return {
+        branches: 0,
+        strainedBranches: 0,
+        matureBranches: 0,
+        recoveringBranches: 0,
+        plannedBranches,
+        branchImports: 0,
+        branchExports: 0,
+      };
     }
 
     let strainedBranches = 0;
+    let matureBranches = 0;
+    let recoveringBranches = 0;
     for (const hall of halls) {
       if (hall.id === tribe.capitalBuildingId) continue;
+      const maturity = this.branchMaturityStage(tribe.id, hall);
+      if (maturity >= 2) {
+        matureBranches += 1;
+      }
       if (this.branchIsStrained(tribe.id, hall)) {
         strainedBranches += 1;
+      }
+      const status = this.branchEventStatusFor(hall.id);
+      const recovering =
+        status.lastRecoveryTick > status.lastShortageTick
+        && this.tickCount - status.lastRecoveryTick < SIM_TICKS_PER_SECOND * 40;
+      if (recovering) {
+        recoveringBranches += 1;
       }
     }
 
@@ -5071,7 +5105,15 @@ export class Simulation {
       }
     }
 
-    return { branches, strainedBranches, branchImports, branchExports };
+    return {
+      branches,
+      strainedBranches,
+      matureBranches,
+      recoveringBranches,
+      plannedBranches,
+      branchImports,
+      branchExports,
+    };
   }
 
   private branchIsStrained(tribeId: number, hall: BuildingState): boolean {
@@ -5131,6 +5173,9 @@ export class Simulation {
           + this.hallStoredAmount(tribe.id, hall, ResourceType.Clay);
         const strained = this.branchIsStrained(tribe.id, hall);
         const status = this.branchEventStatusFor(hall.id);
+        const recovering =
+          status.lastRecoveryTick > status.lastShortageTick
+          && this.tickCount - status.lastRecoveryTick < SIM_TICKS_PER_SECOND * 40;
         branches.push({
           hallId: hall.id,
           tribeId: tribe.id,
@@ -5139,6 +5184,7 @@ export class Simulation {
           y: center.y,
           maturity: this.branchMaturityStage(tribe.id, hall),
           strained,
+          recovering,
           shortage: this.branchShortageLabel(tribe.id, hall),
           importLoad: this.hallTransferLoad(tribe.id, hall, ResourceType.Rations, "incoming")
             + this.hallTransferLoad(tribe.id, hall, ResourceType.Wood, "incoming")
@@ -11795,6 +11841,9 @@ export class Simulation {
         airfields: this.buildingCount(tribe.id, BuildingType.Airfield),
         branches: branchStats.branches,
         strainedBranches: branchStats.strainedBranches,
+        matureBranches: branchStats.matureBranches,
+        recoveringBranches: branchStats.recoveringBranches,
+        plannedBranches: branchStats.plannedBranches,
         branchImports: branchStats.branchImports,
         branchExports: branchStats.branchExports,
         defiantBranches,

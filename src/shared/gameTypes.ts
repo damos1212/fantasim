@@ -350,6 +350,9 @@ export type TribeSummary = {
   powerPlants: number;
   airfields: number;
   strainedBranches: number;
+  matureBranches: number;
+  recoveringBranches: number;
+  plannedBranches: number;
   branchImports: number;
   branchExports: number;
   defiantBranches: number;
@@ -464,6 +467,7 @@ export type BranchSnapshot = {
   y: number;
   maturity: 1 | 2 | 3;
   strained: boolean;
+  recovering: boolean;
   shortage: string;
   importLoad: number;
   exportLoad: number;

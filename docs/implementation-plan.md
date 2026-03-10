@@ -1554,3 +1554,5 @@ Latest landed progress in this block:
 - strained or immature branches now pull local survival extractors earlier instead of waiting only on central redistribution
 - productive remote districts now keep pulling follow-up utility such as warehouses, workshops, cisterns, and housing more reliably
 - redistribution destination scoring now favors strained branch halls more strongly over low-value same-hall moves
+- tribe and branch snapshots now expose mature/recovering/planned branch state more clearly
+- branch history is easier to read in the UI with dedicated branch/social event filters and better branch alert surfacing
