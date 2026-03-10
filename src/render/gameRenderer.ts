@@ -1131,8 +1131,6 @@ export class GameRenderer {
       }
     }
 
-    let visibleLabels = 0;
-    const maxVisibleLabels = this.zoom > 1.45 ? 56 : this.zoom > 1.24 ? 32 : 14;
     for (const agent of this.state.agents) {
       if (this.viewMode === "underground" && !agent.underground) {
         continue;
@@ -1151,16 +1149,19 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(agent.tribeId);
-      if (!useDetailedEntities) {
+      const detailedAgent = useDetailedEntities && (this.selectedUnitId === agent.id || agent.hero || this.zoom > 1.72);
+      if (!detailedAgent) {
         this.upsertIconSprite(`agent:${agent.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
         if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
           this.upsertIconSprite(`agent:${agent.id}:accent`, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
         }
+        if (agent.carrying !== ResourceType.None && agent.carryingAmount > 0) {
+          this.upsertIconSprite(`agent:${agent.id}:carry`, position.x * TILE_SIZE + 9, position.y * TILE_SIZE + 2, 3, 3, resourceVisualColor(agent.carrying), 0.86);
+        }
       } else {
         this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.12);
-        if (agent.hero || this.selectedUnitId === agent.id || (this.zoom > 1.18 && visibleLabels < maxVisibleLabels)) {
+        if (agent.hero || this.selectedUnitId === agent.id) {
           this.drawAgentLabel(agent, position.x, position.y);
-          visibleLabels += 1;
         }
       }
     }
