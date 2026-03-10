@@ -2930,6 +2930,12 @@ export class Simulation {
         return maintenanceTask;
       }
     }
+    if (agent.role === AgentRole.Hauler || agent.role === AgentRole.Worker || agent.role === AgentRole.Crafter || agent.role === AgentRole.Builder) {
+      const redistributionTask = this.findOpportunisticRedistributionTask(agent, tribe);
+      if (redistributionTask) {
+        return redistributionTask;
+      }
+    }
     const scanRadius =
       agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Miner || agent.role === AgentRole.Rider ? 18
       : agent.role === AgentRole.Fisher || agent.role === AgentRole.Soldier ? 16
@@ -3051,6 +3057,70 @@ export class Simulation {
       resourceType: best.resourceType,
       amount: 0,
     };
+  }
+
+  private findOpportunisticRedistributionTask(agent: AgentState, tribe: TribeState): AgentTask | null {
+    const candidates = this.buildingsForTribe(tribe.id)
+      .map((building) => {
+        const top = this.topStoredResource(building);
+        return { building, top };
+      })
+      .filter(({ top }) => top.resourceType !== ResourceType.None && top.amount > 0)
+      .sort((a, b) => {
+        const centerA = buildingCenter(a.building);
+        const centerB = buildingCenter(b.building);
+        const spareA = a.top.amount - this.localStockTarget(a.building.type, a.top.resourceType);
+        const spareB = b.top.amount - this.localStockTarget(b.building.type, b.top.resourceType);
+        return (
+          spareB * 0.9 - manhattan(agent.x, agent.y, centerB.x, centerB.y) * 0.8
+          - (spareA * 0.9 - manhattan(agent.x, agent.y, centerA.x, centerA.y) * 0.8)
+        );
+      });
+
+    for (const candidate of candidates) {
+      const { building, top } = candidate;
+      const spare = top.amount - this.localStockTarget(building.type, top.resourceType);
+      if (spare < 18) {
+        continue;
+      }
+      const dest = this.findRedistributionDestinationBuilding(tribe.id, building, top.resourceType);
+      if (!dest) {
+        continue;
+      }
+      const destSpare = (dest.stock[top.resourceType] ?? 0) - this.localStockTarget(dest.type, top.resourceType);
+      if (destSpare >= -6) {
+        continue;
+      }
+      const source = buildingCenter(building);
+      const target = buildingCenter(dest);
+      const path = findPath(this.world, agent.x, agent.y, source.x, source.y);
+      if (agent.x !== source.x || agent.y !== source.y) {
+        const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
+        if (unreachable) {
+          continue;
+        }
+      }
+      agent.path = path;
+      agent.pathIndex = 0;
+      return {
+        kind: "haul",
+        targetX: source.x,
+        targetY: source.y,
+        stage: "toSource",
+        payload: {
+          sourceX: source.x,
+          sourceY: source.y,
+          sourceBuildingId: building.id,
+          dropX: target.x,
+          dropY: target.y,
+          destBuildingId: dest.id,
+          resourceType: top.resourceType,
+          amount: Math.min(10, Math.max(4, Math.floor(spare * 0.35))),
+          targetJobId: null,
+        },
+      };
+    }
+    return null;
   }
 
   private createDirectEarthworkTask(agent: AgentState, x: number, y: number, kind: EarthworkKind, workLeft = 7): AgentTask | null {
