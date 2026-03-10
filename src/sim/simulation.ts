@@ -880,16 +880,16 @@ export class Simulation {
       };
       tribe.discovered[tribeId] = true;
 
-      tribe.resources[ResourceType.Wood] = 18;
-      tribe.resources[ResourceType.Stone] = 12;
-      tribe.resources[ResourceType.Grain] = 4;
-      tribe.resources[ResourceType.Clay] = 4;
-      tribe.resources[ResourceType.Rations] = 12;
-      tribe.resources[ResourceType.Berries] = 4;
-      tribe.resources[ResourceType.Meat] = 2;
-      tribe.resources[ResourceType.StoneTools] = 5;
-      tribe.resources[ResourceType.BasicWeapons] = 3;
-      tribe.resources[ResourceType.BasicArmor] = 2;
+      tribe.resources[ResourceType.Wood] = 8;
+      tribe.resources[ResourceType.Stone] = 6;
+      tribe.resources[ResourceType.Grain] = 2;
+      tribe.resources[ResourceType.Clay] = 2;
+      tribe.resources[ResourceType.Rations] = 6;
+      tribe.resources[ResourceType.Berries] = 2;
+      tribe.resources[ResourceType.Meat] = 1;
+      tribe.resources[ResourceType.StoneTools] = 4;
+      tribe.resources[ResourceType.BasicWeapons] = 2;
+      tribe.resources[ResourceType.BasicArmor] = 1;
 
       this.tribes.push(tribe);
 
@@ -972,7 +972,8 @@ export class Simulation {
     const capitalCenter = buildingCenter(capital);
     for (const building of buildings) {
       const center = buildingCenter(building);
-      this.layRoad(capitalCenter.x, capitalCenter.y, center.x, center.y, tribeId);
+      const entry = this.roadConnectionPoint(building, capitalCenter.x, capitalCenter.y);
+      this.layRoad(capitalCenter.x, capitalCenter.y, entry.x, entry.y, tribeId);
       if (building.type === BuildingType.Stockpile || building.type === BuildingType.House) {
         const tribe = this.tribes[tribeId];
         if (tribe) {
@@ -1010,7 +1011,7 @@ export class Simulation {
         (terrain) => terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Snow || terrain === TerrainType.Desert,
         FeatureType.Trees,
         ResourceType.Wood,
-        72,
+        36,
       );
     }
     if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.StoneOutcrop, 10) > 6) {
@@ -1018,7 +1019,7 @@ export class Simulation {
         (terrain) => terrain === TerrainType.Rocky || terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Snow || terrain === TerrainType.Desert,
         FeatureType.StoneOutcrop,
         ResourceType.Stone,
-        66,
+        34,
       );
     }
     if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.ClayDeposit, 10) > 6) {
@@ -1026,7 +1027,7 @@ export class Simulation {
         (terrain) => terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Marsh || terrain === TerrainType.Beach || terrain === TerrainType.Snow,
         FeatureType.ClayDeposit,
         ResourceType.Clay,
-        54,
+        24,
       );
     }
     if (distanceToNearestFeature(this.world, tribe.capitalX, tribe.capitalY, (feature) => feature === FeatureType.BerryPatch, 8) > 5) {
@@ -1034,7 +1035,7 @@ export class Simulation {
         (terrain) => terrain === TerrainType.Grass || terrain === TerrainType.ForestFloor || terrain === TerrainType.Snow,
         FeatureType.BerryPatch,
         ResourceType.Berries,
-        48,
+        22,
         8,
       );
     }
@@ -1102,11 +1103,11 @@ export class Simulation {
         const resourceType = layout[row]![col]!;
         this.world.feature[index] = FeatureType.None;
         this.world.resourceType[index] = resourceType;
-        this.world.resourceAmount[index] = resourceType === ResourceType.Wood ? 18
-          : resourceType === ResourceType.Stone ? 14
-          : resourceType === ResourceType.Clay ? 10
-          : resourceType === ResourceType.Grain ? 12
-          : 10;
+        this.world.resourceAmount[index] = resourceType === ResourceType.Wood ? 8
+          : resourceType === ResourceType.Stone ? 6
+          : resourceType === ResourceType.Clay ? 4
+          : resourceType === ResourceType.Grain ? 6
+          : 5;
       }
     }
   }
@@ -1116,23 +1117,23 @@ export class Simulation {
       {
         building: stockpile,
         resources: [
-          [ResourceType.Wood, 10],
-          [ResourceType.Stone, 8],
-          [ResourceType.Grain, 4],
-          [ResourceType.Clay, 4],
-          [ResourceType.Berries, 4],
-          [ResourceType.Rations, 6],
+          [ResourceType.Wood, 4],
+          [ResourceType.Stone, 3],
+          [ResourceType.Grain, 2],
+          [ResourceType.Clay, 2],
+          [ResourceType.Berries, 2],
+          [ResourceType.Rations, 3],
         ],
       },
       {
         building: capital,
         resources: [
-          [ResourceType.Wood, 8],
-          [ResourceType.Stone, 5],
-          [ResourceType.Rations, 8],
-          [ResourceType.Meat, 2],
-          [ResourceType.StoneTools, 4],
-          [ResourceType.BasicWeapons, 2],
+          [ResourceType.Wood, 3],
+          [ResourceType.Stone, 2],
+          [ResourceType.Rations, 4],
+          [ResourceType.Meat, 1],
+          [ResourceType.StoneTools, 2],
+          [ResourceType.BasicWeapons, 1],
           [ResourceType.BasicArmor, 1],
         ],
       },
@@ -4593,6 +4594,82 @@ export class Simulation {
     return stock < target;
   }
 
+  private farmHarvestTargetForSite(site: BuildingState): number {
+    return site.type === BuildingType.Orchard ? 18 : 24;
+  }
+
+  private countHarvestNodesNearSite(site: BuildingState, resourceType: ResourceType): number {
+    const center = buildingCenter(site);
+    let total = 0;
+    for (let dy = -4; dy <= 4; dy += 1) {
+      for (let dx = -4; dx <= 4; dx += 1) {
+        const x = center.x + dx;
+        const y = center.y + dy;
+        if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+        const index = indexOf(x, y, this.world.width);
+        if (this.world.resourceType[index] === resourceType && this.world.resourceAmount[index] > 0) {
+          total += this.world.resourceAmount[index]!;
+        }
+      }
+    }
+    return total;
+  }
+
+  private spawnFarmHarvestNodes(tribe: TribeState, weather: WeatherKind): void {
+    const floodedFields = this.floodedFarmCountForTribe(tribe.id);
+    const waterSupport = this.surfaceWaterFarmSupportForTribe(tribe.id) + this.cisternBonusForTribe(tribe.id);
+    for (const site of this.buildingsForTribe(tribe.id)) {
+      if (site.type !== BuildingType.Farm && site.type !== BuildingType.Orchard) continue;
+      const resourceType = site.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain;
+      const current = this.countHarvestNodesNearSite(site, resourceType);
+      const target = this.farmHarvestTargetForSite(site);
+      if (current >= target) continue;
+
+      const weatherFactor =
+        weather === WeatherKind.Heatwave ? 0.55
+        : weather === WeatherKind.Blizzard ? 0.7
+        : weather === WeatherKind.Rain ? 1.15
+        : weather === WeatherKind.Storm ? 0.9
+        : 1;
+      const supportBonus = Math.min(8, Math.floor(waterSupport * 0.35));
+      const floodedPenalty = Math.min(8, floodedFields * 2);
+      const spawnAmount = Math.max(
+        0,
+        Math.floor((((site.type === BuildingType.Orchard ? 7 : 9) + supportBonus - floodedPenalty) * weatherFactor) * tribe.race.foodBias),
+      );
+      if (spawnAmount <= 0) continue;
+
+      const candidates: number[] = [];
+      for (let dy = -4; dy <= 4; dy += 1) {
+        for (let dx = -4; dx <= 4; dx += 1) {
+          const x = site.x + dx;
+          const y = site.y + dy;
+          if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+          const index = indexOf(x, y, this.world.width);
+          if (this.world.buildingByTile[index] >= 0) continue;
+          if (this.world.owner[index] !== tribe.id) continue;
+          const terrain = this.world.terrain[index] as TerrainType;
+          if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow || terrain === TerrainType.Lava || terrain === TerrainType.Mountain) continue;
+          if (this.world.resourceAmount[index] > 0 && this.world.resourceType[index] !== resourceType) continue;
+          candidates.push(index);
+        }
+      }
+      if (candidates.length === 0) continue;
+
+      let remaining = Math.min(spawnAmount, target - current);
+      while (remaining > 0 && candidates.length > 0) {
+        const pick = randInt(this.random, 0, candidates.length - 1);
+        const index = candidates.splice(pick, 1)[0]!;
+        const chunk = Math.min(remaining, randInt(this.random, 3, 7));
+        this.world.resourceType[index] = resourceType;
+        this.world.resourceAmount[index] = clamp(this.world.resourceAmount[index]! + chunk, 0, 48);
+        this.world.feature[index] = site.type === BuildingType.Orchard ? FeatureType.BerryPatch : FeatureType.None;
+        this.markDirty(index);
+        remaining -= chunk;
+      }
+    }
+  }
+
   private sourceBuildingTypesForResource(resourceType: ResourceType): BuildingType[] {
     return resourceType === ResourceType.Wood || resourceType === ResourceType.Planks || resourceType === ResourceType.Charcoal
       ? [BuildingType.LumberCamp, BuildingType.Warehouse, BuildingType.Stockpile, BuildingType.CapitalHall]
@@ -5579,56 +5656,6 @@ export class Simulation {
       return true;
     }
 
-    if (task.kind === "farm") {
-      const site = this.buildings.find((building) =>
-        building.tribeId === tribe.id &&
-        (building.type === BuildingType.Farm || building.type === BuildingType.Orchard) &&
-        task.targetX >= building.x &&
-        task.targetX < building.x + building.width &&
-        task.targetY >= building.y &&
-        task.targetY < building.y + building.height,
-      );
-      if (!site) {
-        return false;
-      }
-      let nearbyPlots = 0;
-      for (let dy = -4; dy <= 4; dy += 1) {
-        for (let dx = -4; dx <= 4; dx += 1) {
-          const x = task.targetX + dx;
-          const y = task.targetY + dy;
-          if (!inBounds(x, y, this.world.width, this.world.height)) continue;
-          const index = indexOf(x, y, this.world.width);
-          if (this.world.terrain[index] === TerrainType.Farmland) {
-            nearbyPlots += 1;
-          }
-        }
-      }
-      const waterSupport = Math.floor(this.surfaceWaterFarmSupportForTribe(tribe.id) * 0.45);
-      const flooded = this.floodedFarmCountForTribe(tribe.id);
-      const orchard = site.type === BuildingType.Orchard;
-      let harvest = orchard ? 3 : 4;
-      harvest += Math.min(3, Math.floor(nearbyPlots / 12));
-      harvest += Math.floor(waterSupport * 0.6);
-      if (this.season === SeasonType.Winter) {
-        harvest = orchard ? 1 : Math.max(1, harvest - 2);
-      }
-      if (flooded > 0) {
-        harvest = Math.max(1, harvest - Math.min(3, flooded));
-      }
-      const efficiency =
-        agent.condition === AgentConditionType.Inspired ? 1.2
-        : agent.condition === AgentConditionType.Exhausted ? 0.72
-        : agent.condition === AgentConditionType.Feverish ? 0.6
-        : agent.condition === AgentConditionType.Sick ? 0.78
-        : agent.condition === AgentConditionType.Weary ? 0.88
-        : 1;
-      harvest = Math.max(1, Math.floor(harvest * efficiency));
-      tribe.research += this.researchFromFieldWork("gather", tribe) * 0.8;
-      agent.carrying = orchard ? ResourceType.Berries : ResourceType.Grain;
-      agent.carryingAmount = harvest;
-      return true;
-    }
-
     const available = this.world.resourceAmount[targetIndex];
     if (available <= 0 && task.kind !== "fish") {
       return false;
@@ -5644,6 +5671,9 @@ export class Simulation {
         break;
       case "mine":
         harvest = Math.min(5, available);
+        break;
+      case "farm":
+        harvest = Math.min(6, available);
         break;
       case "fish":
         harvest = 6;
@@ -6111,22 +6141,7 @@ export class Simulation {
         const wasDry = tribe.water < Math.max(10, population * 0.45);
         tribe.water = clamp(tribe.water + waterFill - waterUse, 0, waterCapacity);
         const isDry = tribe.water < Math.max(10, population * 0.45);
-        const waterFactor = tribe.water <= Math.max(8, population * 0.35) ? 0.8 : tribe.water >= Math.max(18, population * 1.1) ? 1.08 : 1;
-        const horseBonus = Math.min(this.buildingCount(tribe.id, BuildingType.Farm), tribe.resources[ResourceType.Horses]) * 0.5;
-        const irrigationBonus = this.irrigationBonusForTribe(tribe.id);
-        const runoffBonus = this.surfaceWaterFarmSupportForTribe(tribe.id);
-        const floodedFields = this.floodedFarmCountForTribe(tribe.id);
-        const cisternBonus = this.cisternBonusForTribe(tribe.id);
-        const weatherFactor = weather === WeatherKind.Heatwave ? 0.6 : weather === WeatherKind.Rain ? 1.15 : weather === WeatherKind.Blizzard ? 0.7 : weather === WeatherKind.Storm ? 0.85 : 1;
-        const passiveFood = Math.floor((this.buildingCount(tribe.id, BuildingType.Farm) * (this.season === SeasonType.Winter ? 0.35 : 0.9) * tribe.race.foodBias * weatherFactor + horseBonus * 0.45 + irrigationBonus * 0.55 + runoffBonus * 0.48 + cisternBonus * 0.52 + powerPlants * 0.2 - floodedFields * 1.75) * waterFactor);
-        const orchardFood = Math.floor((this.buildingCount(tribe.id, BuildingType.Orchard) * (this.season === SeasonType.Winter ? 0 : 0.55) + runoffBonus * 0.16 - floodedFields * 0.55) * waterFactor);
-        const herdFood = Math.floor(tribe.resources[ResourceType.Livestock] * 0.08);
-        const fishingFood = Math.floor(this.buildingCount(tribe.id, BuildingType.FishingHut) * 0.8 + this.buildingCount(tribe.id, BuildingType.Fishery) * 1.25 + this.boats.filter((boat) => boat.tribeId === tribe.id).length * 0.5 + airfields * 0.15);
-        const rationGain = passiveFood + orchardFood + herdFood + fishingFood;
-        if (rationGain > 0) {
-          tribe.resources[ResourceType.Grain] += passiveFood;
-          tribe.resources[ResourceType.Rations] += rationGain;
-        }
+        this.spawnFarmHarvestNodes(tribe, weather);
         if (this.buildingCount(tribe.id, BuildingType.Stable) > 0 && tribe.resources[ResourceType.Horses] > 0 && this.tickCount % (YEAR_TICKS / 3) === 0) {
           tribe.resources[ResourceType.Horses] += Math.max(1, Math.floor(this.buildingCount(tribe.id, BuildingType.Stable) / 4));
         }
@@ -6812,20 +6827,7 @@ export class Simulation {
         const farmResource = farm.type === BuildingType.Orchard ? ResourceType.Berries : ResourceType.Grain;
         if (!this.siteHasExtractionCapacity(farm, farmResource, lowFood)) continue;
         const center = buildingCenter(farm);
-        if (this.hasJobAt(tribe.id, "farm", center.x, center.y)) continue;
-        const job: JobState = {
-          id: this.nextJobId++,
-          tribeId: tribe.id,
-          kind: "farm",
-          x: center.x,
-          y: center.y,
-          priority: lowFood ? 6 : 4,
-          claimedBy: null,
-          payload: { resourceType: farmResource },
-        };
-        this.jobs.push(job);
-        this.recordJobSite(job);
-        activeFarmJobs += 1;
+        activeFarmJobs += this.enqueueResourceJobsAround(tribe, center.x, center.y, [farmResource], "farm", 7, Math.max(1, desiredFarmJobs - activeFarmJobs));
       }
     }
 
@@ -10865,8 +10867,8 @@ export class Simulation {
         if (type === BuildingType.Farm || type === BuildingType.Orchard) {
           this.world.terrain[index] = TerrainType.Farmland;
           this.world.feature[index] = FeatureType.None;
-          this.world.resourceType[index] = ResourceType.Grain;
-          this.world.resourceAmount[index] = 240;
+          this.world.resourceType[index] = ResourceType.None;
+          this.world.resourceAmount[index] = 0;
         }
         this.world.owner[index] = tribeId;
         this.markDirty(index);
@@ -10885,12 +10887,25 @@ export class Simulation {
   private connectBuildingRoads(building: BuildingState): void {
     const tribe = this.tribes[building.tribeId];
     if (!tribe) return;
-    const center = buildingCenter(building);
     const anchor = this.findRoadAnchor(building) ?? { x: tribe.capitalX, y: tribe.capitalY };
-    this.layRoad(anchor.x, anchor.y, center.x, center.y, building.tribeId);
+    const entry = this.roadConnectionPoint(building, anchor.x, anchor.y);
+    this.layRoad(anchor.x, anchor.y, entry.x, entry.y, building.tribeId);
     if (building.type === BuildingType.FishingHut || building.type === BuildingType.Dock) {
-      this.layRoad(tribe.capitalX, tribe.capitalY, center.x, center.y, building.tribeId);
+      const capitalEntry = this.roadConnectionPoint(building, tribe.capitalX, tribe.capitalY);
+      this.layRoad(tribe.capitalX, tribe.capitalY, capitalEntry.x, capitalEntry.y, building.tribeId);
     }
+  }
+
+  private roadConnectionPoint(building: BuildingState, towardX: number, towardY: number): { x: number; y: number } {
+    const center = buildingCenter(building);
+    const west = { x: building.x - 1, y: center.y };
+    const east = { x: building.x + building.width, y: center.y };
+    const north = { x: center.x, y: building.y - 1 };
+    const south = { x: center.x, y: building.y + building.height };
+    const candidates = [west, east, north, south]
+      .filter((point) => inBounds(point.x, point.y, this.world.width, this.world.height));
+    candidates.sort((a, b) => manhattan(a.x, a.y, towardX, towardY) - manhattan(b.x, b.y, towardX, towardY));
+    return candidates[0] ?? center;
   }
 
   private findRoadAnchor(building: BuildingState): { x: number; y: number } | null {

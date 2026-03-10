@@ -574,10 +574,10 @@ function seedFeatures(world: WorldData, random: () => number): void {
       const fertility = world.fertility[index];
 
       if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow || terrain === TerrainType.River) {
-        if (world.feature[index] === FeatureType.None && random() > 0.96) {
+        if (world.feature[index] === FeatureType.None && random() > 0.982) {
           world.feature[index] = FeatureType.FishShoal;
           world.resourceType[index] = ResourceType.Fish;
-          world.resourceAmount[index] = 240;
+          world.resourceAmount[index] = 90;
         }
         continue;
       }
@@ -589,15 +589,15 @@ function seedFeatures(world: WorldData, random: () => number): void {
       }
 
       if (terrain === TerrainType.Mountain || terrain === TerrainType.Rocky) {
-        if (random() > 0.84) {
+        if (random() > 0.92) {
           world.feature[index] = FeatureType.StoneOutcrop;
           world.resourceType[index] = ResourceType.Stone;
-          world.resourceAmount[index] = randInt(random, 100, 260);
+          world.resourceAmount[index] = randInt(random, 36, 110);
         }
-        if (random() > 0.93) {
+        if (random() > 0.975) {
           world.feature[index] = FeatureType.OreVein;
           world.resourceType[index] = ResourceType.Ore;
-          world.resourceAmount[index] = randInt(random, 80, 220);
+          world.resourceAmount[index] = randInt(random, 28, 90);
         }
         continue;
       }
@@ -605,49 +605,49 @@ function seedFeatures(world: WorldData, random: () => number): void {
       if (terrain === TerrainType.Marsh) {
         world.feature[index] = random() > 0.72 ? FeatureType.Reeds : FeatureType.None;
         world.resourceType[index] = world.feature[index] === FeatureType.Reeds ? ResourceType.Clay : ResourceType.None;
-        world.resourceAmount[index] = world.feature[index] === FeatureType.Reeds ? randInt(random, 60, 120) : 0;
+        world.resourceAmount[index] = world.feature[index] === FeatureType.Reeds ? randInt(random, 24, 56) : 0;
         continue;
       }
 
       if (biome === BiomeType.DeepForest || biome === BiomeType.SnowyForest) {
-        if (random() > 0.35) {
+        if (random() > 0.56) {
           world.feature[index] = FeatureType.Trees;
           world.resourceType[index] = ResourceType.Wood;
-          world.resourceAmount[index] = randInt(random, 80, 170);
-        } else if (random() > 0.97) {
+          world.resourceAmount[index] = randInt(random, 24, 64);
+        } else if (random() > 0.988) {
           world.feature[index] = FeatureType.BerryPatch;
           world.resourceType[index] = ResourceType.Berries;
-          world.resourceAmount[index] = randInt(random, 40, 90);
+          world.resourceAmount[index] = randInt(random, 12, 36);
         }
         continue;
       }
 
       if ((biome === BiomeType.TemperatePlains || biome === BiomeType.Coastline) && fertility > 130) {
-        if (random() > 0.93) {
+        if (random() > 0.975) {
           world.feature[index] = FeatureType.BerryPatch;
           world.resourceType[index] = ResourceType.Berries;
-          world.resourceAmount[index] = randInt(random, 45, 95);
-        } else if (random() > 0.9) {
+          world.resourceAmount[index] = randInt(random, 12, 34);
+        } else if (random() > 0.965) {
           world.feature[index] = FeatureType.Trees;
           world.resourceType[index] = ResourceType.Wood;
-          world.resourceAmount[index] = randInt(random, 60, 110);
+          world.resourceAmount[index] = randInt(random, 20, 44);
         }
         continue;
       }
 
       if (biome === BiomeType.Desert || biome === BiomeType.Scrubland) {
-        if (random() > 0.975) {
+        if (random() > 0.988) {
           world.feature[index] = FeatureType.ClayDeposit;
           world.resourceType[index] = ResourceType.Clay;
-          world.resourceAmount[index] = randInt(random, 40, 100);
+          world.resourceAmount[index] = randInt(random, 14, 40);
         }
         continue;
       }
 
-      if ((biome === BiomeType.AshWaste || biome === BiomeType.VolcanicHighland) && random() > 0.96) {
+      if ((biome === BiomeType.AshWaste || biome === BiomeType.VolcanicHighland) && random() > 0.982) {
         world.feature[index] = FeatureType.StoneOutcrop;
         world.resourceType[index] = random() > 0.6 ? ResourceType.Ore : ResourceType.Stone;
-        world.resourceAmount[index] = randInt(random, 80, 170);
+        world.resourceAmount[index] = randInt(random, 26, 72);
       }
     }
   }
@@ -892,21 +892,6 @@ export function generateWorld(seed: string, width: number, height: number): Worl
     classifyTerrain(world, i);
     fertility[i] = clampByte((moisture[i]! + (200 - Math.abs(temperature[i]! - 135)) + (160 - Math.abs(elevation[i]! - 125))) / 3);
   }
-
-  const lakeCount = Math.max(14, Math.floor((width * height) / 240000));
-  const lakeMarginX = Math.max(10, Math.min(70, Math.floor(width * 0.12)));
-  const lakeMarginY = Math.max(10, Math.min(70, Math.floor(height * 0.12)));
-  for (let i = 0; i < lakeCount; i += 1) {
-    const largeLake = i % 5 === 0;
-    addLake(
-      world,
-      randInt(random, lakeMarginX, width - lakeMarginX),
-      randInt(random, lakeMarginY, height - lakeMarginY),
-      largeLake ? randInt(random, 12, 28) : randInt(random, 6, 20),
-    );
-  }
-
-  carveRivers(world, random);
 
   for (let i = 0; i < tileCount; i += 1) {
     assignBiome(world, i);

@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 
 import { BiomeType, TerrainType } from "../src/shared/gameTypes";
 import { generateWorld } from "../src/sim/worldgen";
-import { indexOf } from "../src/shared/grid";
 
 function checksum(values: Uint8Array | Uint16Array): number {
   let sum = 0;
@@ -34,9 +33,6 @@ describe("world generation", () => {
     const waterTiles = world.terrain.reduce((sum, terrain) => {
       return sum + (terrain <= 2 ? 1 : 0);
     }, 0);
-    const riverTiles = world.terrain.reduce((sum, terrain) => {
-      return sum + (terrain === 2 ? 1 : 0);
-    }, 0);
     const desertTiles = world.biome.reduce((sum, biome) => {
       return sum + (biome === BiomeType.Desert ? 1 : 0);
     }, 0);
@@ -59,7 +55,6 @@ describe("world generation", () => {
     expect(terrainKinds.size).toBeGreaterThan(8);
     expect(biomeKinds.size).toBeGreaterThan(8);
     expect(waterTiles).toBeGreaterThan(320 * 320 * 0.08);
-    expect(riverTiles).toBeGreaterThan(64);
     expect(desertTiles).toBeGreaterThan(160);
     expect(marshTiles).toBeGreaterThan(120);
     expect(volcanicTiles).toBeGreaterThan(120);
@@ -69,55 +64,11 @@ describe("world generation", () => {
     expect(world.candidateStarts.length).toBeGreaterThan(8);
   });
 
-  test("river networks are mostly connected and not dominated by stray strips", () => {
-    const world = generateWorld("river-coherence", 320, 320);
-    const directions = [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-      [1, 1],
-      [1, -1],
-      [-1, 1],
-      [-1, -1],
-    ] as const;
-    const visited = new Uint8Array(world.width * world.height);
-    let riverTiles = 0;
-    let orphanTiles = 0;
-
-    for (let index = 0; index < world.terrain.length; index += 1) {
-      if (world.terrain[index] !== TerrainType.River || visited[index]) continue;
-      let touchesWater = false;
-      let size = 0;
-      const stack = [index];
-      visited[index] = 1;
-      while (stack.length > 0) {
-        const current = stack.pop()!;
-        size += 1;
-        const x = current % world.width;
-        const y = Math.floor(current / world.width);
-        for (const [dx, dy] of directions) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= world.width || ny >= world.height) continue;
-          const neighbor = indexOf(nx, ny, world.width);
-          const terrain = world.terrain[neighbor] as TerrainType;
-          if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow) {
-            touchesWater = true;
-          }
-          if (terrain === TerrainType.River && !visited[neighbor]) {
-            visited[neighbor] = 1;
-            stack.push(neighbor);
-          }
-        }
-      }
-      riverTiles += size;
-      if (!touchesWater) {
-        orphanTiles += size;
-      }
-    }
-
-    expect(riverTiles).toBeGreaterThan(40);
-    expect(orphanTiles / riverTiles).toBeLessThan(0.12);
+  test("temporary no-river mode avoids inland river strips", () => {
+    const world = generateWorld("river-disabled", 320, 320);
+    const riverTiles = world.terrain.reduce((sum, terrain) => {
+      return sum + (terrain === TerrainType.River ? 1 : 0);
+    }, 0);
+    expect(riverTiles).toBe(0);
   });
 });

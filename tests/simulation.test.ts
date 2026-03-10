@@ -32,14 +32,14 @@ describe("simulation", () => {
     )).toBe(true);
     expect(sim.tribes.every((tribe) =>
       tribe.water >= 40 &&
-      tribe.resources[ResourceType.Clay] >= 4 &&
-      tribe.resources[ResourceType.Clay] <= 6 &&
-      tribe.resources[ResourceType.StoneTools] >= 4 &&
-      tribe.resources[ResourceType.StoneTools] <= 6 &&
-      tribe.resources[ResourceType.BasicWeapons] >= 2 &&
-      tribe.resources[ResourceType.BasicWeapons] <= 4 &&
+      tribe.resources[ResourceType.Clay] >= 2 &&
+      tribe.resources[ResourceType.Clay] <= 4 &&
+      tribe.resources[ResourceType.StoneTools] >= 3 &&
+      tribe.resources[ResourceType.StoneTools] <= 5 &&
+      tribe.resources[ResourceType.BasicWeapons] >= 1 &&
+      tribe.resources[ResourceType.BasicWeapons] <= 3 &&
       tribe.resources[ResourceType.BasicArmor] >= 1 &&
-      tribe.resources[ResourceType.BasicArmor] <= 3,
+      tribe.resources[ResourceType.BasicArmor] <= 2,
     )).toBe(true);
     expect(sim.tribes.every((tribe) => {
       let embarkPileTiles = 0;
@@ -59,8 +59,39 @@ describe("simulation", () => {
           }
         }
       }
-      return embarkPileTiles >= 10;
+      return embarkPileTiles >= 8;
     })).toBe(true);
+  });
+
+  test("farms create harvest nodes instead of storing infinite food on the footprint", () => {
+    const sim = createSimulation("farm-harvest-nodes", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const farm = sim.placeBuilding(tribe.id, BuildingType.Farm, tribe.capitalX + 6, tribe.capitalY + 6);
+
+    for (let dy = 0; dy < farm.height; dy += 1) {
+      for (let dx = 0; dx < farm.width; dx += 1) {
+        const index = (farm.y + dy) * sim.world.width + (farm.x + dx);
+        expect(sim.world.resourceAmount[index]).toBe(0);
+      }
+    }
+
+    for (let i = 0; i < 60; i += 1) {
+      sim.tick();
+    }
+
+    let nearbyHarvest = 0;
+    for (let dy = -4; dy <= 4; dy += 1) {
+      for (let dx = -4; dx <= 4; dx += 1) {
+        const x = farm.x + dx;
+        const y = farm.y + dy;
+        if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
+        const index = y * sim.world.width + x;
+        if (sim.world.resourceType[index] === ResourceType.Grain && sim.world.resourceAmount[index] > 0 && sim.world.buildingByTile[index] < 0) {
+          nearbyHarvest += sim.world.resourceAmount[index];
+        }
+      }
+    }
+    expect(nearbyHarvest).toBeGreaterThan(0);
   });
 
   test("starter halls and stockpiles begin with visible local stocks", () => {
@@ -139,17 +170,18 @@ describe("simulation", () => {
     expect(sim.tribes.every((tribe: any) => {
       const tribeBuildings = sim.buildings.filter((building: any) => building.tribeId === tribe.id);
       return tribeBuildings.every((building: any) => {
-        const centerX = building.x + Math.floor(building.width / 2);
-        const centerY = building.y + Math.floor(building.height / 2);
-        for (let dy = -2; dy <= 2; dy += 1) {
-          for (let dx = -2; dx <= 2; dx += 1) {
-            const x = centerX + dx;
-            const y = centerY + dy;
+        for (let x = building.x - 1; x <= building.x + building.width; x += 1) {
+          for (const y of [building.y - 1, building.y + building.height]) {
             if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
             const index = y * sim.world.width + x;
-            if (sim.world.road[index] > 0 && sim.world.owner[index] === tribe.id) {
-              return true;
-            }
+            if (sim.world.road[index] > 0 && sim.world.owner[index] === tribe.id) return true;
+          }
+        }
+        for (let y = building.y; y < building.y + building.height; y += 1) {
+          for (const x of [building.x - 1, building.x + building.width]) {
+            if (x < 0 || y < 0 || x >= sim.world.width || y >= sim.world.height) continue;
+            const index = y * sim.world.width + x;
+            if (sim.world.road[index] > 0 && sim.world.owner[index] === tribe.id) return true;
           }
         }
         return false;
