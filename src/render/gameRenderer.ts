@@ -311,6 +311,59 @@ function colorHex(color: number): string {
   return `#${color.toString(16).padStart(6, "0")}`;
 }
 
+function carryVisualBucket(resourceType: ResourceType): string {
+  switch (resourceType) {
+    case ResourceType.None:
+      return "none";
+    case ResourceType.Wood:
+    case ResourceType.Planks:
+      return "wood";
+    case ResourceType.Stone:
+    case ResourceType.Clay:
+    case ResourceType.Ore:
+      return "mineral";
+    case ResourceType.Berries:
+    case ResourceType.Grain:
+    case ResourceType.Fish:
+    case ResourceType.Meat:
+    case ResourceType.Rations:
+      return "food";
+    case ResourceType.Horses:
+    case ResourceType.Livestock:
+      return "livestock";
+    default:
+      return "goods";
+  }
+}
+
+function weaponVisualBucket(weapon: string): string {
+  if (weapon.includes("Bow")) return "bow";
+  if (weapon.includes("Arquebus") || weapon.includes("Rifle") || weapon.includes("Spark") || weapon.includes("Carbine") || weapon.includes("Volley") || weapon.includes("Repeater")) return "gun";
+  if (weapon.includes("Axe") || weapon.includes("Cleaver")) return "axe";
+  if (weapon.includes("Spear") || weapon.includes("Lance") || weapon.includes("Pike")) return "pole";
+  if (weapon.includes("Void") || weapon.includes("Sunfire") || weapon.includes("Staff") || weapon.includes("Meteor")) return "staff";
+  if (weapon === "Knife" || weapon === "Club") return "light";
+  return "melee";
+}
+
+function agentTextureSignature(agent: AgentSnapshot, tribe?: TribeSummary): string {
+  const race = tribe?.race ?? RaceType.Humans;
+  return [
+    "agent",
+    race,
+    agent.role,
+    tribe?.color ?? 0xffffff,
+    weaponVisualBucket(agent.gear.weapon),
+    agent.gear.armor !== "Cloth" ? "armor" : "cloth",
+    carryVisualBucket(agent.carrying),
+    agent.hero ? "hero" : "common",
+    agent.blessed ? "blessed" : "plain",
+    agent.wounds > 0 ? "wounded" : "healthy",
+    agent.condition,
+    agent.gear.rarity,
+  ].join(":");
+}
+
 function drawPixelRect(target: PixelTarget, x: number, y: number, w: number, h: number, color: number, alpha = 1): void {
   if ("fillRect" in target) {
     const previousAlpha = target.globalAlpha;
@@ -878,6 +931,244 @@ export class GameRenderer {
     state.sprite.alpha = alpha;
   }
 
+  private textureForKey(key: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): Texture {
+    const cached = this.iconTextures.get(key);
+    if (cached) {
+      return cached;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Failed to create cached texture context");
+    }
+    ctx.imageSmoothingEnabled = false;
+    draw(ctx);
+    const texture = Texture.from(canvas);
+    this.iconTextures.set(key, texture);
+    return texture;
+  }
+
+  private upsertTexturedSprite(key: string, textureKey: string, texture: Texture, x: number, y: number, width: number, height: number, alpha: number, tint = 0xffffff): void {
+    let state = this.iconSprites.get(key);
+    if (!state) {
+      const sprite = new Sprite(texture);
+      sprite.visible = false;
+      this.iconLayer.addChild(sprite);
+      state = { sprite, textureKey: "" };
+      this.iconSprites.set(key, state);
+    }
+    if (state.textureKey !== textureKey && state.sprite.texture !== texture) {
+      state.sprite.texture = texture;
+      state.textureKey = textureKey;
+    } else if (state.sprite.texture !== texture) {
+      state.sprite.texture = texture;
+    }
+    state.sprite.visible = true;
+    state.sprite.position.set(x, y);
+    state.sprite.width = width;
+    state.sprite.height = height;
+    state.sprite.alpha = alpha;
+    state.sprite.tint = tint;
+  }
+
+  private agentTexture(agent: AgentSnapshot, tribe?: TribeSummary): Texture {
+    const race = tribe?.race ?? RaceType.Humans;
+    const tribeColor = tribe?.color ?? 0xffffff;
+    const accent = ROLE_ACCENTS[agent.role];
+    const gearColors = gearAccent(agent, race);
+    const key = agentTextureSignature(agent, tribe);
+    return this.textureForKey(key, TILE_SIZE, TILE_SIZE, (ctx) => {
+      const draw = (x: number, y: number, w: number, h: number, color: number, alpha = 1) => drawPixelRect(ctx, x, y, w, h, color, alpha);
+      switch (race) {
+        case RaceType.Elves:
+          draw(6, 4, 4, 3, lighten(gearColors.cloth, 8));
+          draw(4, 7, 8, 6, tribeColor);
+          draw(3, 5, 1, 2, accent);
+          draw(12, 5, 1, 2, accent);
+          break;
+        case RaceType.Dwarves:
+          draw(5, 5, 6, 3, lighten(gearColors.cloth, 8));
+          draw(3, 8, 10, 5, tribeColor);
+          draw(5, 11, 6, 3, 0x70452d);
+          break;
+        case RaceType.Orcs:
+          draw(5, 4, 6, 3, lighten(gearColors.cloth, 4));
+          draw(3, 7, 10, 7, tribeColor);
+          draw(4, 6, 2, 1, 0xf4eed7);
+          draw(10, 6, 2, 1, 0xf4eed7);
+          break;
+        case RaceType.Goblins:
+          draw(5, 4, 6, 4, lighten(gearColors.cloth, 6));
+          draw(4, 8, 8, 5, tribeColor);
+          draw(4, 3, 1, 2, accent);
+          draw(11, 3, 1, 2, accent);
+          break;
+        case RaceType.Halflings:
+          draw(5, 6, 6, 3, lighten(gearColors.cloth, 10));
+          draw(4, 9, 8, 4, tribeColor);
+          break;
+        case RaceType.Nomads:
+          draw(5, 4, 6, 3, gearColors.cloth);
+          draw(4, 7, 8, 7, tribeColor);
+          draw(3, 6, 10, 1, accent);
+          break;
+        case RaceType.Darkfolk:
+          draw(5, 4, 6, 3, gearColors.cloth);
+          draw(4, 7, 8, 7, tribeColor);
+          draw(6, 3, 4, 1, accent);
+          break;
+        case RaceType.Humans:
+        default:
+          draw(5, 4, 6, 3, lighten(gearColors.cloth, 10));
+          draw(4, 7, 8, 7, tribeColor);
+          break;
+      }
+
+      draw(4, 13, 2, 2, darken(tribeColor, 26));
+      draw(10, 13, 2, 2, darken(tribeColor, 26));
+      draw(6, 8, 4, 2, accent, 0.92);
+
+      if (agent.gear.armor !== "Cloth") {
+        draw(4, 9, 8, 2, gearColors.armor, 0.74);
+      }
+
+      switch (agent.role) {
+        case AgentRole.Soldier:
+        case AgentRole.Rider: {
+          const weaponBucket = weaponVisualBucket(agent.gear.weapon);
+          if (weaponBucket === "bow") {
+            draw(11, 6, 2, 6, gearColors.weapon, 0.9);
+            draw(10, 7, 1, 4, lighten(gearColors.weapon, 16), 0.66);
+          } else if (weaponBucket === "gun") {
+            draw(10, 8, 4, 2, 0x6f4f36, 0.92);
+            draw(13, 7, 2, 1, 0xbfc9d1, 0.9);
+          } else if (weaponBucket === "axe") {
+            draw(12, 7, 1, 6, 0x7d5a3f, 0.88);
+            draw(11, 6, 3, 2, gearColors.weapon, 0.92);
+          } else {
+            draw(12, 6, 1, 7, gearColors.weapon, 0.88);
+          }
+          if (race === RaceType.Humans || race === RaceType.Dwarves) {
+            draw(2, 8, 2, 4, shieldColor(race), 0.82);
+          }
+          if (race === RaceType.Elves) draw(12, 7, 2, 4, 0x96d6a9, 0.55);
+          if (race === RaceType.Orcs) draw(12, 5, 2, 7, 0x8a5a36, 0.88);
+          break;
+        }
+        case AgentRole.Mage:
+          draw(12, 5, 1, 7, 0xa8c8ff, 0.95);
+          draw(10, 3, 2, 2, 0xcbdcff, 0.9);
+          draw(3, 6, 1, 6, 0x8d72d9, 0.6);
+          break;
+        case AgentRole.Scholar:
+          draw(2, 6, 2, 5, 0xd5b7ec, 0.85);
+          draw(1, 7, 3, 3, 0xf4ead2, 0.85);
+          break;
+        case AgentRole.Woodcutter:
+        case AgentRole.Builder:
+          draw(2, 8, 2, 5, 0xbdc6ce, 0.85);
+          if (agent.role === AgentRole.Builder) draw(12, 9, 2, 2, 0xe4bc73, 0.9);
+          break;
+        case AgentRole.Farmer:
+          draw(2, 9, 1, 4, 0x8f6e46, 0.85);
+          draw(1, 8, 3, 1, 0xc7d475, 0.85);
+          break;
+        case AgentRole.Hauler:
+          draw(2, 9, 3, 3, 0xb59269, 0.88);
+          draw(1, 8, 1, 5, 0x8d6f52, 0.86);
+          break;
+        case AgentRole.Crafter:
+          draw(2, 8, 2, 4, 0xc98f58, 0.85);
+          draw(1, 7, 3, 2, 0xe1b179, 0.8);
+          break;
+        case AgentRole.Fisher:
+          draw(12, 7, 1, 6, 0x8f7650, 0.85);
+          draw(11, 12, 3, 1, 0xddeef5, 0.75);
+          break;
+        case AgentRole.Miner:
+          draw(12, 7, 1, 6, 0x8d6f52, 0.85);
+          draw(11, 6, 3, 2, 0xbfc8cf, 0.85);
+          break;
+        default:
+          break;
+      }
+
+      if (agent.hero) {
+        draw(1, 5, 2, 6, 0xf3d87b, 0.9);
+        draw(13, 5, 2, 6, 0xf3d87b, 0.9);
+      }
+      if (agent.blessed) {
+        draw(4, 1, 8, 1, 0xf8f2bc, 0.9);
+        draw(5, 0, 6, 1, 0xfff6d8, 0.75);
+      }
+      if (agent.wounds > 0) draw(2, 2, 2, 2, 0xbf4f4f, 0.85);
+      if (agent.condition === AgentConditionType.Sick || agent.condition === AgentConditionType.Feverish) {
+        draw(1, 12, 2, 2, 0x91d485, 0.9);
+        draw(13, 12, 2, 2, 0x6ca96d, 0.75);
+      }
+      if (agent.condition === AgentConditionType.Exhausted || agent.condition === AgentConditionType.Weary) {
+        draw(4, 14, 8, 1, 0x7f90a2, 0.75);
+      }
+      if (agent.condition === AgentConditionType.Inspired) {
+        draw(7, 0, 2, 2, 0xffef9d, 0.95);
+        draw(6, 1, 4, 1, 0xf7d36f, 0.75);
+      }
+      if (agent.gear.rarity === "Epic" || agent.gear.rarity === "Legendary") {
+        draw(1, 3, 2, 2, 0xf5d36d, 0.95);
+      }
+
+      const carryColor = resourceVisualColor(agent.carrying);
+      switch (carryVisualBucket(agent.carrying)) {
+        case "wood":
+          draw(8, 1, 7, 7, carryColor, 0.95);
+          draw(7, 8, 9, 1, 0x6b4a2d, 0.9);
+          draw(8, 9, 7, 1, 0x8d6238, 0.78);
+          draw(9, 5, 5, 1, 0xd2a26a, 0.66);
+          break;
+        case "mineral":
+          draw(8, 1, 7, 7, carryColor, 0.95);
+          draw(9, 8, 5, 2, 0xd7dde3, 0.76);
+          draw(10, 9, 3, 1, darken(carryColor, 22), 0.72);
+          break;
+        case "food":
+          draw(8, 1, 7, 7, carryColor, 0.95);
+          draw(8, 8, 7, 2, 0xf2ddb2, 0.76);
+          draw(9, 9, 5, 1, agent.carrying === ResourceType.Fish ? 0x9ddff3 : agent.carrying === ResourceType.Meat ? 0xc65e52 : 0xd2b25a, 0.8);
+          break;
+        case "livestock":
+          draw(8, 1, 7, 7, carryColor, 0.95);
+          draw(9, 8, 5, 2, 0xc5b48c, 0.82);
+          draw(10, 7, 3, 1, 0x6b4a2d, 0.7);
+          break;
+        case "goods":
+          draw(8, 1, 7, 7, carryColor, 0.95);
+          draw(9, 8, 5, 1, lighten(carryColor, 18), 0.72);
+          break;
+        default:
+          break;
+      }
+    });
+  }
+
+  private drawAgentSprite(agent: AgentSnapshot, tileX: number, tileY: number, tribe?: TribeSummary): void {
+    const textureKey = agentTextureSignature(agent, tribe);
+    const texture = this.agentTexture(agent, tribe);
+    const animPhase = this.presentationClock * 7 + agent.id * 0.31;
+    const bob = Math.sin(animPhase) * 0.45;
+    const taskLean =
+      agent.task === "cut_tree" || agent.task === "mine" || agent.task === "quarry" || agent.task === "build" || agent.task === "earthwork" || agent.task === "hunt" || agent.task === "attack" || agent.task === "farm"
+        ? Math.sin(this.presentationClock * 10 + agent.id) * 0.35
+        : 0;
+    this.upsertTexturedSprite(`agent:${agent.id}:detail`, textureKey, texture, tileX * TILE_SIZE, tileY * TILE_SIZE + bob, TILE_SIZE, TILE_SIZE, 0.98);
+    const state = this.iconSprites.get(`agent:${agent.id}:detail`);
+    if (state) {
+      state.sprite.x += taskLean;
+      state.sprite.y += taskLean * 0.15;
+    }
+  }
+
   private drawBranchMarkers(minTileX: number, minTileY: number, maxTileX: number, maxTileY: number, tribeById: Map<number, TribeSummary>): void {
     for (const branch of this.state.branches) {
       if (branch.x < minTileX || branch.y < minTileY || branch.x > maxTileX || branch.y > maxTileY) {
@@ -1225,7 +1516,7 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(agent.tribeId);
-      const detailedAgent = useDetailedEntities && (this.selectedUnitId === agent.id || agent.hero || this.zoom > 1.72);
+      const detailedAgent = useDetailedEntities;
       if (!detailedAgent) {
         this.upsertIconSprite(`agent:${agent.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
         if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
@@ -1235,7 +1526,25 @@ export class GameRenderer {
           this.upsertIconSprite(`agent:${agent.id}:carry`, position.x * TILE_SIZE + 9, position.y * TILE_SIZE + 2, 3, 3, resourceVisualColor(agent.carrying), 0.86);
         }
       } else {
-        this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.12);
+        this.drawAgentSprite(agent, position.x, position.y, tribe);
+        const shouldDrawAgentOverlay =
+          this.selectedUnitId === agent.id ||
+          agent.hero ||
+          (this.zoom > 1.95 && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.task !== "idle")) ||
+          agent.health < 55;
+        if (shouldDrawAgentOverlay) {
+          const px = position.x * TILE_SIZE;
+          const py = position.y * TILE_SIZE;
+          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.05 || agent.health < 55) {
+            drawPixelRect(this.unitGraphics, px + 3, py + 1, 10 * (agent.health / 100), 1, 0x78d67a, 0.9);
+            drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
+          }
+          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.1) {
+            const taskBob = (Math.sin(this.presentationClock * 4 + agent.id * 0.3) + 1) * 0.8;
+            this.drawTaskIndicator(agent.task, px, py - 3 - taskBob);
+            this.drawActionEffect(agent, px, py);
+          }
+        }
         if (agent.hero || this.selectedUnitId === agent.id) {
           this.drawAgentLabel(agent, position.x, position.y);
         }
