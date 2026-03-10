@@ -396,6 +396,7 @@ type AgentState = {
   carryingAmount: number;
   moveCooldown: number;
   taskSearchCooldown: number;
+  claimedJobId: number | null;
   spellCooldown: number;
   ageTicks: number;
   houseId: number;
@@ -685,6 +686,11 @@ export class Simulation {
   readonly activeWetTiles = new Set<number>();
   readonly branchEventStatus = new Map<number, BranchEventStatus>();
   readonly pathCache = new Map<string, { tick: number; path: number[] }>();
+  readonly buildingByIdCache = new Map<number, BuildingState>();
+  readonly jobByIdCache = new Map<number, JobState>();
+  readonly claimedJobByAgentCache = new Map<number, JobState>();
+  lookupCachesDirty = true;
+  lookupCacheTick = -1;
   cachedBuildingsByTribe: BuildingState[][] = [];
   cachedAgentsByTribe: AgentState[][] = [];
   cachedBuildingCountsByTribe: Uint16Array[] = [];
@@ -753,6 +759,7 @@ export class Simulation {
 
   tick(): DynamicSnapshot | null {
     this.tickCount += 1;
+    this.lookupCachesDirty = true;
     if (this.tickCount % 16 === 1 && this.pathCache.size > 4096) {
       this.pathCache.clear();
     }
@@ -916,6 +923,7 @@ export class Simulation {
           carryingAmount: 0,
           moveCooldown: 0,
           taskSearchCooldown: 0,
+          claimedJobId: null,
           spellCooldown: 0,
           ageTicks: randInt(this.random, 0, YEAR_TICKS * 3),
           houseId: Math.floor(i / 3) + 1,
@@ -1265,9 +1273,8 @@ export class Simulation {
     const branchHallCount = Math.max(0, this.capitalHallsForTribe(tribe.id).length - 1);
     const matureBranches = halls.filter((hall) => hall.id !== tribe.capitalBuildingId && this.branchMaturityStage(tribe.id, hall) >= 2).length;
     const strainedBranches = halls.filter((hall) => hall.id !== tribe.capitalBuildingId && this.branchIsStrained(tribe.id, hall)).length;
-    const plannedBranchHalls = this.jobs.filter((job) =>
-      job.tribeId === tribe.id
-      && job.kind === "build"
+    const plannedBranchHalls = this.jobsForTribe(tribe.id).filter((job) =>
+      job.kind === "build"
       && (job.payload as BuildPayload | undefined)?.buildingType === BuildingType.CapitalHall
       && (job.payload as BuildPayload | undefined)?.upgradeBuildingId == null,
     ).length;
@@ -1361,7 +1368,7 @@ export class Simulation {
     const desiredHaulers = clamp(
       Math.floor(
         tribeAgents.length * (this.hasBuilt(tribe.id, BuildingType.Warehouse) ? 0.11 : 0.08)
-        + this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length * 0.05
+        + (this.jobCountForTribe(tribe.id, "build") + this.jobCountForTribe(tribe.id, "haul")) * 0.05
         + overflowSites * 0.75
         + branchHallCount * 1.4
         + plannedBranchHalls * 1.2
@@ -1493,7 +1500,7 @@ export class Simulation {
     for (let index = this.boats.length - 1; index >= 0; index -= 1) {
       const boat = this.boats[index]!;
       const tribe = this.tribes[boat.tribeId];
-      const dock = this.buildings.find((building) => building.id === boat.dockBuildingId);
+      const dock = this.getBuildingById(boat.dockBuildingId);
       if (!tribe || !dock) {
         this.boats.splice(index, 1);
         continue;
@@ -1543,7 +1550,7 @@ export class Simulation {
     for (let index = this.wagons.length - 1; index >= 0; index -= 1) {
       const wagon = this.wagons[index]!;
       const tribe = this.tribes[wagon.tribeId];
-      const home = this.buildings.find((building) => building.id === wagon.homeBuildingId);
+      const home = this.getBuildingById(wagon.homeBuildingId);
       if (!tribe || !home) {
         this.releaseWagonJob(wagon);
         this.wagons.splice(index, 1);
@@ -1566,7 +1573,7 @@ export class Simulation {
       }
 
       const haulJob = wagon.targetJobId !== null
-        ? this.jobs.find((job) => job.id === wagon.targetJobId && job.kind === "haul")
+        ? this.getJobById(wagon.targetJobId)
         : null;
       if (!haulJob || haulJob.claimedBy !== this.wagonClaimId(wagon.id)) {
         wagon.task = WagonTaskType.Idle;
@@ -1588,7 +1595,7 @@ export class Simulation {
       if (wagon.task === WagonTaskType.ToSource) {
         const payload = haulJob.payload as HaulPayload;
         let sourceBuilding = payload.sourceBuildingId != null
-          ? this.buildings.find((entry) => entry.id === payload.sourceBuildingId) ?? null
+          ? this.getBuildingById(payload.sourceBuildingId)
           : this.findStockedSourceBuilding(wagon.tribeId, wagon.x, wagon.y, payload.resourceType);
         let withdrawn = this.withdrawBuildingStock(sourceBuilding, payload.resourceType, payload.amount);
         if (withdrawn <= 0) {
@@ -1597,6 +1604,7 @@ export class Simulation {
         }
         if (withdrawn <= 0) {
           haulJob.claimedBy = null;
+          this.invalidateLookupCaches();
           wagon.task = WagonTaskType.Idle;
           wagon.targetJobId = null;
           wagon.cargoType = ResourceType.None;
@@ -1618,7 +1626,7 @@ export class Simulation {
       }
 
       const payload = haulJob.payload as HaulPayload;
-      const buildJob = payload.targetJobId === null ? null : this.jobs.find((job) => job.id === payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
+      const buildJob = payload.targetJobId === null ? null : this.getJobById(payload.targetJobId);
       if (buildJob?.kind === "build") {
         const buildPayload = buildJob.payload as BuildPayload;
         buildPayload.supplied += 1;
@@ -1630,10 +1638,11 @@ export class Simulation {
         this.addDeliveredAmount(craftPayload.delivered, payload.resourceType, wagon.cargoAmount);
         tribe.resources[payload.resourceType] = Math.max(0, tribe.resources[payload.resourceType] - wagon.cargoAmount);
       } else if (payload.destBuildingId != null) {
-        const destBuilding = this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null;
+        const destBuilding = this.getBuildingById(payload.destBuildingId);
         this.addBuildingStock(destBuilding, payload.resourceType, wagon.cargoAmount);
       }
       this.jobs.splice(this.jobs.indexOf(haulJob), 1);
+      this.invalidateLookupCaches();
       wagon.task = WagonTaskType.Idle;
       wagon.targetJobId = null;
       wagon.cargoType = ResourceType.None;
@@ -1651,9 +1660,10 @@ export class Simulation {
 
   private releaseWagonJob(wagon: WagonState): void {
     if (wagon.targetJobId === null) return;
-    const job = this.jobs.find((entry) => entry.id === wagon.targetJobId && entry.kind === "haul");
+    const job = this.getJobById(wagon.targetJobId);
     if (job && job.claimedBy === this.wagonClaimId(wagon.id)) {
       job.claimedBy = null;
+      this.invalidateLookupCaches();
     }
   }
 
@@ -1662,8 +1672,8 @@ export class Simulation {
   }
 
   private strategicHaulScore(tribeId: number, payload: HaulPayload): number {
-    const sourceBuilding = payload.sourceBuildingId != null ? this.buildings.find((entry) => entry.id === payload.sourceBuildingId) ?? null : null;
-    const destBuilding = payload.destBuildingId != null ? this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null : null;
+    const sourceBuilding = payload.sourceBuildingId != null ? this.getBuildingById(payload.sourceBuildingId) : null;
+    const destBuilding = payload.destBuildingId != null ? this.getBuildingById(payload.destBuildingId) : null;
     const travelDistance = this.haulTravelDistance(payload);
     if (!sourceBuilding || !destBuilding) {
       return travelDistance * 0.2;
@@ -1732,6 +1742,7 @@ export class Simulation {
       return;
     }
     candidate.claimedBy = this.wagonClaimId(wagon.id);
+    this.invalidateLookupCaches();
     wagon.targetJobId = candidate.id;
     wagon.task = WagonTaskType.ToSource;
     wagon.targetX = (candidate.payload as HaulPayload).sourceX;
@@ -1740,6 +1751,7 @@ export class Simulation {
     wagon.pathIndex = 0;
     if (wagon.path.length <= 1 && (wagon.x !== wagon.targetX || wagon.y !== wagon.targetY)) {
       candidate.claimedBy = null;
+      this.invalidateLookupCaches();
       wagon.targetJobId = null;
       wagon.task = WagonTaskType.Idle;
       wagon.targetX = home.x;
@@ -2818,6 +2830,7 @@ export class Simulation {
       this.jobs.forEach((job) => {
         if (job.claimedBy === agent.id) {
           job.claimedBy = null;
+          this.invalidateLookupCaches();
         }
       });
       this.agents.splice(i, 1);
@@ -3129,6 +3142,8 @@ export class Simulation {
         }
       }
       job.claimedBy = agent.id;
+      agent.claimedJobId = job.id;
+      this.invalidateLookupCaches();
       agent.path = path;
       agent.pathIndex = 0;
       switch (job.kind) {
@@ -3713,7 +3728,7 @@ export class Simulation {
     }
     if (job.kind === "haul") {
       const payload = job.payload as HaulPayload;
-      const targetJob = payload.targetJobId === null ? null : this.jobs.find((entry) => entry.id === payload.targetJobId);
+      const targetJob = payload.targetJobId === null ? null : this.getJobById(payload.targetJobId);
       if (targetJob) {
         score += this.jobUrgencyScore(agent, tribe, targetJob) * 0.7;
         if (targetJob.kind === "build") {
@@ -3731,7 +3746,7 @@ export class Simulation {
       } else {
         const sourceBuilding = payload.sourceBuildingId === null || payload.sourceBuildingId === undefined
           ? null
-          : this.buildings.find((building) => building.id === payload.sourceBuildingId);
+          : this.getBuildingById(payload.sourceBuildingId);
         const sourceStock = sourceBuilding ? (sourceBuilding.stock[payload.resourceType] ?? 0) : 0;
         const sourceTarget = sourceBuilding ? this.localStockTarget(sourceBuilding.type, payload.resourceType) : 0;
         const surplus = Math.max(0, sourceStock - sourceTarget);
@@ -3841,7 +3856,7 @@ export class Simulation {
       }
       if (task.stage === "toSource") {
         let sourceBuilding = task.payload.sourceBuildingId != null
-          ? this.buildings.find((entry) => entry.id === task.payload.sourceBuildingId) ?? null
+          ? this.getBuildingById(task.payload.sourceBuildingId)
           : this.findStockedSourceBuilding(tribe.id, task.payload.sourceX, task.payload.sourceY, task.payload.resourceType);
         let withdrawn = this.withdrawBuildingStock(sourceBuilding, task.payload.resourceType, task.payload.amount);
         if (withdrawn <= 0) {
@@ -3866,7 +3881,7 @@ export class Simulation {
       }
       const buildJob = task.payload.targetJobId === null
         ? null
-        : this.jobs.find((job) => job.id === task.payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
+        : this.getJobById(task.payload.targetJobId);
       if (buildJob?.kind === "build") {
         const payload = buildJob.payload as BuildPayload;
         payload.supplied += 1;
@@ -3878,7 +3893,7 @@ export class Simulation {
         this.addDeliveredAmount(payload.delivered, task.payload.resourceType, agent.carryingAmount);
         tribe.resources[task.payload.resourceType] = Math.max(0, tribe.resources[task.payload.resourceType] - agent.carryingAmount);
       } else if (task.payload.destBuildingId != null) {
-        const destBuilding = this.buildings.find((entry) => entry.id === task.payload.destBuildingId) ?? null;
+        const destBuilding = this.getBuildingById(task.payload.destBuildingId);
         this.addBuildingStock(destBuilding, task.payload.resourceType, agent.carryingAmount);
       }
       agent.carrying = ResourceType.None;
@@ -4025,26 +4040,30 @@ export class Simulation {
 
   private finishTask(agent: AgentState): void {
     const lastTask = agent.task;
-    const job = this.jobs.find((entry) => entry.claimedBy === agent.id);
+    const job = agent.claimedJobId !== null ? this.getJobById(agent.claimedJobId) : this.getClaimedJobForAgent(agent.id);
     if (job) {
       this.jobs.splice(this.jobs.indexOf(job), 1);
+      this.invalidateLookupCaches();
     }
     agent.task = null;
     agent.path = [];
     agent.pathIndex = 0;
     agent.underground = false;
+    agent.claimedJobId = null;
     agent.taskSearchCooldown = lastTask?.kind === "idle" ? 2 : 1;
   }
 
   private releaseTask(agent: AgentState): void {
-    const job = this.jobs.find((entry) => entry.claimedBy === agent.id);
+    const job = agent.claimedJobId !== null ? this.getJobById(agent.claimedJobId) : this.getClaimedJobForAgent(agent.id);
     if (job) {
       job.claimedBy = null;
+      this.invalidateLookupCaches();
     }
     agent.task = null;
     agent.path = [];
     agent.pathIndex = 0;
     agent.underground = false;
+    agent.claimedJobId = null;
     agent.taskSearchCooldown = 2;
   }
 
@@ -5169,7 +5188,7 @@ export class Simulation {
     if (halls.length <= 1) {
       return;
     }
-    let activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
+    let activeHauls = this.jobCountForTribe(tribe.id, "haul");
     if (activeHauls > 56) {
       return;
     }
@@ -5290,7 +5309,7 @@ export class Simulation {
     if (halls.length <= 1) {
       return;
     }
-    const activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
+    const activeHauls = this.jobCountForTribe(tribe.id, "haul");
     if (activeHauls > 48) {
       return;
     }
@@ -5662,8 +5681,11 @@ export class Simulation {
     }
 
     if (payload.upgradeBuildingId != null) {
-      const building = this.buildings.find((entry) => entry.id === payload.upgradeBuildingId && entry.tribeId === tribe.id);
+      const building = this.getBuildingById(payload.upgradeBuildingId);
       if (!building) {
+        return false;
+      }
+      if (building.tribeId !== tribe.id) {
         return false;
       }
       const nextLevel = Math.max(building.level + 1, payload.upgradeLevel ?? building.level + 1);
@@ -5805,7 +5827,7 @@ export class Simulation {
     if (!this.hasDeliveredCost(payload.delivered, payload.inputs)) {
       return false;
     }
-    const building = this.buildings.find((entry) => entry.id === payload.buildingId);
+    const building = this.getBuildingById(payload.buildingId);
     const poweredIndustry = this.buildingCount(tribe.id, BuildingType.PowerPlant) > 0 && (building?.type === BuildingType.Factory || building?.type === BuildingType.Foundry || building?.type === BuildingType.Armory);
     const directModernSite = building?.type === BuildingType.PowerPlant ? 1.35 : building?.type === BuildingType.Airfield ? 1.15 : poweredIndustry ? 1.2 : 1;
     const craftedAmount = Math.max(1, Math.floor(payload.amount * directModernSite));
@@ -5993,6 +6015,7 @@ export class Simulation {
       }
     }
     this.buildings.splice(this.buildings.indexOf(building), 1);
+    this.invalidateLookupCaches();
     if (building.type === BuildingType.CapitalHall && tribe) {
       this.collapseSettlementFromHeadquartersLoss(tribe, building);
       this.updateTribeAnchor(tribe.id);
@@ -6775,7 +6798,7 @@ export class Simulation {
     );
 
     if (farms.length > 0) {
-      let activeFarmJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "farm").length;
+      let activeFarmJobs = this.jobCountForTribe(tribe.id, "farm");
       const desiredFarmJobs = Math.max(bootstrap ? 4 : 3, Math.min(farms.length * 2, Math.ceil(population / (tribe.age >= AgeType.Bronze ? 5 : 7))));
       for (const farm of farms) {
         if (activeFarmJobs >= desiredFarmJobs) break;
@@ -6798,7 +6821,7 @@ export class Simulation {
     }
 
     if (docks.length > 0 && (bootstrap || lowFood || sustainFood)) {
-      let activeFishJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "fish").length;
+      let activeFishJobs = this.jobCountForTribe(tribe.id, "fish");
       const desiredFishJobs = Math.max(bootstrap ? 2 : 1, Math.min(docks.length * 2, Math.ceil(population / 10)));
       for (const dock of docks) {
         if (activeFishJobs >= desiredFishJobs) break;
@@ -6971,7 +6994,7 @@ export class Simulation {
       return;
     }
 
-    const activePatrols = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "patrol").length;
+    const activePatrols = this.jobCountForTribe(tribe.id, "patrol");
     const fighters = this.agentsForTribe(tribe.id)
       .filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage)
       .length;
@@ -8267,7 +8290,7 @@ export class Simulation {
   }
 
   private generateEarthworkPlans(tribe: TribeState): void {
-    const earthworkJobs = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "earthwork").length;
+    const earthworkJobs = this.jobCountForTribe(tribe.id, "earthwork");
     if (earthworkJobs > 18) {
       return;
     }
@@ -8404,7 +8427,7 @@ export class Simulation {
   private generateCraftingPlans(tribe: TribeState): void {
     const population = this.populationOf(tribe.id);
     const soldiers = this.agentsForTribe(tribe.id).filter((agent) => agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage).length;
-    const buildBacklog = this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "build" || job.kind === "haul")).length;
+    const buildBacklog = this.jobCountForTribe(tribe.id, "build") + this.jobCountForTribe(tribe.id, "haul");
     const storageHubs = this.buildingsForTribe(tribe.id)
       .filter((building) => building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile || building.type === BuildingType.CapitalHall)
       .map((building) => ({ building, top: this.topStoredResource(building) }))
@@ -8607,7 +8630,7 @@ export class Simulation {
   }
 
   private generateRedistributionHauls(tribe: TribeState): void {
-    const activeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length;
+    const activeHauls = this.jobCountForTribe(tribe.id, "haul");
     if (activeHauls <= 56) {
       this.generateBranchSustainmentHauls(tribe);
     }
@@ -8771,7 +8794,7 @@ export class Simulation {
     if (depots.length === 0) {
       return;
     }
-    const tribeHauls = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul");
+    const tribeHauls = this.jobsForTribe(tribe.id).filter((job) => job.kind === "haul");
     const activeHauls = tribeHauls.length;
     const longHauls = tribeHauls.filter((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 8).length;
     if (activeHauls < 3 && longHauls === 0) {
@@ -9457,7 +9480,7 @@ export class Simulation {
       return;
     }
     const kind: JobKind = canAttack ? "attack" : "patrol";
-    const activeMilitaryJobs = this.jobs.filter((job) => job.tribeId === tribe.id && (job.kind === "attack" || job.kind === "patrol")).length;
+    const activeMilitaryJobs = this.jobCountForTribe(tribe.id, "attack") + this.jobCountForTribe(tribe.id, "patrol");
     const frontX = canAttack ? clamp(objective.x - Math.sign(objective.x - tribe.capitalX) * 2, 1, this.world.width - 2) : Math.floor((tribe.capitalX + enemy.capitalX) / 2);
     const frontY = canAttack ? clamp(objective.y - Math.sign(objective.y - tribe.capitalY) * 2, 1, this.world.height - 2) : Math.floor((tribe.capitalY + enemy.capitalY) / 2);
     const desiredJobs = clamp(Math.floor(fighters * (canAttack ? 0.55 : 0.35)), canAttack ? 4 : 3, canAttack ? 8 : 5);
@@ -9507,7 +9530,7 @@ export class Simulation {
     if (tribe.age < AgeType.Bronze) {
       return;
     }
-    if (this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "dungeon").length >= 2) {
+    if (this.jobCountForTribe(tribe.id, "dungeon") >= 2) {
       return;
     }
     const candidates = this.dungeons
@@ -9530,7 +9553,7 @@ export class Simulation {
     if (!(this.hasBuilt(tribe.id, BuildingType.TunnelEntrance) || this.hasBuilt(tribe.id, BuildingType.DeepMine))) {
       return;
     }
-    const existing = this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "delve").length;
+    const existing = this.jobCountForTribe(tribe.id, "delve");
     const desired = tribe.age >= AgeType.Iron ? 2 : 1;
     if (existing >= desired) {
       return;
@@ -9780,7 +9803,7 @@ export class Simulation {
     preferredBuildingType: BuildingType,
     limit = 3,
   ): void {
-    if (this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "craft").length >= limit) {
+    if (this.jobCountForTribe(tribe.id, "craft") >= limit) {
       return;
     }
     if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "craft" && (job.payload as CraftPayload | undefined)?.output === output)) {
@@ -10797,6 +10820,7 @@ export class Simulation {
       branchMaturityNotified: type === BuildingType.CapitalHall ? 1 : undefined,
     };
     this.buildings.push(building);
+    this.invalidateLookupCaches();
     this.invalidateSummaryCaches();
 
     for (let dy = 0; dy < building.height; dy += 1) {
@@ -10968,6 +10992,7 @@ export class Simulation {
       carryingAmount: 0,
       moveCooldown: 0,
       taskSearchCooldown: 0,
+      claimedJobId: null,
       spellCooldown: 0,
       ageTicks: 0,
       houseId: resolvedHouseId,
@@ -11001,6 +11026,47 @@ export class Simulation {
     const path = findPath(this.world, startX, startY, goalX, goalY, mode, maxSteps);
     this.pathCache.set(key, { tick: this.tickCount, path });
     return path;
+  }
+
+  private invalidateLookupCaches(): void {
+    this.lookupCachesDirty = true;
+  }
+
+  private ensureLookupCaches(): void {
+    if (!this.lookupCachesDirty && this.lookupCacheTick === this.tickCount) {
+      return;
+    }
+    this.buildingByIdCache.clear();
+    for (const building of this.buildings) {
+      this.buildingByIdCache.set(building.id, building);
+    }
+    this.jobByIdCache.clear();
+    this.claimedJobByAgentCache.clear();
+    for (const job of this.jobs) {
+      this.jobByIdCache.set(job.id, job);
+      if (job.claimedBy !== null) {
+        this.claimedJobByAgentCache.set(job.claimedBy, job);
+      }
+    }
+    this.lookupCachesDirty = false;
+    this.lookupCacheTick = this.tickCount;
+  }
+
+  private getBuildingById(id: number | null | undefined): BuildingState | null {
+    if (id == null) return null;
+    this.ensureLookupCaches();
+    return this.buildingByIdCache.get(id) ?? null;
+  }
+
+  private getJobById(id: number | null | undefined): JobState | null {
+    if (id == null) return null;
+    this.ensureLookupCaches();
+    return this.jobByIdCache.get(id) ?? null;
+  }
+
+  private getClaimedJobForAgent(agentId: number): JobState | null {
+    this.ensureLookupCaches();
+    return this.claimedJobByAgentCache.get(agentId) ?? null;
   }
 
   private capitalHallsForTribe(tribeId: number): BuildingState[] {
@@ -11074,6 +11140,26 @@ export class Simulation {
     return this.cachedAgentsByTribe[tribeId] ?? [];
   }
 
+  private jobsForTribe(tribeId: number): readonly JobState[] {
+    const jobs: JobState[] = [];
+    for (const job of this.jobs) {
+      if (job.tribeId === tribeId) {
+        jobs.push(job);
+      }
+    }
+    return jobs;
+  }
+
+  private jobCountForTribe(tribeId: number, kind: JobKind): number {
+    let count = 0;
+    for (const job of this.jobs) {
+      if (job.tribeId === tribeId && job.kind === kind) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   private invalidateSummaryCaches(): void {
     this.summaryRevision += 1;
   }
@@ -11101,7 +11187,6 @@ export class Simulation {
       list.push(agent);
       this.cachedPopulationByTribe[agent.tribeId] += 1;
     }
-
     this.summaryCacheRevision = this.summaryRevision;
   }
 
@@ -11312,7 +11397,7 @@ export class Simulation {
         horses: Math.floor(tribe.resources[ResourceType.Horses]),
         boats: this.boats.filter((boat) => boat.tribeId === tribe.id).length,
         wagons: this.wagons.filter((wagon) => wagon.tribeId === tribe.id).length,
-        haulJobs: this.jobs.filter((job) => job.tribeId === tribe.id && job.kind === "haul").length,
+        haulJobs: this.jobCountForTribe(tribe.id, "haul"),
         livestock: Math.floor(tribe.resources[ResourceType.Livestock]),
         flooded,
         delves: this.buildingCount(tribe.id, BuildingType.TunnelEntrance) + this.buildingCount(tribe.id, BuildingType.DeepMine),

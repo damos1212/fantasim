@@ -874,7 +874,7 @@ export class GameRenderer {
     };
   }
 
-  private captureMotion<T extends { id: number; x: number; y: number }>(store: Map<number, MotionState>, previous: T[], next: T[], nowMs: number): void {
+  private captureMotion<T extends { id: number; x: number; y: number; moveToX?: number; moveToY?: number }>(store: Map<number, MotionState>, previous: T[], next: T[], nowMs: number): void {
     const previousMap = new Map(previous.map((entry) => [entry.id, entry]));
     const nextIds = new Set(next.map((entry) => entry.id));
     for (const id of [...store.keys()]) {
@@ -886,11 +886,15 @@ export class GameRenderer {
       const before = previousMap.get(entry.id);
       const priorState = store.get(entry.id);
       const currentPosition = this.motionPositionFromState(priorState, before?.x ?? entry.x, before?.y ?? entry.y, nowMs);
+      const previewX = entry.moveToX ?? entry.x;
+      const previewY = entry.moveToY ?? entry.y;
+      const toX = entry.x === previewX ? entry.x : entry.x + (previewX - entry.x) * 0.55;
+      const toY = entry.y === previewY ? entry.y : entry.y + (previewY - entry.y) * 0.55;
       store.set(entry.id, {
         fromX: currentPosition.x,
         fromY: currentPosition.y,
-        toX: entry.x,
-        toY: entry.y,
+        toX,
+        toY,
         startAt: nowMs,
         endAt: nowMs + this.lastSnapshotInterval,
       });
@@ -947,9 +951,10 @@ export class GameRenderer {
     if (!ctx) {
       throw new Error("Failed to create cached texture context");
     }
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     draw(ctx);
     const texture = Texture.from(canvas);
+    texture.source.scaleMode = "linear";
     this.iconTextures.set(key, texture);
     return texture;
   }
@@ -1459,13 +1464,17 @@ export class GameRenderer {
     const maxTileX = Math.min(world.width - 1, Math.ceil((this.cameraX + viewportWidth / this.zoom) / TILE_SIZE) + 1);
     const maxTileY = Math.min(world.height - 1, Math.ceil((this.cameraY + viewportHeight / this.zoom) / TILE_SIZE) + 1);
     const lodStep = 1;
-    const staticViewportSignature = `${this.viewMode}:${lodStep}:${minTileX}:${minTileY}:${maxTileX}:${maxTileY}`;
+    const chunkTileSpan = STATIC_CHUNK_TILES * lodStep;
+    const minChunkX = Math.floor(minTileX / chunkTileSpan);
+    const minChunkY = Math.floor(minTileY / chunkTileSpan);
+    const maxChunkX = Math.floor(maxTileX / chunkTileSpan);
+    const maxChunkY = Math.floor(maxTileY / chunkTileSpan);
+    const staticViewportSignature = `${this.viewMode}:${lodStep}:${minChunkX}:${minChunkY}:${maxChunkX}:${maxChunkY}`;
     const atmosphereViewportSignature = `${this.viewMode}:${Math.floor(minTileX / 8)}:${Math.floor(minTileY / 8)}:${Math.floor(maxTileX / 8)}:${Math.floor(maxTileY / 8)}:${lodStep === 1 ? 1 : 0}:${this.zoom > 0.92 ? 1 : 0}`;
     const now = nowMs;
     const redrawStaticScene =
       this.staticSceneDirty ||
-      this.lastStaticViewportSignature !== staticViewportSignature ||
-      (this.viewMode === "surface" && this.zoom > 1.35 && now - this.lastStaticRenderAt > 1100);
+      this.lastStaticViewportSignature !== staticViewportSignature;
     const redrawAtmosphere =
       this.atmosphereDirty ||
       this.lastAtmosphereViewportSignature !== atmosphereViewportSignature ||
@@ -1476,12 +1485,12 @@ export class GameRenderer {
 
     if (redrawStaticScene) {
       this.terrainGraphics.clear();
-      this.overlayGraphics.clear();
     }
     if (redrawAtmosphere) {
       this.atmosphereGraphics.clear();
     }
     this.unitGraphics.clear();
+    this.overlayGraphics.clear();
     this.selectionGraphics.clear();
     for (const state of this.iconSprites.values()) {
       state.sprite.visible = false;
@@ -1918,8 +1927,9 @@ export class GameRenderer {
     if (!context) {
       throw new Error("Failed to create static chunk render context");
     }
-    context.imageSmoothingEnabled = false;
+    context.imageSmoothingEnabled = true;
     const texture = Texture.from(canvas);
+    texture.source.scaleMode = "linear";
     const sprite = new Sprite(texture);
     sprite.x = chunkX * this.chunkPixelSize(lodStep);
     sprite.y = chunkY * this.chunkPixelSize(lodStep);
@@ -2804,9 +2814,9 @@ export class GameRenderer {
     if (!ctx) return;
     const scaleX = this.minimap.width / world.width;
     const scaleY = this.minimap.height / world.height;
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     if (this.minimapTerrainDirty && backdropCtx) {
-      backdropCtx.imageSmoothingEnabled = false;
+      backdropCtx.imageSmoothingEnabled = true;
       backdropCtx.clearRect(0, 0, this.minimapBackdrop.width, this.minimapBackdrop.height);
       for (let y = 0; y < this.minimap.height; y += 1) {
         for (let x = 0; x < this.minimap.width; x += 1) {
