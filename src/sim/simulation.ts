@@ -213,6 +213,7 @@ type BranchEventStatus = {
   lastShortageTick: number;
   lastRecoveryTick: number;
   lastRescueTick: number;
+  lastUnrestTick: number;
   separatism: number;
 };
 
@@ -4763,6 +4764,7 @@ export class Simulation {
       lastShortageTick: -SIM_TICKS_PER_SECOND * 30,
       lastRecoveryTick: -SIM_TICKS_PER_SECOND * 30,
       lastRescueTick: -SIM_TICKS_PER_SECOND * 30,
+      lastUnrestTick: -SIM_TICKS_PER_SECOND * 40,
       separatism: 6,
     };
     this.branchEventStatus.set(hallId, status);
@@ -5058,6 +5060,29 @@ export class Simulation {
           kind: "branch-unrest",
           title: `${tribe.name} faces branch unrest`,
           description: `${tribe.name}'s distant branch is becoming restless under shortages and weak legitimacy.`,
+          x: center.x,
+          y: center.y,
+          tribeId: tribe.id,
+        });
+      }
+      if (status.separatism >= 82 && this.tickCount - status.lastUnrestTick > SIM_TICKS_PER_SECOND * 34) {
+        status.lastUnrestTick = this.tickCount;
+        hall.stock[ResourceType.Rations] = Math.max(0, hall.stock[ResourceType.Rations] - randInt(this.random, 8, 18));
+        hall.stock[ResourceType.Wood] = Math.max(0, hall.stock[ResourceType.Wood] - randInt(this.random, 4, 12));
+        hall.stock[ResourceType.Stone] = Math.max(0, hall.stock[ResourceType.Stone] - randInt(this.random, 3, 10));
+        tribe.morale = Math.max(12, tribe.morale - 4);
+        tribe.legitimacy = clamp(tribe.legitimacy - 5, 10, 98);
+        const localVictim = this.agents
+          .filter((agent) => agent.tribeId === tribe.id && manhattan(agent.x, agent.y, center.x, center.y) <= 8)
+          .sort((a, b) => manhattan(a.x, a.y, center.x, center.y) - manhattan(b.x, b.y, center.x, center.y))[0];
+        if (localVictim) {
+          localVictim.wounds = clamp(localVictim.wounds + 1, 0, 5);
+          localVictim.health = Math.max(26, localVictim.health - randInt(this.random, 4, 10));
+        }
+        this.pushEvent({
+          kind: "branch-riot",
+          title: `${tribe.name} suffers a branch riot`,
+          description: `${tribe.name}'s distant branch turns disorderly, damaging stores and weakening local order.`,
           x: center.x,
           y: center.y,
           tribeId: tribe.id,

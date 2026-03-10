@@ -1195,6 +1195,26 @@ describe("simulation", () => {
     expect(branch?.separatism).toBeGreaterThanOrEqual(74);
   });
 
+  test("high branch separatism can trigger local riot losses", () => {
+    const sim = createSimulation("branch-riot", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 24, tribe.capitalY + 10);
+
+    sim.claimTerritory(tribe.id, branchHall.x + 1, branchHall.y + 1, 8);
+    branchHall.stock[ResourceType.Rations] = 30;
+    branchHall.stock[ResourceType.Wood] = 18;
+    branchHall.stock[ResourceType.Stone] = 14;
+    const status = sim.branchEventStatusFor(branchHall.id);
+    status.separatism = 90;
+    sim.tickCount = 1000;
+
+    sim.updateBranchHistory(tribe);
+
+    expect(branchHall.stock[ResourceType.Rations]).toBeLessThan(30);
+    expect(sim.events.some((event: any) => event.kind === "branch-riot" && event.tribeId === tribe.id)).toBe(true);
+    expect(tribe.legitimacy).toBeLessThan(78);
+  });
+
   test("branch redistribution does not drain a weak branch below reserve", () => {
     const sim = createSimulation("branch-reserve-protection", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes.find((entry: any) => entry.race.type === RaceType.Humans);

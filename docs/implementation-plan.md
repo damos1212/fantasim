@@ -1460,6 +1460,7 @@ Latest completed execution slices:
 - tribes now track legitimacy, rival claimants, sect tension, and branch separatism as first-class social pressure
 - succession can now surface explicit claimant pressure, and branch unrest can now surface as its own event pressure before full breakaways
 - tribe, branch, and selected-unit UI now expose the first social-state slice instead of hiding it behind raw sim fields
+- high-separatism branches can now riot locally, damaging stocks and legitimacy instead of only showing warning-state numbers
 
 Current concrete follow-up gaps:
 
