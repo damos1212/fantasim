@@ -394,6 +394,7 @@ type AgentState = {
   carrying: ResourceType;
   carryingAmount: number;
   moveCooldown: number;
+  taskSearchCooldown: number;
   spellCooldown: number;
   ageTicks: number;
   houseId: number;
@@ -757,17 +758,21 @@ export class Simulation {
       this.runTribeStrategy();
     }
 
-    this.updateWeather();
-    this.updateSurfaceWater();
-    this.updateWaterInfrastructure();
-    this.updateAnimals();
+    if (this.tickCount % 2 === 1) {
+      this.updateWeather();
+      this.updateSurfaceWater();
+      this.updateWaterInfrastructure();
+      this.updateAnimals();
+      this.updateLegendaryCreatures();
+    }
     this.updateBoats();
     this.updateWagons();
     this.updateCaravans();
-    this.updateTribute();
-    this.updateAllianceAid();
+    if (this.tickCount % 4 === 0) {
+      this.updateTribute();
+      this.updateAllianceAid();
+    }
     this.updateSiegeEngines();
-    this.updateLegendaryCreatures();
     this.updateAgents();
     this.consumeAndGrow();
     this.progressResearch();
@@ -905,6 +910,7 @@ export class Simulation {
           carrying: ResourceType.None,
           carryingAmount: 0,
           moveCooldown: 0,
+          taskSearchCooldown: 0,
           spellCooldown: 0,
           ageTicks: randInt(this.random, 0, YEAR_TICKS * 3),
           houseId: Math.floor(i / 3) + 1,
@@ -2780,7 +2786,11 @@ export class Simulation {
       }
 
       if (!agent.task) {
-        agent.task = this.claimTask(agent, tribe);
+        if (agent.taskSearchCooldown > 0) {
+          agent.taskSearchCooldown -= 1;
+        } else {
+          agent.task = this.claimTask(agent, tribe);
+        }
       }
       agent.underground = Boolean(agent.task && agent.task.kind === "delve");
       agent.status = this.describeAgentStatus(agent, localWeather);
@@ -4009,6 +4019,7 @@ export class Simulation {
   }
 
   private finishTask(agent: AgentState): void {
+    const lastTask = agent.task;
     const job = this.jobs.find((entry) => entry.claimedBy === agent.id);
     if (job) {
       this.jobs.splice(this.jobs.indexOf(job), 1);
@@ -4017,6 +4028,7 @@ export class Simulation {
     agent.path = [];
     agent.pathIndex = 0;
     agent.underground = false;
+    agent.taskSearchCooldown = lastTask?.kind === "idle" ? 2 : 1;
   }
 
   private releaseTask(agent: AgentState): void {
@@ -4028,6 +4040,7 @@ export class Simulation {
     agent.path = [];
     agent.pathIndex = 0;
     agent.underground = false;
+    agent.taskSearchCooldown = 2;
   }
 
   private findRecoverySite(tribe: TribeState, agent: AgentState): { x: number; y: number } | null {
@@ -10949,6 +10962,7 @@ export class Simulation {
       carrying: ResourceType.None,
       carryingAmount: 0,
       moveCooldown: 0,
+      taskSearchCooldown: 0,
       spellCooldown: 0,
       ageTicks: 0,
       houseId: resolvedHouseId,
