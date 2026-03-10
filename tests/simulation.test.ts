@@ -189,6 +189,18 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("initial world payload includes roads, ownership, and visible resources", () => {
+    const sim = createSimulation("initial-render-payload", { width: 384, height: 384 }) as any;
+    const initial = sim.getInitialMessage();
+
+    expect(initial.world.road.length).toBe(384 * 384);
+    expect(initial.world.owner.length).toBe(384 * 384);
+    expect(initial.world.resourceType.length).toBe(384 * 384);
+    expect(initial.world.resourceAmount.length).toBe(384 * 384);
+    expect(initial.world.road.some((value: number) => value > 0)).toBe(true);
+    expect(initial.world.owner.some((value: number) => value >= 0)).toBe(true);
+  });
+
   test("completed builds cannot overlap an occupied footprint", () => {
     const sim = createSimulation("build-overlap-guard", { width: 384, height: 384 }) as any;
     const tribe = sim.tribes[0];

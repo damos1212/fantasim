@@ -309,6 +309,10 @@ export type StaticWorldData = {
   biome: Uint8Array;
   feature: Uint8Array;
   surfaceWater: Uint8Array;
+  road: Uint8Array;
+  owner: Int16Array;
+  resourceType: Uint8Array;
+  resourceAmount: Uint16Array;
   undergroundTerrain: Uint8Array;
   undergroundFeature: Uint8Array;
   undergroundResourceType: Uint8Array;

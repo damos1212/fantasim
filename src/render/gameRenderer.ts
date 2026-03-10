@@ -95,19 +95,6 @@ const ROLE_ACCENTS: Record<AgentRole, number> = {
   [AgentRole.Mage]: 0x7fafff,
 };
 
-const TASK_COLORS: Record<string, number> = {
-  build: 0xe7be68,
-  haul: 0xd4b16e,
-  chop: 0x6ac16c,
-  cut_tree: 0x6ac16c,
-  mine: 0xb0c7d7,
-  quarry: 0xb0c7d7,
-  farm: 0xb9d760,
-  fish: 0x76cee0,
-  hunt: 0xde6c62,
-  earthwork: 0x8d6c4c,
-};
-
 const ANIMAL_COLORS: Record<AnimalType, number> = {
   [AnimalType.Deer]: 0xc6a16a,
   [AnimalType.Boar]: 0x7e6554,
@@ -469,6 +456,9 @@ export class GameRenderer {
   cameraX = 0;
   cameraY = 0;
   zoom = 1.18;
+  targetCameraX = 0;
+  targetCameraY = 0;
+  targetZoom = 1.18;
   dragging = false;
   dragMoved = false;
   lastPointer = { x: 0, y: 0 };
@@ -564,6 +554,7 @@ export class GameRenderer {
       backgroundAlpha: 0,
       resolution: 1,
     });
+    this.app.canvas.style.imageRendering = "pixelated";
 
     this.app.ticker.maxFPS = 60;
 
@@ -777,10 +768,10 @@ export class GameRenderer {
     this.state.fertility = world.fertility.slice();
     this.state.moisture = world.moisture.slice();
     this.state.temperature = world.temperature.slice();
-    this.state.road = new Uint8Array(world.width * world.height);
-    this.state.owner = new Int16Array(world.width * world.height).fill(-1);
-    this.state.resourceType = new Uint8Array(world.width * world.height);
-    this.state.resourceAmount = new Uint16Array(world.width * world.height);
+    this.state.road = world.road.slice();
+    this.state.owner = world.owner.slice();
+    this.state.resourceType = world.resourceType.slice();
+    this.state.resourceAmount = world.resourceAmount.slice();
     this.state.tribes = tribes;
     const defaultTribe = tribes.find((tribe) => tribe.race === RaceType.Humans) ?? tribes[0];
     this.selectedTribeId = defaultTribe?.id ?? null;
@@ -793,6 +784,9 @@ export class GameRenderer {
       this.cameraX = world.width * TILE_SIZE * 0.42;
       this.cameraY = world.height * TILE_SIZE * 0.42;
     }
+    this.targetZoom = this.zoom;
+    this.targetCameraX = this.cameraX;
+    this.targetCameraY = this.cameraY;
     this.staticSceneDirty = true;
     this.minimapDirty = true;
     this.minimapTerrainDirty = true;
@@ -1375,8 +1369,10 @@ export class GameRenderer {
       if (Math.abs(dx) + Math.abs(dy) > 2) {
         this.dragMoved = true;
       }
-      this.cameraX -= dx / this.zoom;
-      this.cameraY -= dy / this.zoom;
+      this.targetCameraX -= dx / this.targetZoom;
+      this.targetCameraY -= dy / this.targetZoom;
+      this.cameraX = this.targetCameraX;
+      this.cameraY = this.targetCameraY;
       this.lastPointer = { x: event.clientX, y: event.clientY };
       this.minimapDirty = true;
     });
@@ -1397,15 +1393,15 @@ export class GameRenderer {
         event.preventDefault();
         const factor = event.deltaY < 0 ? 1.12 : 0.9;
         const previousZoom = this.zoom;
-        const nextZoom = clamp(this.zoom * factor, 0.3, 2.8);
+        const nextZoom = clamp(this.targetZoom * factor, 0.3, 2.8);
         const rect = canvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
         const mouseY = event.clientY - rect.top;
         const worldX = this.cameraX + mouseX / previousZoom;
         const worldY = this.cameraY + mouseY / previousZoom;
-        this.zoom = nextZoom;
-        this.cameraX = worldX - mouseX / this.zoom;
-        this.cameraY = worldY - mouseY / this.zoom;
+        this.targetZoom = nextZoom;
+        this.targetCameraX = worldX - mouseX / this.targetZoom;
+        this.targetCameraY = worldY - mouseY / this.targetZoom;
         this.minimapDirty = true;
       },
       { passive: false },
@@ -1444,8 +1440,8 @@ export class GameRenderer {
   private focusWorld(tileX: number, tileY: number): void {
     const viewportWidth = this.app.renderer.width;
     const viewportHeight = this.app.renderer.height;
-    this.cameraX = tileX * TILE_SIZE - viewportWidth / this.zoom / 2;
-    this.cameraY = tileY * TILE_SIZE - viewportHeight / this.zoom / 2;
+    this.targetCameraX = tileX * TILE_SIZE - viewportWidth / this.targetZoom / 2;
+    this.targetCameraY = tileY * TILE_SIZE - viewportHeight / this.targetZoom / 2;
     this.minimapDirty = true;
   }
 
@@ -1467,6 +1463,11 @@ export class GameRenderer {
     }
     this.lastFrameAt = nowMs;
     this.presentationClock += frameDelta * (this.paused ? 0.35 : 0.7 + this.simSpeed * 0.18);
+    const cameraEase = clamp(frameDelta * 10, 0.12, 0.45);
+    const zoomEase = clamp(frameDelta * 12, 0.14, 0.5);
+    this.zoom += (this.targetZoom - this.zoom) * zoomEase;
+    this.cameraX += (this.targetCameraX - this.cameraX) * cameraEase;
+    this.cameraY += (this.targetCameraY - this.cameraY) * cameraEase;
     const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
     if (this.followSelectedUnit && this.selectedUnitId !== null) {
       const followed = this.state.agents.find((agent) => agent.id === this.selectedUnitId);
@@ -1540,21 +1541,12 @@ export class GameRenderer {
       this.lastAtmosphereViewportSignature = atmosphereViewportSignature;
     }
 
-    if (this.viewMode === "surface" && lodStep === 1) {
-      const drawDetailedBuildings = this.zoom > 1.98;
-      const drawSimplifiedBuildings = this.zoom > 0.72;
+    if (this.viewMode === "surface") {
       for (const building of this.state.buildings) {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        if (drawDetailedBuildings) {
-          this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), true, 0, 0, true);
-        } else if (drawSimplifiedBuildings) {
-          this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), false, 0, 0, false);
-          this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
-        } else {
-          this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
-        }
+        this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
       }
     }
 
@@ -1562,23 +1554,15 @@ export class GameRenderer {
       this.drawBranchMarkers(minTileX, minTileY, maxTileX, maxTileY, tribeById);
     }
 
-    const useDetailedEntities = this.zoom > 1.38;
-
     for (const animal of this.state.animals) {
       if (this.viewMode === "underground") continue;
       const position = entityPosition(this.animalMotion, animal.id, animal.x, animal.y, nowMs, animal.moveToX, animal.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
-      if (!useDetailedEntities) {
-        const px = position.x * TILE_SIZE + TILE_SIZE * 0.3;
-        const py = position.y * TILE_SIZE + TILE_SIZE * 0.3;
-        this.upsertIconSprite(`animal:${animal.id}`, px, py, 4, 4, ANIMAL_COLORS[animal.type], 0.8);
-      } else {
-        const animPhase = this.presentationClock * 6 + animal.id * 0.37;
-        const bob = Math.sin(animPhase) * 0.35;
-        this.upsertTexturedSprite(`animal:${animal.id}:detail`, `animal:${animal.type}`, this.animalTexture(animal), position.x * TILE_SIZE, position.y * TILE_SIZE + bob, TILE_SIZE, TILE_SIZE, 0.96);
-      }
+      const animPhase = this.presentationClock * 6 + animal.id * 0.37;
+      const bob = Math.sin(animPhase) * 0.35;
+      this.upsertTexturedSprite(`animal:${animal.id}:detail`, `animal:${animal.type}`, this.animalTexture(animal), position.x * TILE_SIZE, position.y * TILE_SIZE + bob, TILE_SIZE, TILE_SIZE, 0.96);
     }
 
     for (const boat of this.state.boats) {
@@ -1589,13 +1573,9 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(boat.tribeId);
-      if (!useDetailedEntities) {
-        this.upsertIconSprite(`boat:${boat.id}`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
-      } else {
-        const cargoColor = boat.cargo > 0 ? 0xf4d36c : 0;
-        const texture = this.vehicleTexture("boat", tribe?.color ?? 0xffffff, String(boat.task), cargoColor, boat.task === BoatTaskType.ReturnToDock);
-        this.upsertTexturedSprite(`boat:${boat.id}:detail`, `boat:${boat.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
-      }
+      const cargoColor = boat.cargo > 0 ? 0xf4d36c : 0;
+      const texture = this.vehicleTexture("boat", tribe?.color ?? 0xffffff, String(boat.task), cargoColor, boat.task === BoatTaskType.ReturnToDock);
+      this.upsertTexturedSprite(`boat:${boat.id}:detail`, `boat:${boat.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
     }
 
     for (const wagon of this.state.wagons) {
@@ -1606,20 +1586,15 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(wagon.tribeId);
-      if (!useDetailedEntities) {
-        this.upsertIconSprite(`wagon:${wagon.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
-        this.upsertIconSprite(`wagon:${wagon.id}:flag`, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
-      } else {
-        const cargoColor = wagon.cargoAmount > 0
-          ? wagon.cargoType === ResourceType.Wood ? 0x9b7145
-            : wagon.cargoType === ResourceType.Stone ? 0xb8c1c8
-            : wagon.cargoType === ResourceType.Ore ? 0xc08a56
-            : wagon.cargoType === ResourceType.Planks ? 0xb58a59
-            : 0xf0d780
-          : 0;
-        const texture = this.vehicleTexture("wagon", tribe?.color ?? 0xffffff, String(wagon.task), cargoColor, wagon.task === WagonTaskType.ToDrop);
-        this.upsertTexturedSprite(`wagon:${wagon.id}:detail`, `wagon:${wagon.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
-      }
+      const cargoColor = wagon.cargoAmount > 0
+        ? wagon.cargoType === ResourceType.Wood ? 0x9b7145
+          : wagon.cargoType === ResourceType.Stone ? 0xb8c1c8
+          : wagon.cargoType === ResourceType.Ore ? 0xc08a56
+          : wagon.cargoType === ResourceType.Planks ? 0xb58a59
+          : 0xf0d780
+        : 0;
+      const texture = this.vehicleTexture("wagon", tribe?.color ?? 0xffffff, String(wagon.task), cargoColor, wagon.task === WagonTaskType.ToDrop);
+      this.upsertTexturedSprite(`wagon:${wagon.id}:detail`, `wagon:${wagon.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
     }
 
     for (const caravan of this.state.caravans) {
@@ -1630,20 +1605,15 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(caravan.tribeId);
-      if (!useDetailedEntities) {
-        this.upsertIconSprite(`caravan:${caravan.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
-        this.upsertIconSprite(`caravan:${caravan.id}:flag`, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
-      } else {
-        const cargoColor = caravan.cargoAmount > 0
-          ? caravan.cargoType === ResourceType.Wood ? 0x9b7145
-            : caravan.cargoType === ResourceType.Stone ? 0xb8c1c8
-            : caravan.cargoType === ResourceType.Ore ? 0xc08a56
-            : caravan.cargoType === ResourceType.Fish ? 0x9ddff3
-            : 0xf0d780
-          : 0;
-        const texture = this.vehicleTexture("caravan", tribe?.color ?? 0xffffff, String(caravan.task), cargoColor, caravan.task === CaravanTaskType.ToPartner);
-        this.upsertTexturedSprite(`caravan:${caravan.id}:detail`, `caravan:${caravan.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
-      }
+      const cargoColor = caravan.cargoAmount > 0
+        ? caravan.cargoType === ResourceType.Wood ? 0x9b7145
+          : caravan.cargoType === ResourceType.Stone ? 0xb8c1c8
+          : caravan.cargoType === ResourceType.Ore ? 0xc08a56
+          : caravan.cargoType === ResourceType.Fish ? 0x9ddff3
+          : 0xf0d780
+        : 0;
+      const texture = this.vehicleTexture("caravan", tribe?.color ?? 0xffffff, String(caravan.task), cargoColor, caravan.task === CaravanTaskType.ToPartner);
+      this.upsertTexturedSprite(`caravan:${caravan.id}:detail`, `caravan:${caravan.task}:${tribe?.color ?? 0xffffff}:${cargoColor}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
     }
 
     for (const engine of this.state.siegeEngines) {
@@ -1653,17 +1623,13 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(engine.tribeId);
-      if (!useDetailedEntities) {
-        this.upsertIconSprite(`siege:${engine.id}`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
-      } else {
-        const texture = this.vehicleTexture("siege", tribe?.color ?? 0xffffff, String(engine.type), 0, engine.task === "bombard");
-        this.upsertTexturedSprite(`siege:${engine.id}:detail`, `siege:${engine.type}:${tribe?.color ?? 0xffffff}:${engine.task === "bombard" ? 1 : 0}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
-        if (this.zoom > 1.12) {
-          const px = position.x * TILE_SIZE;
-          const py = position.y * TILE_SIZE;
-          drawPixelRect(this.unitGraphics, px + 3, py + 1, Math.min(10, 10 * (engine.hp / 100)), 1, 0x78d67a, 0.85);
-          drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
-        }
+      const texture = this.vehicleTexture("siege", tribe?.color ?? 0xffffff, String(engine.type), 0, engine.task === "bombard");
+      this.upsertTexturedSprite(`siege:${engine.id}:detail`, `siege:${engine.type}:${tribe?.color ?? 0xffffff}:${engine.task === "bombard" ? 1 : 0}`, texture, position.x * TILE_SIZE, position.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
+      if (this.selectedUnitId === engine.id || this.zoom > 1.12) {
+        const px = position.x * TILE_SIZE;
+        const py = position.y * TILE_SIZE;
+        drawPixelRect(this.unitGraphics, px + 3, py + 1, Math.min(10, 10 * (engine.hp / 100)), 1, 0x78d67a, 0.85);
+        drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
       }
     }
 
@@ -1681,7 +1647,7 @@ export class GameRenderer {
         continue;
       }
       const texture = this.vehicleTexture("dungeon", 0, String(dungeon.type));
-      this.upsertTexturedSprite(`dungeon:${dungeon.id}:detail`, `dungeon:${dungeon.type}`, texture, dungeon.x * TILE_SIZE, dungeon.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, this.zoom > 1.02 ? 0.95 : 0.82);
+      this.upsertTexturedSprite(`dungeon:${dungeon.id}:detail`, `dungeon:${dungeon.type}`, texture, dungeon.x * TILE_SIZE, dungeon.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.95);
     }
 
     for (const creature of this.state.creatures) {
@@ -1690,16 +1656,12 @@ export class GameRenderer {
       if (creature.x < minTileX || creature.y < minTileY || creature.x > maxTileX || creature.y > maxTileY) {
         continue;
       }
-      if (this.zoom <= 1.02) {
-        this.upsertIconSprite(`creature:${creature.id}`, creature.x * TILE_SIZE + 3, creature.y * TILE_SIZE + 5, 10, 8, 0xd06b48, 0.85);
-      } else {
-        let body = 0xd05d3a;
-        if (creature.type === LegendaryCreatureType.SeaSerpent) body = 0x4bb0cf;
-        if (creature.type === LegendaryCreatureType.ForestSpirit) body = 0x67b56c;
-        if (creature.type === LegendaryCreatureType.AshTitan) body = 0x6f6363;
-        const texture = this.vehicleTexture("creature", body, String(creature.type));
-        this.upsertTexturedSprite(`creature:${creature.id}:detail`, `creature:${creature.type}`, texture, creature.x * TILE_SIZE, creature.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
-      }
+      let body = 0xd05d3a;
+      if (creature.type === LegendaryCreatureType.SeaSerpent) body = 0x4bb0cf;
+      if (creature.type === LegendaryCreatureType.ForestSpirit) body = 0x67b56c;
+      if (creature.type === LegendaryCreatureType.AshTitan) body = 0x6f6363;
+      const texture = this.vehicleTexture("creature", body, String(creature.type));
+      this.upsertTexturedSprite(`creature:${creature.id}:detail`, `creature:${creature.type}`, texture, creature.x * TILE_SIZE, creature.y * TILE_SIZE, TILE_SIZE, TILE_SIZE, 0.98);
     }
 
     for (const agent of this.state.agents) {
@@ -1720,43 +1682,22 @@ export class GameRenderer {
         continue;
       }
       const tribe = tribeById.get(agent.tribeId);
-      const detailedAgent = useDetailedEntities;
-      if (!detailedAgent) {
-        const bodyColor = darken(tribe?.color ?? 0xffffff, 12);
-        this.upsertIconSprite(`agent:${agent.id}:outline`, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 3, 6, 6, 0x1e1712, 0.5);
-        this.upsertIconSprite(`agent:${agent.id}:body`, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 5, 5, bodyColor, 0.94);
-        if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
-          this.upsertIconSprite(`agent:${agent.id}:accent`, position.x * TILE_SIZE + 9, position.y * TILE_SIZE + 2, 2, 2, ROLE_ACCENTS[agent.role], 0.9);
-        }
-        if (agent.task === "build" || agent.task === "haul" || agent.task === "chop" || agent.task === "mine" || agent.task === "farm" || agent.task === "fish" || agent.task === "hunt") {
-          this.upsertIconSprite(`agent:${agent.id}:task`, position.x * TILE_SIZE + 2, position.y * TILE_SIZE + 2, 2, 2, TASK_COLORS[agent.task] ?? 0xf0d780, 0.88);
-        }
-        if (agent.carrying !== ResourceType.None && agent.carryingAmount > 0) {
-          this.upsertIconSprite(`agent:${agent.id}:carry`, position.x * TILE_SIZE + 10, position.y * TILE_SIZE + 2, 3, 3, resourceVisualColor(agent.carrying), 0.92);
-        }
-      } else {
-        this.drawAgentSprite(agent, position.x, position.y, tribe);
-        const shouldDrawAgentOverlay =
-          this.selectedUnitId === agent.id ||
-          agent.hero ||
-          (this.zoom > 2.12 && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.task !== "idle")) ||
-          agent.health < 55;
-        if (shouldDrawAgentOverlay) {
-          const px = position.x * TILE_SIZE;
-          const py = position.y * TILE_SIZE;
-          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.18 || agent.health < 55) {
-            drawPixelRect(this.unitGraphics, px + 3, py + 1, 10 * (agent.health / 100), 1, 0x78d67a, 0.9);
-            drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
-          }
-          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.24) {
-            const taskBob = (Math.sin(this.presentationClock * 4 + agent.id * 0.3) + 1) * 0.8;
-            this.drawTaskIndicator(agent.task, px, py - 3 - taskBob);
-            this.drawActionEffect(agent, px, py);
-          }
-        }
-        if (agent.hero || this.selectedUnitId === agent.id) {
-          this.drawAgentLabel(agent, position.x, position.y);
-        }
+      this.drawAgentSprite(agent, position.x, position.y, tribe);
+      const shouldDrawAgentOverlay =
+        this.selectedUnitId === agent.id ||
+        agent.hero ||
+        agent.health < 55;
+      if (shouldDrawAgentOverlay) {
+        const px = position.x * TILE_SIZE;
+        const py = position.y * TILE_SIZE;
+        drawPixelRect(this.unitGraphics, px + 3, py + 1, 10 * (agent.health / 100), 1, 0x78d67a, 0.9);
+        drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
+        const taskBob = (Math.sin(this.presentationClock * 4 + agent.id * 0.3) + 1) * 0.8;
+        this.drawTaskIndicator(agent.task, px, py - 3 - taskBob);
+        this.drawActionEffect(agent, px, py);
+      }
+      if (agent.hero || this.selectedUnitId === agent.id) {
+        this.drawAgentLabel(agent, position.x, position.y);
       }
     }
 
