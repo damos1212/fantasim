@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createSimulation } from "../src/sim/simulation";
 import { INITIAL_AGENTS_PER_TRIBE, INITIAL_TRIBE_COUNT } from "../src/shared/config";
-import { AgentRole, AgeType, BuildingType, ResourceType } from "../src/shared/gameTypes";
+import { AgentRole, AgeType, BuildingType, RaceType, ResourceType } from "../src/shared/gameTypes";
 
 describe("simulation", () => {
   test("seeds tribes, buildings, and agents", () => {
@@ -375,6 +375,34 @@ describe("simulation", () => {
     expect(lastSnapshot.tribes.some((tribe) => tribe.contacts > 0)).toBe(true);
   });
 
+  test("trade cargo follows exporter specialization and importer need", () => {
+    const sim = createSimulation("trade-shaping", { width: 384, height: 384 }) as any;
+    const human = sim.tribes.find((tribe: any) => tribe.race.type === RaceType.Humans);
+    const dwarf = sim.tribes.find((tribe: any) => tribe.race.type === RaceType.Dwarves);
+
+    expect(human).toBeTruthy();
+    expect(dwarf).toBeTruthy();
+
+    human.age = AgeType.Stone;
+    dwarf.age = AgeType.Stone;
+    human.discovered[dwarf.id] = true;
+    dwarf.discovered[human.id] = true;
+    human.tradePacts[dwarf.id] = true;
+    dwarf.tradePacts[human.id] = true;
+    human.relations[dwarf.id] = 40;
+    dwarf.relations[human.id] = 40;
+    human.resources[ResourceType.Grain] = 120;
+    human.resources[ResourceType.Rations] = 24;
+    dwarf.resources[ResourceType.Grain] = 0;
+    dwarf.resources[ResourceType.Rations] = 4;
+
+    const warehouse = sim.placeBuilding(human.id, BuildingType.Warehouse, human.capitalX + 6, human.capitalY);
+    warehouse.stock[ResourceType.Grain] = 56;
+    warehouse.stock[ResourceType.Planks] = 4;
+
+    expect(sim.chooseTradeCargo(human, dwarf)).toBe(ResourceType.Grain);
+  });
+
   test("maturing tribes add logistics districts as settlements spread", { timeout: 30000 }, () => {
     const sim = createSimulation("district-flow", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
@@ -438,6 +466,23 @@ describe("simulation", () => {
     });
 
     expect(expandedTribes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("productive mature settlements can found branch halls", { timeout: 70000 }, () => {
+    const sim = createSimulation("branch-hall-growth", { width: 512, height: 512 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 2600; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    expect(lastSnapshot.tribes.some((tribe) => {
+      const tribeBuildings = lastSnapshot.buildings.filter((building) => building.tribeId === tribe.id);
+      return tribeBuildings.filter((building) => building.type === BuildingType.CapitalHall).length >= 2;
+    })).toBe(true);
   });
 
   test("expanding settlements keep buildings attached to road influence", { timeout: 45000 }, () => {

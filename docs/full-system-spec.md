@@ -807,6 +807,9 @@ The active implementation priorities are now:
   - branch halls and satellite districts
   - warehouse-driven hubs
   - stronger road-linked specialization
+  - branch halls can now emerge from productive remote hubs rather than only capital-centered growth
+- trade shaping:
+  - caravans prefer goods that fit race identity, active district specialization, visible stocked hubs, and partner shortages
 - long-run readability:
   - clearer world feedback for hauling, stock, work, and expansion
 

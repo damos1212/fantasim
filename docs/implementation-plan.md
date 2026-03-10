@@ -690,6 +690,8 @@ The active plan from the current prototype state is:
    - stronger warehouse hubs
    - stronger extractor-to-district growth
    - clearer proto-industry, refined goods, and trade pressure
+   - race-shaped caravan cargo sourced from visible stocked hubs
+   - productive remote hubs able to mature into branch-hall districts
    - district identity by hub type:
      - agriculture hubs pull houses, storage, preserved food, and tavern growth
      - mining hubs pull warehouses, workshops, smithies, and tool pressure
@@ -705,6 +707,7 @@ Definition of done for the current execution plan:
 - tribes visibly gather, haul, build, upgrade, and expand for long runs
 - towns spread into connected districts and branch halls instead of only one clump
 - construction and crafting depend on visible delivered materials
+- caravans move goods that match exporter surplus, hub specialization, and importer need
 - performance is stable enough that the simulation remains readable while the world grows
 
 ## Detailed Next-Phase Plan
