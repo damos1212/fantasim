@@ -5323,6 +5323,26 @@ export class Simulation {
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.Workshop, 6, target.center.x, target.center.y, 8);
       }
+      if (
+        tribe.age >= AgeType.Iron &&
+        productiveRemote &&
+        (target.building.type === BuildingType.Mine || target.building.type === BuildingType.DeepMine)
+        && population >= 28 &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.Smithy, target.center.x, target.center.y, 10) === 0 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Smithy, target.center.x, target.center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.Smithy, 6, target.center.x, target.center.y, 10);
+      }
+      if (
+        tribe.age >= AgeType.Medieval &&
+        productiveRemote &&
+        (target.building.type === BuildingType.Dock || target.building.type === BuildingType.FishingHut || target.building.type === BuildingType.Fishery)
+        && population >= 24 &&
+        this.nearbyBuildingCount(tribe.id, BuildingType.House, target.center.x, target.center.y, 9) < 2 &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 9)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.House, 5, target.center.x, target.center.y, 9);
+      }
 
       if (
         tribe.age >= AgeType.Stone &&
@@ -7200,8 +7220,17 @@ export class Simulation {
     for (const building of tribeBuildings) {
       if (!extractorTypes.includes(building.type)) continue;
       const center = buildingCenter(building);
-      const localLoad = Math.min(16, Math.max(0, this.topStoredResource(building).amount * 0.06));
-      addAnchor(center.x, center.y, 8 + localLoad);
+      const top = this.topStoredResource(building);
+      const localLoad = Math.min(20, Math.max(0, top.amount * 0.08));
+      const nearbyStorage = this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, center.x, center.y, 8)
+        + this.nearbyBuildingCount(tribe.id, BuildingType.Warehouse, center.x, center.y, 10);
+      const nearbyRoad = this.nearbyRoadScore(center.x, center.y, 2);
+      const specializationBonus =
+        building.type === BuildingType.Mine || building.type === BuildingType.DeepMine ? this.nearbyBuildingCount(tribe.id, BuildingType.Smithy, center.x, center.y, 10) * 4
+        : building.type === BuildingType.LumberCamp || building.type === BuildingType.Quarry ? this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, center.x, center.y, 8) * 3
+        : building.type === BuildingType.Dock || building.type === BuildingType.FishingHut || building.type === BuildingType.Fishery ? this.nearbyBuildingCount(tribe.id, BuildingType.House, center.x, center.y, 8) * 2
+        : 0;
+      addAnchor(center.x, center.y, 8 + localLoad + nearbyStorage * 4 + nearbyRoad * 0.8 + specializationBonus);
     }
 
     return [...anchors.values()]
