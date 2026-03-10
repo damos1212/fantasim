@@ -1472,3 +1472,78 @@ Current concrete follow-up gaps:
 - branch history exists in the event feed now, but rescue/founding/recovery events still need better grouping and longer-term legends treatment
 - combat jobs still need clearer battlefront spacing and more observer-visible campaign/frontline state
 - social state now exists, but it still needs full house/dynasty continuity, sect splits, and real breakaway-branch consequences
+
+## 24. Active Multi-Hour Work Program
+
+This is the next concrete work block. The priority is to make branch towns, remote districts, and redistribution behave like real secondary settlement systems before widening the feature set again.
+
+### 24.1 Workstream A: Branch Self-Supply and Maturity
+
+Goal:
+- make branch halls become self-sustaining towns instead of passive branch markers
+
+Implementation tasks:
+- branch halls should inspect their own nearby food, wood, stone, and ore access
+- branch halls should plan missing local extractors and support buildings earlier when reserves are low
+- mature branch halls should pull more storage, workshops, and race-shaped support around productive sites
+- strained branch halls should bias toward survival and supply before luxury or civic follow-ups
+
+Definition of done:
+- a founded branch hall can grow toward houses, storage, local production, and survival support without waiting indefinitely on the core
+
+### 24.2 Workstream B: Recurring Remote District Demand
+
+Goal:
+- stop productive remote sites from plateauing once they have one or two nearby buildings
+
+Implementation tasks:
+- productive sites should keep pulling storage and support while local stock and remoteness stay high
+- remote districts should promote second-wave houses, storage, and workshops more reliably
+- remote districts should keep feeding later branch-hall growth instead of flattening into lone extractors
+
+Definition of done:
+- long-run settlements continue spreading into visible outpost districts instead of collapsing into one saturated town center
+
+### 24.3 Workstream C: Hall-Aware Redistribution and Wagons
+
+Goal:
+- make long-haul movement reflect real shortage and network role
+
+Implementation tasks:
+- prefer strained branch resupply over weak short local hauls
+- favor redistribution destinations that are locally needy and productive
+- keep extractor overflow flowing into useful hubs instead of bloating raw sites
+- continue strengthening wagon preference for balancing the settlement network
+
+Definition of done:
+- branch-to-branch flows stay active in mature tribes and visibly support weaker halls
+
+### 24.4 Workstream D: Observer Readability for the Above
+
+Goal:
+- make the branch/logistics state readable enough to tune by observation
+
+Implementation tasks:
+- expose any new shortage and maturity signals in tribe/branch summaries
+- improve event grouping around branch growth, shortage, rescue, and recovery
+- keep carried goods, local stocks, and branch identities obvious in the world view
+
+Definition of done:
+- the observer can tell which branch is strained, which branch is recovering, and why goods are moving
+
+### 24.5 Follow-On Work After This Block
+
+Only after the previous workstreams are stable:
+- return to combat readability and clearer battlefront/campaign state
+- deepen dynasty, sect, and breakaway-branch social consequences
+- continue later economy-chain and observer-history expansion
+
+### 24.6 Ordered Multi-Hour Todo List
+
+1. update branch planners so halls react to local depletion and missing extractors
+2. tighten remote district support growth around productive sites
+3. strengthen hall-aware redistribution destination scoring
+4. expose any new branch shortage or maturity state needed by the observer
+5. run bootstrap, frontier, branch-support, branch-exchange, and long-run expansion tests
+6. commit and push that slice
+7. repeat on the next branch/logistics gap before moving to combat/social follow-up

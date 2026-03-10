@@ -935,3 +935,63 @@ Current concrete gaps after the latest execution slices:
 - branch founding, rescue, and recovery now hit the event feed, but still need better grouping and longer-term legends treatment
 - combat jobs still need clearer battlefront spacing and more observer-visible campaign/frontline state
 - social state now exists, but it still needs full house/dynasty continuity, sect splits, and real breakaway-branch consequences
+
+## 25. Active Multi-Hour Work Program
+
+The next multi-hour implementation run should stay tightly ordered so the simulation becomes more physical and legible instead of only wider.
+
+### 25.1 Workstream A: Branch and District Self-Sufficiency
+
+Goal:
+- make branch halls behave like real second towns instead of extra hall markers
+
+Deliverables:
+- branch halls should react to their own nearby food, wood, stone, and ore scarcity
+- strained or immature branches should pull local survival extractors and support buildings earlier
+- productive remote hubs should keep maturing into housing, storage, and workshop clusters instead of stalling after the first site
+
+Success criteria:
+- branch halls can recover from local shortages by planning self-supply
+- mature tribes show multiple active settlement centers in long runs
+
+### 25.2 Workstream B: Hall-Aware Redistribution
+
+Goal:
+- keep goods moving toward real local need
+
+Deliverables:
+- redistribution should prefer halls with true local deficits and productive pressure
+- wagons should prefer branch-balance and long-haul support over weak short local moves
+- extractor overflow should continue feeding storage and industry instead of bloating raw sites
+
+Success criteria:
+- strained branches show incoming support before collapse
+- mature tribes keep moving goods between hubs instead of flattening into quiet local stock equilibrium
+
+### 25.3 Workstream C: Observer Readability for Branch Logistics
+
+Goal:
+- make shortage, rescue, growth, and maturity readable by observation
+
+Deliverables:
+- clearer branch shortage and maturity state in summaries
+- clearer branch growth/recovery/rescue history
+- stronger visibility for which halls are importing or exporting
+
+Success criteria:
+- the observer can tell which branch is strained, which is growing, and why goods are moving
+
+### 25.4 Workstream D: Follow-On Slices
+
+After the previous workstreams are stable:
+- return to combat readability and battlefront/campaign clarity
+- deepen social continuity through dynasty, sect, and breakaway outcomes
+
+### 25.5 Ordered Multi-Hour Todo List
+
+1. strengthen branch-hall self-supply planning from local shortages and nearby depletion
+2. strengthen recurring support growth around productive remote districts
+3. strengthen hall-aware redistribution destination scoring and long-haul balancing
+4. expose any new branch shortage or maturity state needed in summaries and events
+5. run bootstrap, frontier, branch-support, branch-exchange, and long-run expansion tests after each slice
+6. commit and push each stable slice before moving to the next gap
