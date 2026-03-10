@@ -1687,6 +1687,8 @@ export class Simulation {
     const destHall = this.nearestHallForBuilding(tribeId, destBuilding);
     const sourceNeed = this.hallNeedPressure(tribeId, sourceBuilding, payload.resourceType);
     const destNeed = this.hallNeedPressure(tribeId, destBuilding, payload.resourceType);
+    const sourceDemand = sourceHall ? this.hallLogisticsDemandScore(tribeId, sourceHall, payload.resourceType) : 0;
+    const destDemand = destHall ? this.hallLogisticsDemandScore(tribeId, destHall, payload.resourceType) : 0;
     const crossHall = sourceHall && destHall && sourceHall.id !== destHall.id;
     const destIsBranch = destHall !== null && destHall.id !== this.tribes[tribeId]?.capitalBuildingId;
     const sourceIsBranch = sourceHall !== null && sourceHall.id !== this.tribes[tribeId]?.capitalBuildingId;
@@ -1699,7 +1701,9 @@ export class Simulation {
       + (destIsBranch ? 7 : 0)
       + (sourceIsBranch ? 2 : 0)
       + destNeed * 18
+      + destDemand * 1.35
       - Math.max(0, sourceNeed) * 12
+      - Math.max(0, sourceDemand) * 0.95
       + roadScore * 0.9
       - localSpare * 0.08
     );
@@ -1733,7 +1737,8 @@ export class Simulation {
           - pickupB * 0.85;
         return scoreB - scoreA;
       });
-    const candidate = haulJobs.find((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 8)
+    const candidate = haulJobs.find((job) => this.strategicHaulScore(tribe.id, job.payload as HaulPayload) >= 18)
+      ?? haulJobs.find((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 8)
       ?? haulJobs.find((job) => this.haulTravelDistance(job.payload as HaulPayload) >= 5)
       ?? haulJobs[0];
     if (!candidate) {
@@ -4762,6 +4767,8 @@ export class Simulation {
         const branchB = hallB && hallB.id !== this.tribes[tribeId]?.capitalBuildingId ? 1 : 0;
         const strainedA = hallA ? (this.branchIsStrained(tribeId, hallA) ? 1 : 0) : 0;
         const strainedB = hallB ? (this.branchIsStrained(tribeId, hallB) ? 1 : 0) : 0;
+        const hallDemandA = hallA ? this.hallLogisticsDemandScore(tribeId, hallA, resourceType) : 0;
+        const hallDemandB = hallB ? this.hallLogisticsDemandScore(tribeId, hallB, resourceType) : 0;
         const sameHallA = sourceHall && hallA && sourceHall.id === hallA.id ? 1 : 0;
         const sameHallB = sourceHall && hallB && sourceHall.id === hallB.id ? 1 : 0;
         const specializationBiasA =
@@ -4773,8 +4780,8 @@ export class Simulation {
         const longHaulA = manhattan(sourceCenter.x, sourceCenter.y, centerA.x, centerA.y);
         const longHaulB = manhattan(sourceCenter.x, sourceCenter.y, centerB.x, centerB.y);
         return (
-          (typeBiasB * 6 + spareB * 0.25 + specializationBiasB * 0.9 + networkB * 1.3 + hallNeedB * 10 + branchB * 5 + strainedB * 7 + Math.min(12, longHaulB) * 0.35 - longHaulB * 0.92 - sameHallB * 4.5)
-          - (typeBiasA * 6 + spareA * 0.25 + specializationBiasA * 0.9 + networkA * 1.3 + hallNeedA * 10 + branchA * 5 + strainedA * 7 + Math.min(12, longHaulA) * 0.35 - longHaulA * 0.92 - sameHallA * 4.5)
+          (typeBiasB * 6 + spareB * 0.25 + specializationBiasB * 0.9 + networkB * 1.3 + hallNeedB * 10 + hallDemandB * 1.5 + branchB * 5 + strainedB * 7 + Math.min(12, longHaulB) * 0.35 - longHaulB * 0.92 - sameHallB * 4.5)
+          - (typeBiasA * 6 + spareA * 0.25 + specializationBiasA * 0.9 + networkA * 1.3 + hallNeedA * 10 + hallDemandA * 1.5 + branchA * 5 + strainedA * 7 + Math.min(12, longHaulA) * 0.35 - longHaulA * 0.92 - sameHallA * 4.5)
         );
       });
     const best = candidates[0] ?? null;
@@ -4968,6 +4975,33 @@ export class Simulation {
     const outgoing = this.hallTransferLoad(tribeId, hall, resourceType, "outgoing");
     const effectiveStored = stored + incoming * 0.7 - outgoing * 0.45;
     return clamp((target - effectiveStored) / target, -1, 1);
+  }
+
+  private hallLogisticsDemandScore(tribeId: number, hall: BuildingState, resourceType: ResourceType): number {
+    const target = this.hallLocalResourceTarget(tribeId, hall, resourceType);
+    if (target <= 0) {
+      return 0;
+    }
+    const stored = this.hallStoredAmount(tribeId, hall, resourceType);
+    const incoming = this.hallTransferLoad(tribeId, hall, resourceType, "incoming");
+    const outgoing = this.hallTransferLoad(tribeId, hall, resourceType, "outgoing");
+    const maturity = this.branchMaturityStage(tribeId, hall);
+    const productiveSites = this.hallProductiveSiteCount(tribeId, hall);
+    const center = buildingCenter(hall);
+    const network = this.nearbyRoadScore(center.x, center.y, 3);
+    const branch = hall.id !== this.tribes[tribeId]?.capitalBuildingId;
+    const strained = branch && this.branchIsStrained(tribeId, hall) ? 1 : 0;
+    const effectiveStored = stored + incoming * 0.7 - outgoing * 0.45;
+    const shortageRatio = clamp((target - effectiveStored) / target, -1, 1);
+
+    return (
+      shortageRatio * 14
+      + productiveSites * 1.35
+      + maturity * 2.2
+      + network * 0.45
+      + (branch ? 4 : 0)
+      + strained * 10
+    );
   }
 
   private hallReserveMargin(tribeId: number, hall: BuildingState, resourceType: ResourceType): number {
@@ -5424,10 +5458,16 @@ export class Simulation {
         .map((entry) => {
           const total = this.hallStoredAmount(tribe.id, entry.hall, resourceType);
           const target = this.hallLocalResourceTarget(tribe.id, entry.hall, resourceType);
-          return { ...entry, total, target, deficit: target - total };
+          return {
+            ...entry,
+            total,
+            target,
+            deficit: target - total,
+            demand: this.hallLogisticsDemandScore(tribe.id, entry.hall, resourceType),
+          };
         })
         .filter((entry) => entry.deficit > Math.max(6, entry.target * 0.18))
-        .sort((a, b) => b.deficit - a.deficit);
+        .sort((a, b) => (b.deficit + b.demand * 1.8) - (a.deficit + a.demand * 1.8));
 
       for (const dest of needy) {
         if (planned >= 6) break;
@@ -5438,6 +5478,7 @@ export class Simulation {
               total: this.hallStoredAmount(tribe.id, entry.hall, resourceType),
               target: this.hallLocalResourceTarget(tribe.id, entry.hall, resourceType),
               surplus: this.hallExportableSurplus(tribe.id, entry.hall, resourceType),
+              demand: this.hallLogisticsDemandScore(tribe.id, entry.hall, resourceType),
             };
           })
           .filter((entry) =>
@@ -5449,7 +5490,7 @@ export class Simulation {
           .sort((a, b) => {
             const distanceA = manhattan(a.center.x, a.center.y, dest.center.x, dest.center.y);
             const distanceB = manhattan(b.center.x, b.center.y, dest.center.x, dest.center.y);
-            return (b.surplus * 1.1 - distanceB * 0.18) - (a.surplus * 1.1 - distanceA * 0.18);
+            return (b.surplus * 1.1 - b.demand * 1.4 - distanceB * 0.18) - (a.surplus * 1.1 - a.demand * 1.4 - distanceA * 0.18);
           })[0];
         if (!source) continue;
 
