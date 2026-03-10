@@ -117,6 +117,54 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("builders pave streets and mature buildings over time", { timeout: 30000 }, () => {
+    const sim = createSimulation("builder-upkeep", { width: 384, height: 384 });
+    let lastSnapshot = sim.snapshotNow();
+
+    for (let i = 0; i < 1400; i += 1) {
+      const snapshot = sim.tick();
+      if (snapshot) {
+        lastSnapshot = snapshot;
+      }
+    }
+
+    const pavedTiles = (() => {
+      let total = 0;
+      for (let i = 0; i < sim.world.road.length; i += 1) {
+        if (sim.world.road[i] >= 2) total += 1;
+      }
+      return total;
+    })();
+
+    expect(pavedTiles).toBeGreaterThan(0);
+    expect(lastSnapshot.buildings.some((building) => building.level > 1)).toBe(true);
+  });
+
+  test("capital halls anchor branches and hall loss collapses the local settlement", () => {
+    const sim = createSimulation("hall-collapse", { width: 512, height: 512 }) as any;
+    const tribe = sim.tribes[0];
+    const branchHall = sim.placeBuilding(tribe.id, BuildingType.CapitalHall, tribe.capitalX + 18, tribe.capitalY);
+    const branchStockpile = sim.placeBuilding(tribe.id, BuildingType.Stockpile, tribe.capitalX + 22, tribe.capitalY);
+    const branchHouse = sim.placeBuilding(tribe.id, BuildingType.House, tribe.capitalX + 18, tribe.capitalY + 5);
+
+    expect(sim.buildings.filter((building: any) => building.tribeId === tribe.id && building.type === BuildingType.CapitalHall).length).toBe(2);
+
+    sim.removeBuilding(branchHall);
+
+    expect(sim.buildings.some((building: any) => building.id === branchStockpile.id)).toBe(false);
+    expect(sim.buildings.some((building: any) => building.id === branchHouse.id)).toBe(false);
+    expect(sim.buildings.filter((building: any) => building.tribeId === tribe.id && building.type === BuildingType.CapitalHall).length).toBe(1);
+    expect(sim.hasHeadquarters(tribe.id)).toBe(true);
+
+    const mainHall = sim.buildings.find((building: any) => building.tribeId === tribe.id && building.type === BuildingType.CapitalHall);
+    expect(mainHall).toBeTruthy();
+    sim.removeBuilding(mainHall);
+
+    expect(sim.buildings.filter((building: any) => building.tribeId === tribe.id && building.type === BuildingType.CapitalHall).length).toBe(0);
+    expect(sim.hasHeadquarters(tribe.id)).toBe(false);
+    expect(sim.tribes[0].capitalBuildingId).toBe(-1);
+  });
+
   test("remains stable across extended ticks and reaches early settled progression", { timeout: 120000 }, () => {
     const sim = createSimulation("long-run", { width: 512, height: 512 });
     let lastSnapshot = sim.snapshotNow();
@@ -151,6 +199,8 @@ describe("simulation", () => {
     expect(lastSnapshot.agents.every((agent) =>
       typeof agent.status === "string" &&
       typeof agent.level === "number" &&
+      typeof agent.moveToX === "number" &&
+      typeof agent.moveToY === "number" &&
       typeof agent.wounds === "number" &&
       typeof agent.blessed === "boolean" &&
       typeof agent.underground === "boolean" &&

@@ -401,6 +401,8 @@ export type AgentSnapshot = {
   role: AgentRole;
   x: number;
   y: number;
+  moveToX: number;
+  moveToY: number;
   targetX: number;
   targetY: number;
   health: number;
@@ -423,6 +425,7 @@ export type BuildingSnapshot = {
   width: number;
   height: number;
   hp: number;
+  level: number;
   stockResource: ResourceType;
   stockAmount: number;
 };
@@ -443,6 +446,8 @@ export type AnimalSnapshot = {
   type: AnimalType;
   x: number;
   y: number;
+  moveToX: number;
+  moveToY: number;
 };
 
 export type BoatSnapshot = {
@@ -450,6 +455,8 @@ export type BoatSnapshot = {
   tribeId: number;
   x: number;
   y: number;
+  moveToX: number;
+  moveToY: number;
   cargo: number;
   task: BoatTaskType;
 };
@@ -460,6 +467,8 @@ export type CaravanSnapshot = {
   partnerTribeId: number;
   x: number;
   y: number;
+  moveToX: number;
+  moveToY: number;
   cargoType: ResourceType;
   cargoAmount: number;
   task: CaravanTaskType;
@@ -470,6 +479,8 @@ export type WagonSnapshot = {
   tribeId: number;
   x: number;
   y: number;
+  moveToX: number;
+  moveToY: number;
   cargoType: ResourceType;
   cargoAmount: number;
   task: WagonTaskType;
@@ -481,6 +492,8 @@ export type SiegeEngineSnapshot = {
   type: SiegeEngineType;
   x: number;
   y: number;
+  moveToX: number;
+  moveToY: number;
   targetX: number;
   targetY: number;
   hp: number;

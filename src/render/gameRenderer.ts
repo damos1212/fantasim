@@ -233,12 +233,31 @@ function shieldColor(race: RaceType): number {
   return 0x9a845e;
 }
 
-function entityPosition(motion: Map<number, MotionState>, id: number, fallbackX: number, fallbackY: number, alpha: number): { x: number; y: number } {
+function entityPosition(
+  motion: Map<number, MotionState>,
+  id: number,
+  fallbackX: number,
+  fallbackY: number,
+  alpha: number,
+  previewX = fallbackX,
+  previewY = fallbackY,
+): { x: number; y: number } {
   const state = motion.get(id);
   if (!state) {
-    return { x: fallbackX, y: fallbackY };
+    const previewEase = alpha <= 0 ? 0 : alpha >= 1 ? 1 : alpha * alpha * (3 - 2 * alpha);
+    return {
+      x: fallbackX + (previewX - fallbackX) * previewEase,
+      y: fallbackY + (previewY - fallbackY) * previewEase,
+    };
   }
   const eased = alpha <= 0 ? 0 : alpha >= 1 ? 1 : alpha * alpha * (3 - 2 * alpha);
+  if (state.fromX === state.toX && state.fromY === state.toY && (previewX !== state.toX || previewY !== state.toY)) {
+    const previewEase = eased * 0.92;
+    return {
+      x: state.toX + (previewX - state.toX) * previewEase,
+      y: state.toY + (previewY - state.toY) * previewEase,
+    };
+  }
   return {
     x: state.fromX + (state.toX - state.fromX) * eased,
     y: state.fromY + (state.toY - state.fromY) * eased,
@@ -367,6 +386,7 @@ export class GameRenderer {
   readonly boatMotion = new Map<number, MotionState>();
   readonly wagonMotion = new Map<number, MotionState>();
   readonly caravanMotion = new Map<number, MotionState>();
+  readonly siegeMotion = new Map<number, MotionState>();
   workerPort: Worker | null = null;
 
   cameraX = 0;
@@ -692,6 +712,7 @@ export class GameRenderer {
     this.captureMotion(this.boatMotion, this.state.boats, snapshot.boats);
     this.captureMotion(this.wagonMotion, this.state.wagons, snapshot.wagons);
     this.captureMotion(this.caravanMotion, this.state.caravans, snapshot.caravans);
+    this.captureMotion(this.siegeMotion, this.state.siegeEngines, snapshot.siegeEngines);
 
     this.lastSnapshotAt = performance.now();
     this.state.tick = snapshot.tick;
@@ -900,7 +921,7 @@ export class GameRenderer {
     if (this.followSelectedUnit && this.selectedUnitId !== null) {
       const followed = this.state.agents.find((agent) => agent.id === this.selectedUnitId);
       if (followed && (this.viewMode === "surface" || followed.underground)) {
-        const position = entityPosition(this.agentMotion, followed.id, followed.x, followed.y, alpha);
+        const position = entityPosition(this.agentMotion, followed.id, followed.x, followed.y, alpha, followed.moveToX, followed.moveToY);
         this.focusWorld(position.x, position.y);
       } else if (!followed) {
         this.followSelectedUnit = false;
@@ -971,13 +992,15 @@ export class GameRenderer {
       }
     }
 
+    const useDetailedEntities = lodStep === 1 && this.zoom > 1.18;
+
     for (const animal of this.state.animals) {
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.animalMotion, animal.id, animal.x, animal.y, alpha);
+      const position = entityPosition(this.animalMotion, animal.id, animal.x, animal.y, alpha, animal.moveToX, animal.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
-      if (lodStep > 1) {
+      if (!useDetailedEntities) {
         const px = position.x * TILE_SIZE + TILE_SIZE * 0.3;
         const py = position.y * TILE_SIZE + TILE_SIZE * 0.3;
         drawPixelRect(this.unitGraphics, px, py, 4, 4, ANIMAL_COLORS[animal.type], 0.8);
@@ -989,12 +1012,12 @@ export class GameRenderer {
     for (const boat of this.state.boats) {
       if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.boatMotion, boat.id, boat.x, boat.y, alpha);
+      const position = entityPosition(this.boatMotion, boat.id, boat.x, boat.y, alpha, boat.moveToX, boat.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
       const tribe = tribeById.get(boat.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.08) {
+      if (!useDetailedEntities) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 4, 6, 4, tribe?.color ?? 0xffffff, 0.8);
       } else {
         this.drawBoat(boat, tribe?.color ?? 0xffffff, position.x, position.y);
@@ -1004,12 +1027,12 @@ export class GameRenderer {
     for (const wagon of this.state.wagons) {
       if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.wagonMotion, wagon.id, wagon.x, wagon.y, alpha);
+      const position = entityPosition(this.wagonMotion, wagon.id, wagon.x, wagon.y, alpha, wagon.moveToX, wagon.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
       const tribe = tribeById.get(wagon.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.08) {
+      if (!useDetailedEntities) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 8, 6, 4, 0x9b7145, 0.82);
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 6, position.y * TILE_SIZE + 6, 3, 2, tribe?.color ?? 0xffffff, 0.72);
       } else {
@@ -1020,12 +1043,12 @@ export class GameRenderer {
     for (const caravan of this.state.caravans) {
       if (!this.renderFilters.trade) continue;
       if (this.viewMode === "underground") continue;
-      const position = entityPosition(this.caravanMotion, caravan.id, caravan.x, caravan.y, alpha);
+      const position = entityPosition(this.caravanMotion, caravan.id, caravan.x, caravan.y, alpha, caravan.moveToX, caravan.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
       const tribe = tribeById.get(caravan.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.06) {
+      if (!useDetailedEntities) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 9, 7, 3, 0xa47a4a, 0.82);
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 5, position.y * TILE_SIZE + 6, 4, 2, tribe?.color ?? 0xffffff, 0.75);
       } else {
@@ -1035,14 +1058,15 @@ export class GameRenderer {
 
     for (const engine of this.state.siegeEngines) {
       if (!this.renderFilters.armies) continue;
-      if (engine.x < minTileX || engine.y < minTileY || engine.x > maxTileX || engine.y > maxTileY) {
+      const position = entityPosition(this.siegeMotion, engine.id, engine.x, engine.y, alpha, engine.moveToX, engine.moveToY);
+      if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
       const tribe = tribeById.get(engine.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.06) {
-        drawPixelRect(this.unitGraphics, engine.x * TILE_SIZE + 3, engine.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
+      if (!useDetailedEntities) {
+        drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 3, position.y * TILE_SIZE + 9, 9, 4, tribe?.color ?? 0xffffff, 0.82);
       } else {
-        this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff);
+        this.drawSiegeEngine(engine, tribe?.color ?? 0xffffff, position.x, position.y);
       }
     }
 
@@ -1082,6 +1106,8 @@ export class GameRenderer {
       }
     }
 
+    let visibleLabels = 0;
+    const maxVisibleLabels = this.zoom > 1.45 ? 56 : this.zoom > 1.24 ? 32 : 14;
     for (const agent of this.state.agents) {
       if (this.viewMode === "underground" && !agent.underground) {
         continue;
@@ -1095,19 +1121,22 @@ export class GameRenderer {
       ) {
         continue;
       }
-      const position = entityPosition(this.agentMotion, agent.id, agent.x, agent.y, alpha);
+      const position = entityPosition(this.agentMotion, agent.id, agent.x, agent.y, alpha, agent.moveToX, agent.moveToY);
       if (position.x < minTileX || position.y < minTileY || position.x > maxTileX || position.y > maxTileY) {
         continue;
       }
       const tribe = tribeById.get(agent.tribeId);
-      if (lodStep > 1 || this.zoom <= 1.06) {
+      if (!useDetailedEntities) {
         drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 4, position.y * TILE_SIZE + 4, 4, 4, tribe?.color ?? 0xffffff, 0.9);
         if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.hero) {
           drawPixelRect(this.unitGraphics, position.x * TILE_SIZE + 8, position.y * TILE_SIZE + 3, 2, 2, ROLE_ACCENTS[agent.role], 0.82);
         }
       } else {
         this.drawAgent(agent, position.x, position.y, tribe, this.zoom > 1.12);
-        this.drawAgentLabel(agent, position.x, position.y);
+        if (agent.hero || this.selectedUnitId === agent.id || (this.zoom > 1.18 && visibleLabels < maxVisibleLabels)) {
+          this.drawAgentLabel(agent, position.x, position.y);
+          visibleLabels += 1;
+        }
       }
     }
 
@@ -1391,7 +1420,7 @@ export class GameRenderer {
                 }
               }
               if (this.state.road[index] > 0 && lodStep === 1) {
-                this.drawRoadTile(terrainCtx, localPx, localPy);
+                this.drawRoadTile(terrainCtx, localPx, localPy, this.state.road[index] ?? 1);
               }
               if (lodStep === 1) {
                 this.drawFeature(terrainCtx, this.state.feature[index] as FeatureType, localPx, localPy, terrain);
@@ -1524,7 +1553,13 @@ export class GameRenderer {
     }
   }
 
-  private drawRoadTile(target: PixelTarget, px: number, py: number): void {
+  private drawRoadTile(target: PixelTarget, px: number, py: number, level = 1): void {
+    if (level >= 2) {
+      drawPixelRect(target, px + 1, py + 5, 14, 6, 0x9aa0a7, 0.94);
+      drawPixelRect(target, px + 3, py + 7, 10, 2, 0x6f757b, 0.55);
+      drawPixelRect(target, px + 2, py + 5, 12, 1, 0xcfd4d8, 0.28);
+      return;
+    }
     drawPixelRect(target, px + 2, py + 6, 12, 4, 0xb99663, 0.95);
     drawPixelRect(target, px + 4, py + 7, 8, 2, 0x7d6643, 0.5);
   }
@@ -1656,6 +1691,9 @@ export class GameRenderer {
     if (!detail) {
       drawPixelRect(target, px + 1, py + 2, w - 2, h - 3, wall, 0.94);
       drawPixelRect(target, px + 2, py + 1, w - 4, Math.max(2, Math.floor(h * 0.22)), roof, 0.96);
+      if (building.level > 1) {
+        drawPixelRect(target, px + 1, py + h - 3, w - 2, 1, trim, 0.45 + Math.min(0.2, (building.level - 1) * 0.08));
+      }
       return;
     }
 
@@ -1671,6 +1709,14 @@ export class GameRenderer {
     drawPixelRect(target, px + 1, py + 3, w - 2, h - 4, wall, 0.96);
     drawPixelRect(target, px + 2, py + 1, w - 4, Math.max(3, Math.floor(h * 0.28)), roof, 0.98);
     drawPixelRect(target, px + 3, py + h - 6, w - 6, 2, trim, 0.45);
+    if (building.level > 1) {
+      const upgradeGlow = Math.min(0.32, 0.12 + (building.level - 2) * 0.06);
+      drawPixelRect(target, px + 2, py + h - 4, w - 4, 1, lighten(trim, 18), 0.5 + upgradeGlow);
+      drawPixelRect(target, px + 2, py + 2, w - 4, 1, lighten(wall, 14), 0.18 + upgradeGlow * 0.4);
+      for (let pip = 0; pip < Math.min(3, building.level - 1); pip += 1) {
+        drawPixelRect(target, px + 3 + pip * 3, py + 2, 2, 1, materials.banner, 0.78);
+      }
+    }
     if (race === RaceType.Humans) {
       drawPixelRect(target, px + 1, py + 3, 1, h - 4, 0x6f4f34, 0.5);
       drawPixelRect(target, px + w - 2, py + 3, 1, h - 4, 0x6f4f34, 0.5);
@@ -2014,9 +2060,9 @@ export class GameRenderer {
     }
   }
 
-  private drawSiegeEngine(engine: SiegeEngineSnapshot, tribeColor: number): void {
-    const px = engine.x * TILE_SIZE;
-    const py = engine.y * TILE_SIZE;
+  private drawSiegeEngine(engine: SiegeEngineSnapshot, tribeColor: number, renderX = engine.x, renderY = engine.y): void {
+    const px = renderX * TILE_SIZE;
+    const py = renderY * TILE_SIZE;
     drawPixelRect(this.unitGraphics, px + 2, py + 13, 12, 2, 0x000000, 0.16);
     if (engine.type === SiegeEngineType.Trebuchet) {
       drawPixelRect(this.unitGraphics, px + 2, py + 10, 12, 3, 0x6b4d31, 0.95);

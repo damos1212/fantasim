@@ -94,6 +94,7 @@ type BuildingState = {
   width: number;
   height: number;
   hp: number;
+  level: number;
   stock: number[];
 };
 
@@ -227,6 +228,8 @@ type BuildPayload = {
   supplyNeeded: number;
   stockX: number;
   stockY: number;
+  upgradeBuildingId?: number | null;
+  upgradeLevel?: number;
 };
 
 type AttackPayload = {
@@ -235,7 +238,7 @@ type AttackPayload = {
   targetY: number;
 };
 
-type EarthworkKind = "trench" | "canal" | "palisade" | "gate" | "stone_wall";
+type EarthworkKind = "trench" | "canal" | "palisade" | "gate" | "stone_wall" | "road" | "pave";
 
 type EarthworkPayload = {
   kind: EarthworkKind;
@@ -608,6 +611,11 @@ function buildingWorkTicks(type: BuildingType): number {
   const footprint = def.size[0] * def.size[1];
   const costWeight = Object.values(def.cost).reduce((sum, value) => sum + (value ?? 0), 0);
   return Math.max(48, Math.round(40 + footprint * 4.8 + costWeight * 0.9));
+}
+
+function buildTaskWorkTicks(payload: BuildPayload): number {
+  const base = buildingWorkTicks(payload.buildingType);
+  return payload.upgradeBuildingId != null ? Math.max(22, Math.round(base * 0.58)) : base;
 }
 
 export class Simulation {
@@ -2368,7 +2376,13 @@ export class Simulation {
   }
 
   private updateAgents(): void {
-    for (const agent of this.agents) {
+    const agentCount = this.agents.length;
+    if (agentCount === 0) {
+      return;
+    }
+    const startIndex = this.tickCount % agentCount;
+    for (let offset = 0; offset < agentCount; offset += 1) {
+      const agent = this.agents[(startIndex + offset) % agentCount]!;
       const tribe = this.tribes[agent.tribeId]!;
       const localWeather = this.weatherAt(agent.x, agent.y);
       const terrain = this.world.terrain[indexOf(agent.x, agent.y, this.world.width)]!;
@@ -2781,7 +2795,7 @@ export class Simulation {
             kind: "build",
             targetX: job.x,
             targetY: job.y,
-            workLeft: buildingWorkTicks((job.payload as BuildPayload).buildingType),
+            workLeft: buildTaskWorkTicks(job.payload as BuildPayload),
             payload: job.payload as BuildPayload,
           };
         case "earthwork":
@@ -2845,10 +2859,18 @@ export class Simulation {
     const population = this.populationOf(tribe.id);
     const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
     const sustainFood = tribe.resources[ResourceType.Rations] < foodNeed * (tribe.age >= AgeType.Stone ? 2.5 : 3.1);
+    if (agent.role === AgentRole.Builder) {
+      const maintenanceTask = this.findBuilderMaintenanceTask(agent, tribe);
+      if (maintenanceTask) {
+        return maintenanceTask;
+      }
+    }
     const scanRadius =
       agent.role === AgentRole.Woodcutter || agent.role === AgentRole.Miner || agent.role === AgentRole.Rider ? 18
       : agent.role === AgentRole.Fisher || agent.role === AgentRole.Soldier ? 16
       : agent.role === AgentRole.Farmer ? 14
+      : agent.role === AgentRole.Builder ? 12
+      : agent.role === AgentRole.Hauler || agent.role === AgentRole.Crafter ? 10
       : agent.role === AgentRole.Worker ? 12
       : 0;
     if (scanRadius <= 0) {
@@ -2906,6 +2928,12 @@ export class Simulation {
             ? (feature === FeatureType.OreVein || resourceType === ResourceType.Ore ? "mine" : "quarry")
             : agent.role === AgentRole.Farmer
               ? (this.world.terrain[index] === TerrainType.Farmland || resourceType === ResourceType.Grain || resourceType === ResourceType.Berries ? "farm" : "gather")
+              : agent.role === AgentRole.Builder || agent.role === AgentRole.Hauler || agent.role === AgentRole.Crafter
+                ? (feature === FeatureType.Trees ? "cut_tree"
+                  : feature === FeatureType.StoneOutcrop || feature === FeatureType.ClayDeposit ? "quarry"
+                    : resourceType === ResourceType.Wood ? "cut_tree"
+                      : resourceType === ResourceType.Stone || resourceType === ResourceType.Clay ? "quarry"
+                        : "gather")
               : feature === FeatureType.Trees ? "cut_tree"
                 : feature === FeatureType.StoneOutcrop || feature === FeatureType.ClayDeposit ? "quarry"
                   : "gather";
@@ -2958,6 +2986,113 @@ export class Simulation {
       resourceType: best.resourceType,
       amount: 0,
     };
+  }
+
+  private createDirectEarthworkTask(agent: AgentState, x: number, y: number, kind: EarthworkKind, workLeft = 7): AgentTask | null {
+    const path = findPath(this.world, agent.x, agent.y, x, y);
+    if (agent.x !== x || agent.y !== y) {
+      const unreachable = path.length === 0 || (path.length === 1 && path[0] === indexOf(agent.x, agent.y, this.world.width));
+      if (unreachable) {
+        return null;
+      }
+    }
+    agent.path = path;
+    agent.pathIndex = 0;
+    return {
+      kind: "earthwork",
+      targetX: x,
+      targetY: y,
+      workLeft,
+      payload: { kind },
+    };
+  }
+
+  private tribeRoadAdjacency(tribeId: number, x: number, y: number): number {
+    let adjacent = 0;
+    for (const [dx, dy] of CARDINALS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny, this.world.width, this.world.height)) continue;
+      const index = indexOf(nx, ny, this.world.width);
+      if (this.world.owner[index] === tribeId && this.world.road[index] > 0) {
+        adjacent += 1;
+      }
+    }
+    return adjacent;
+  }
+
+  private findBuilderMaintenanceTask(agent: AgentState, tribe: TribeState): AgentTask | null {
+    const candidates = this.buildingsForTribe(tribe.id)
+      .filter((building) =>
+        building.type === BuildingType.CapitalHall
+        || building.type === BuildingType.Stockpile
+        || building.type === BuildingType.Warehouse
+        || building.type === BuildingType.House
+        || building.type === BuildingType.Workshop
+        || building.type === BuildingType.Smithy
+        || building.type === BuildingType.Barracks
+        || building.type === BuildingType.MountainHall,
+      )
+      .sort((a, b) => manhattan(agent.x, agent.y, buildingCenter(a).x, buildingCenter(a).y) - manhattan(agent.x, agent.y, buildingCenter(b).x, buildingCenter(b).y))
+      .slice(0, 12);
+
+    let best:
+      | {
+          x: number;
+          y: number;
+          kind: EarthworkKind;
+          score: number;
+        }
+      | null = null;
+
+    for (const building of candidates) {
+      const center = buildingCenter(building);
+      for (let dy = -4; dy <= 4; dy += 1) {
+        for (let dx = -4; dx <= 4; dx += 1) {
+          const x = center.x + dx;
+          const y = center.y + dy;
+          if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+          const index = indexOf(x, y, this.world.width);
+          if (this.world.owner[index] !== tribe.id) continue;
+          if (this.world.buildingByTile[index] >= 0) continue;
+          if (this.jobs.some((job) => job.tribeId === tribe.id && job.kind === "earthwork" && job.x === x && job.y === y)) continue;
+          if (this.agents.some((other) => other.tribeId === tribe.id && other.id !== agent.id && other.task?.kind === "earthwork" && other.task.targetX === x && other.task.targetY === y)) continue;
+          const distance = manhattan(agent.x, agent.y, x, y);
+          const hubDistance = manhattan(center.x, center.y, x, y);
+          const adjacency = this.tribeRoadAdjacency(tribe.id, x, y);
+          const nearbyBuildings =
+            this.nearbyBuildingCount(tribe.id, BuildingType.House, x, y, 3)
+            + this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, x, y, 4)
+            + this.nearbyBuildingCount(tribe.id, BuildingType.Warehouse, x, y, 5)
+            + this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, x, y, 5);
+          if (this.world.road[index] === 0) {
+            if (adjacency === 0 || !this.canPlaceEarthwork(x, y, "road")) continue;
+            const score = 84 + nearbyBuildings * 8 + adjacency * 6 - hubDistance * 5 - distance * 2;
+            if (!best || score > best.score) {
+              best = { x, y, kind: "road", score };
+            }
+            continue;
+          }
+          if (tribe.age >= AgeType.Stone && this.world.road[index] === 1) {
+            const canPave = this.canPlaceEarthwork(x, y, "pave");
+            if (!canPave) continue;
+            const civicBonus =
+              this.nearbyBuildingCount(tribe.id, BuildingType.CapitalHall, x, y, 6) * 16
+              + this.nearbyBuildingCount(tribe.id, BuildingType.Tavern, x, y, 6) * 10
+              + this.nearbyBuildingCount(tribe.id, BuildingType.Shrine, x, y, 6) * 10;
+            const score = 62 + nearbyBuildings * 6 + civicBonus - hubDistance * 4 - distance * 2;
+            if (!best || score > best.score) {
+              best = { x, y, kind: "pave", score };
+            }
+          }
+        }
+      }
+    }
+
+    if (!best) {
+      return null;
+    }
+    return this.createDirectEarthworkTask(agent, best.x, best.y, best.kind, best.kind === "pave" ? 6 : 7);
   }
 
   private findOpportunisticAnimalTask(
@@ -3098,6 +3233,9 @@ export class Simulation {
     if (job.kind === "build") {
       const payload = job.payload as BuildPayload;
       const type = payload.buildingType;
+      if (payload.upgradeBuildingId != null) {
+        score += missingBootstrap ? -26 : 18 + (payload.upgradeLevel ?? 2) * 8;
+      }
       if (type === BuildingType.Farm) score += lowFood || !this.hasBuilt(tribe.id, BuildingType.Farm) ? 88 : 12;
       if (type === BuildingType.Cistern) score += lowWater || !this.hasBuilt(tribe.id, BuildingType.Cistern) ? 92 : 10;
       if (type === BuildingType.LumberCamp) score += lowWood || !this.hasBuilt(tribe.id, BuildingType.LumberCamp) ? 88 : 8;
@@ -3965,7 +4103,66 @@ export class Simulation {
   }
 
   private completeBuildingTask(tribe: TribeState, payload: BuildPayload, x: number, y: number): void {
-    this.placeBuilding(tribe.id, payload.buildingType, x, y);
+    if (payload.upgradeBuildingId != null) {
+      const building = this.buildings.find((entry) => entry.id === payload.upgradeBuildingId && entry.tribeId === tribe.id);
+      if (!building) {
+        return;
+      }
+      const nextLevel = Math.max(building.level + 1, payload.upgradeLevel ?? building.level + 1);
+      building.level = Math.max(building.level, nextLevel);
+      building.hp += 20 + buildingColorStrength(building.type) * 12;
+      if (building.type === BuildingType.CapitalHall || building.type === BuildingType.Castle || building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile) {
+        const center = buildingCenter(building);
+        this.claimTerritory(tribe.id, center.x, center.y, 1 + building.level);
+      }
+      for (let dy = 0; dy < building.height; dy += 1) {
+        for (let dx = 0; dx < building.width; dx += 1) {
+          this.markDirty(indexOf(building.x + dx, building.y + dy, this.world.width));
+        }
+      }
+      tribe.research += this.researchFromConstruction(building.type) * 0.45;
+      this.pushEvent({
+        kind: "construction",
+        title: `${tribe.name} upgrades ${BuildingType[building.type]}`,
+        description: `${tribe.name} has strengthened a ${BuildingType[building.type]} to level ${building.level}.`,
+        x: buildingCenter(building).x,
+        y: buildingCenter(building).y,
+        tribeId: tribe.id,
+      });
+      return;
+    }
+
+    const building = this.placeBuilding(tribe.id, payload.buildingType, x, y);
+    if (payload.buildingType === BuildingType.CapitalHall) {
+      const halls = this.capitalHallsForTribe(tribe.id);
+      this.updateTribeAnchor(tribe.id);
+      if (halls.length > 1) {
+        const center = buildingCenter(building);
+        this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 8, center.x, center.y, 7);
+        this.tryPlanBuildingAround(tribe, BuildingType.House, 7, center.x, center.y, 7);
+        this.tryPlanBuildingAround(tribe, BuildingType.House, 6, center.x, center.y, 8);
+        let reassigned = 0;
+        for (const agent of this.agentsForTribe(tribe.id)) {
+          if (reassigned >= 3) break;
+          if (manhattan(agent.x, agent.y, center.x, center.y) <= 8) continue;
+          if (agent.role === AgentRole.Soldier || agent.role === AgentRole.Rider || agent.role === AgentRole.Mage) continue;
+          agent.path = findPath(this.world, agent.x, agent.y, clamp(center.x + randInt(this.random, -2, 2), 1, this.world.width - 2), clamp(center.y + randInt(this.random, -2, 2), 1, this.world.height - 2));
+          agent.pathIndex = 0;
+          if (!agent.task || agent.task.kind === "idle") {
+            agent.task = null;
+          }
+          reassigned += 1;
+        }
+        this.pushEvent({
+          kind: "construction",
+          title: `${tribe.name} founds a branch hall`,
+          description: `${tribe.name} has sent settlers and supplies to establish a new hall and satellite settlement.`,
+          x,
+          y,
+          tribeId: tribe.id,
+        });
+      }
+    }
     tribe.research += this.researchFromConstruction(payload.buildingType);
     this.pushEvent({
       kind: "construction",
@@ -4016,6 +4213,12 @@ export class Simulation {
       this.world.road[index] = Math.max(this.world.road[index]!, 1);
     } else if (payload.kind === "stone_wall") {
       this.world.feature[index] = FeatureType.StoneWall;
+    } else if (payload.kind === "road") {
+      this.world.road[index] = Math.max(this.world.road[index]!, 1);
+      this.world.owner[index] = tribe.id;
+    } else if (payload.kind === "pave") {
+      this.world.road[index] = Math.max(this.world.road[index]!, 2);
+      this.world.owner[index] = tribe.id;
     }
 
     this.markDirty(index);
@@ -4024,7 +4227,10 @@ export class Simulation {
         payload.kind === "trench" ? "trenches" :
         payload.kind === "canal" ? "canals" :
         payload.kind === "palisade" ? "palisades" :
-        payload.kind === "gate" ? "gates" : "stone walls";
+        payload.kind === "gate" ? "gates" :
+        payload.kind === "road" ? "roads" :
+        payload.kind === "pave" ? "paved streets" :
+        "stone walls";
       this.pushEvent({
         kind: "earthwork",
         title: `${tribe.name} builds ${label}`,
@@ -4187,6 +4393,7 @@ export class Simulation {
   }
 
   private removeBuilding(building: BuildingState): void {
+    const tribe = this.tribes[building.tribeId];
     if (building.type === BuildingType.Stable) {
       this.tribes[building.tribeId]!.stableCount = Math.max(0, this.tribes[building.tribeId]!.stableCount - 1);
     }
@@ -4204,7 +4411,58 @@ export class Simulation {
       }
     }
     this.buildings.splice(this.buildings.indexOf(building), 1);
+    if (building.type === BuildingType.CapitalHall && tribe) {
+      this.collapseSettlementFromHeadquartersLoss(tribe, building);
+      this.updateTribeAnchor(tribe.id);
+      if (!this.hasHeadquarters(tribe.id)) {
+        tribe.morale = Math.max(8, tribe.morale - 28);
+        tribe.research = Math.max(0, tribe.research - 10);
+        this.pushEvent({
+          kind: "capital-loss",
+          title: `${tribe.name} has lost its last hall`,
+          description: `${tribe.name} has lost all headquarters and is breaking into scattered stragglers.`,
+          x: building.x,
+          y: building.y,
+          tribeId: tribe.id,
+        });
+      } else {
+        this.pushEvent({
+          kind: "capital-loss",
+          title: `${tribe.name} loses a settlement hall`,
+          description: `${tribe.name} has lost a headquarters and the nearby settlement is collapsing.`,
+          x: building.x,
+          y: building.y,
+          tribeId: tribe.id,
+        });
+      }
+    }
     this.invalidateSummaryCaches();
+  }
+
+  private collapseSettlementFromHeadquartersLoss(tribe: TribeState, hall: BuildingState): void {
+    const hallCenter = buildingCenter(hall);
+    const remainingHalls = this.capitalHallsForTribe(tribe.id).filter((building) => building.id !== hall.id);
+    const collapseRadius = 12;
+
+    for (let i = this.buildings.length - 1; i >= 0; i -= 1) {
+      const other = this.buildings[i]!;
+      if (other.tribeId !== tribe.id || other.id === hall.id) continue;
+      if (other.type === BuildingType.CapitalHall) continue;
+      const center = buildingCenter(other);
+      if (manhattan(center.x, center.y, hallCenter.x, hallCenter.y) > collapseRadius) continue;
+      if (remainingHalls.some((hq) => manhattan(buildingCenter(hq).x, buildingCenter(hq).y, center.x, center.y) <= 8)) continue;
+      this.removeBuilding(other);
+    }
+
+    for (const agent of this.agents.filter((entry) => entry.tribeId === tribe.id)) {
+      if (manhattan(agent.x, agent.y, hallCenter.x, hallCenter.y) > collapseRadius + 3) continue;
+      agent.morale = Math.max(10, agent.morale - 24);
+      agent.fatigue = clamp(agent.fatigue + 16, 0, 100);
+      if (this.random() > 0.55) {
+        agent.wounds = clamp(agent.wounds + 1, 0, 5);
+        agent.health = Math.max(20, agent.health - randInt(this.random, 6, 18));
+      }
+    }
   }
 
   private earthworkDefenseBonus(x: number, y: number): number {
@@ -4226,6 +4484,7 @@ export class Simulation {
 
   private consumeAndGrow(): void {
     for (const tribe of this.tribes) {
+      const hasHall = this.hasHeadquarters(tribe.id);
       const tribeAgents = this.agentsForTribe(tribe.id);
       const population = tribeAgents.length;
       const housing = this.computeHousing(tribe.id);
@@ -4299,6 +4558,7 @@ export class Simulation {
 
       const fertilityRate = tribe.race.type === RaceType.Orcs ? 1.2 : tribe.race.type === RaceType.Halflings ? 1.1 : 1;
       if (
+        hasHall &&
         this.tickCount % Math.max(320, Math.floor((YEAR_TICKS / 2.6) / fertilityRate)) === 0
         && population + 1 < housing
         && population < MAX_AGENTS_PER_TRIBE
@@ -4308,6 +4568,10 @@ export class Simulation {
       ) {
         this.spawnAgent(tribe.id, tribe.capitalX + randInt(this.random, -2, 2), tribe.capitalY + randInt(this.random, -2, 2));
         tribe.resources[ResourceType.Rations] -= 14;
+      }
+
+      if (!hasHall) {
+        tribe.morale = Math.max(6, tribe.morale - 0.08);
       }
 
       if (tribe.resources[ResourceType.Rations] <= 0 && this.tickCount % (SIM_TICKS_PER_SECOND * 8) === 0) {
@@ -4660,6 +4924,9 @@ export class Simulation {
     this.jobs.length = 0;
     this.jobs.push(...carriedJobs);
     for (const tribe of this.tribes) {
+      if (!this.hasHeadquarters(tribe.id)) {
+        continue;
+      }
       const bootstrap = this.isBootstrapPhase(tribe);
       this.updateDiscovery(tribe);
       this.updateDiplomacy(tribe);
@@ -4668,6 +4935,7 @@ export class Simulation {
       this.generateBuildingPlans(tribe);
       if (!bootstrap) {
         this.generateDistrictPlans(tribe);
+        this.generateUpgradePlans(tribe);
         this.generateExplorationPlans(tribe);
         this.generateEarthworkPlans(tribe);
         this.generateCraftingPlans(tribe);
@@ -5164,7 +5432,8 @@ export class Simulation {
       type !== BuildingType.Farm &&
       type !== BuildingType.Orchard &&
       type !== BuildingType.Stockpile &&
-      type !== BuildingType.Warehouse
+      type !== BuildingType.Warehouse &&
+      type !== BuildingType.CapitalHall
     ) {
       return;
     }
@@ -5283,6 +5552,9 @@ export class Simulation {
 
     for (const target of targets) {
       const productiveRemote = target.top.amount >= 24 || target.storageDistance >= 16;
+      const nearbyHall = this.capitalHallsForTribe(tribe.id).some((hall) =>
+        manhattan(buildingCenter(hall).x, buildingCenter(hall).y, target.center.x, target.center.y) <= 12,
+      );
       const nearbyStorage = storages.some((building) => manhattan(buildingCenter(building).x, buildingCenter(building).y, target.center.x, target.center.y) <= 7);
       if (!nearbyStorage && !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Stockpile, target.center.x, target.center.y, 7)) {
         this.tryPlanBuildingAround(tribe, BuildingType.Stockpile, 7, target.center.x, target.center.y, 7);
@@ -5312,6 +5584,17 @@ export class Simulation {
         !this.hasNearbyPlannedBuild(tribe.id, BuildingType.House, target.center.x, target.center.y, 8)
       ) {
         this.tryPlanBuildingAround(tribe, BuildingType.House, 5, target.center.x, target.center.y, 8);
+      }
+
+      if (
+        tribe.age >= AgeType.Stone &&
+        population >= 34 &&
+        productiveRemote &&
+        !nearbyHall &&
+        this.buildingCount(tribe.id, BuildingType.CapitalHall) < this.maxBuildingCountForTribe(tribe, BuildingType.CapitalHall) &&
+        !this.hasNearbyPlannedBuild(tribe.id, BuildingType.CapitalHall, target.center.x, target.center.y, 10)
+      ) {
+        this.tryPlanBuildingAround(tribe, BuildingType.CapitalHall, 8, target.center.x, target.center.y, 10);
       }
 
       if (
@@ -5424,6 +5707,272 @@ export class Simulation {
       !this.hasNearbyPlannedBuild(tribe.id, BuildingType.Smithy, activeHub.center.x, activeHub.center.y, 10)
     ) {
       this.tryPlanBuildingAround(tribe, BuildingType.Smithy, 7, activeHub.center.x, activeHub.center.y, 10);
+    }
+  }
+
+  private supportsBuildingUpgrade(type: BuildingType): boolean {
+    return (
+      type === BuildingType.CapitalHall
+      || type === BuildingType.House
+      || type === BuildingType.Stockpile
+      || type === BuildingType.Warehouse
+      || type === BuildingType.Cistern
+      || type === BuildingType.Farm
+      || type === BuildingType.Orchard
+      || type === BuildingType.LumberCamp
+      || type === BuildingType.Quarry
+      || type === BuildingType.Mine
+      || type === BuildingType.Workshop
+      || type === BuildingType.School
+      || type === BuildingType.Smithy
+      || type === BuildingType.Armory
+      || type === BuildingType.Stable
+      || type === BuildingType.Barracks
+      || type === BuildingType.MountainHall
+      || type === BuildingType.DeepMine
+      || type === BuildingType.Shrine
+      || type === BuildingType.Tavern
+      || type === BuildingType.Infirmary
+      || type === BuildingType.MageTower
+      || type === BuildingType.Foundry
+      || type === BuildingType.Factory
+      || type === BuildingType.RailDepot
+      || type === BuildingType.PowerPlant
+      || type === BuildingType.Castle
+    );
+  }
+
+  private targetBuildingLevelForTribe(tribe: TribeState, building: BuildingState): number {
+    let level = 1;
+    if (
+      tribe.age >= AgeType.Stone &&
+      (
+        building.type === BuildingType.CapitalHall
+        || building.type === BuildingType.House
+        || building.type === BuildingType.Stockpile
+        || building.type === BuildingType.Cistern
+        || building.type === BuildingType.Farm
+        || building.type === BuildingType.Orchard
+        || building.type === BuildingType.LumberCamp
+        || building.type === BuildingType.Quarry
+        || building.type === BuildingType.Workshop
+        || building.type === BuildingType.MountainHall
+      )
+    ) {
+      level = 2;
+    }
+    if (
+      tribe.age >= AgeType.Iron &&
+      (
+        building.type === BuildingType.CapitalHall
+        || building.type === BuildingType.House
+        || building.type === BuildingType.Stockpile
+        || building.type === BuildingType.Warehouse
+        || building.type === BuildingType.Farm
+        || building.type === BuildingType.Orchard
+        || building.type === BuildingType.Workshop
+        || building.type === BuildingType.Smithy
+        || building.type === BuildingType.Armory
+        || building.type === BuildingType.Barracks
+        || building.type === BuildingType.Mine
+        || building.type === BuildingType.DeepMine
+        || building.type === BuildingType.School
+        || building.type === BuildingType.Stable
+        || building.type === BuildingType.Shrine
+        || building.type === BuildingType.Tavern
+        || building.type === BuildingType.Infirmary
+        || building.type === BuildingType.MountainHall
+      )
+    ) {
+      level = 3;
+    }
+    if (
+      tribe.age >= AgeType.Industrial &&
+      (
+        building.type === BuildingType.CapitalHall
+        || building.type === BuildingType.Warehouse
+        || building.type === BuildingType.Workshop
+        || building.type === BuildingType.Smithy
+        || building.type === BuildingType.Armory
+        || building.type === BuildingType.Barracks
+        || building.type === BuildingType.Foundry
+        || building.type === BuildingType.Factory
+        || building.type === BuildingType.RailDepot
+        || building.type === BuildingType.PowerPlant
+        || building.type === BuildingType.Castle
+      )
+    ) {
+      level = 4;
+    }
+    return level;
+  }
+
+  private buildingUpgradeCost(building: BuildingState, targetLevel: number): Partial<Record<ResourceType, number>> {
+    const def = getBuildingDef(building.type);
+    const step = Math.max(1, targetLevel - building.level);
+    const scale = 0.28 + building.level * 0.12 + step * 0.08;
+    const cost: Partial<Record<ResourceType, number>> = {};
+    for (const [resource, amount] of Object.entries(def.cost)) {
+      if (!amount || amount <= 0) continue;
+      cost[Number(resource) as ResourceType] = Math.max(1, Math.ceil(amount * scale));
+    }
+    if (targetLevel >= 3 && cost[ResourceType.Stone] === undefined && def.cost[ResourceType.Wood]) {
+      cost[ResourceType.Stone] = Math.max(4, Math.ceil((def.cost[ResourceType.Wood] ?? 0) * 0.18));
+    }
+    if (targetLevel >= 4 && cost[ResourceType.Bricks] === undefined && (def.cost[ResourceType.Stone] || def.cost[ResourceType.Ore])) {
+      cost[ResourceType.Bricks] = Math.max(4, Math.ceil(((def.cost[ResourceType.Stone] ?? 0) + (def.cost[ResourceType.Ore] ?? 0)) * 0.18));
+    }
+    return cost;
+  }
+
+  private pendingUpgradeCount(tribeId: number): number {
+    return this.jobs.filter((job) =>
+      job.tribeId === tribeId
+      && job.kind === "build"
+      && (job.payload as BuildPayload | undefined)?.upgradeBuildingId != null,
+    ).length;
+  }
+
+  private hasPendingUpgrade(buildingId: number): boolean {
+    return this.jobs.some((job) =>
+      job.kind === "build"
+      && (job.payload as BuildPayload | undefined)?.upgradeBuildingId === buildingId,
+    );
+  }
+
+  private findBuildingWorkTile(building: BuildingState): { x: number; y: number } | null {
+    const center = buildingCenter(building);
+    let best: { x: number; y: number; score: number } | null = null;
+    for (let y = building.y - 1; y <= building.y + building.height; y += 1) {
+      for (let x = building.x - 1; x <= building.x + building.width; x += 1) {
+        const onPerimeter =
+          x === building.x - 1
+          || y === building.y - 1
+          || x === building.x + building.width
+          || y === building.y + building.height;
+        if (!onPerimeter || !inBounds(x, y, this.world.width, this.world.height)) continue;
+        const index = indexOf(x, y, this.world.width);
+        if (this.world.buildingByTile[index] >= 0) continue;
+        const terrain = this.world.terrain[index];
+        if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow || terrain === TerrainType.River || terrain === TerrainType.Lava || terrain === TerrainType.Mountain) continue;
+        const score = this.tribeRoadAdjacency(building.tribeId, x, y) * 16 + this.nearbyRoadScore(x, y, 1) * 5 - manhattan(center.x, center.y, x, y);
+        if (!best || score > best.score) {
+          best = { x, y, score };
+        }
+      }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
+  private tryPlanBuildingUpgrade(tribe: TribeState, building: BuildingState, targetLevel: number, priority: number): boolean {
+    if (this.hasPendingUpgrade(building.id) || building.level >= targetLevel) {
+      return false;
+    }
+    const workTile = this.findBuildingWorkTile(building);
+    if (!workTile) {
+      return false;
+    }
+    const cost = this.buildingUpgradeCost(building, targetLevel);
+    if (!this.canAfford(tribe, cost)) {
+      return false;
+    }
+    const haulSpecs = this.constructionHaulPlan(cost);
+    for (const [resource, amount] of Object.entries(cost)) {
+      tribe.resources[Number(resource)] -= amount ?? 0;
+    }
+    const center = buildingCenter(building);
+    const buildJob: JobState = {
+      id: this.nextJobId++,
+      tribeId: tribe.id,
+      kind: "build",
+      x: workTile.x,
+      y: workTile.y,
+      priority,
+      claimedBy: null,
+      payload: {
+        buildingType: building.type,
+        width: building.width,
+        height: building.height,
+        supplied: 0,
+        supplyNeeded: Math.max(1, haulSpecs.length),
+        stockX: center.x,
+        stockY: center.y,
+        upgradeBuildingId: building.id,
+        upgradeLevel: targetLevel,
+      },
+    };
+    this.jobs.push(buildJob);
+    for (const haul of haulSpecs) {
+      const sourceBuilding = this.findStockedSourceBuilding(tribe.id, center.x, center.y, haul.resourceType);
+      const sourceSite = sourceBuilding ? buildingCenter(sourceBuilding) : this.findConstructionSource(tribe.id, building.type);
+      this.jobs.push({
+        id: this.nextJobId++,
+        tribeId: tribe.id,
+        kind: "haul",
+        x: sourceSite.x,
+        y: sourceSite.y,
+        priority: Math.max(4, priority - 1),
+        claimedBy: null,
+        payload: {
+          sourceX: sourceSite.x,
+          sourceY: sourceSite.y,
+          sourceBuildingId: sourceBuilding?.id ?? null,
+          dropX: center.x,
+          dropY: center.y,
+          resourceType: haul.resourceType,
+          amount: haul.amount,
+          targetJobId: buildJob.id,
+        },
+      });
+    }
+    return true;
+  }
+
+  private generateUpgradePlans(tribe: TribeState): void {
+    const population = this.populationOf(tribe.id);
+    if (population < 18) {
+      return;
+    }
+    const foodNeed = population * (tribe.age >= AgeType.Bronze ? 6 : 5);
+    const lowFood = tribe.resources[ResourceType.Rations] < foodNeed * 1.08;
+    const lowWater = tribe.water < Math.max(18, population * 0.55);
+    const lowWood = tribe.resources[ResourceType.Wood] < 52;
+    const lowStone = tribe.resources[ResourceType.Stone] < 26;
+    if (lowFood || lowWater || lowWood || lowStone) {
+      return;
+    }
+    const maxPending = population >= 52 ? 2 : 1;
+    if (this.pendingUpgradeCount(tribe.id) >= maxPending) {
+      return;
+    }
+
+    const candidates = this.buildingsForTribe(tribe.id)
+      .filter((building) => this.supportsBuildingUpgrade(building.type))
+      .filter((building) => !this.hasPendingUpgrade(building.id))
+      .map((building) => {
+        const targetLevel = this.targetBuildingLevelForTribe(tribe, building);
+        const center = buildingCenter(building);
+        const top = this.topStoredResource(building);
+        let score =
+          (targetLevel - building.level) * 42
+          + this.nearbyRoadScore(center.x, center.y, 2) * 6
+          + Math.min(40, top.amount) * 0.4;
+        if (building.type === BuildingType.CapitalHall) score += 64;
+        if (building.type === BuildingType.Warehouse || building.type === BuildingType.Stockpile) score += 42;
+        if (building.type === BuildingType.House) score += this.computeHousing(tribe.id) < population + 4 ? 38 : 12;
+        if (building.type === BuildingType.Workshop || building.type === BuildingType.Smithy || building.type === BuildingType.Foundry || building.type === BuildingType.Factory) score += 34;
+        if (building.type === BuildingType.Farm || building.type === BuildingType.Orchard || building.type === BuildingType.LumberCamp || building.type === BuildingType.Quarry || building.type === BuildingType.Mine || building.type === BuildingType.DeepMine) score += 22;
+        if ((building.type === BuildingType.Barracks || building.type === BuildingType.Armory || building.type === BuildingType.Castle) && this.contactCount(tribe) === 0) score -= 18;
+        return { building, targetLevel, score };
+      })
+      .filter((entry) => entry.targetLevel > entry.building.level)
+      .sort((a, b) => b.score - a.score);
+
+    for (const candidate of candidates) {
+      if (this.pendingUpgradeCount(tribe.id) >= maxPending) {
+        break;
+      }
+      this.tryPlanBuildingUpgrade(tribe, candidate.building, candidate.targetLevel, 6 + (candidate.targetLevel - candidate.building.level) * 2);
     }
   }
 
@@ -5711,6 +6260,9 @@ export class Simulation {
     if (tribe.age >= AgeType.Stone) {
       this.planFarmCanals(tribe, lowWater ? 1 : tribe.age >= AgeType.Iron ? 3 : 1);
     }
+    if (population >= 18) {
+      this.planCivicStreets(tribe, infrastructureStable ? (tribe.age >= AgeType.Stone ? 5 : 3) : 2);
+    }
 
     const hostility = this.meanHostility(tribe);
     if (!infrastructureStable || population < 24 || contacts === 0) {
@@ -5747,6 +6299,44 @@ export class Simulation {
         if (!hasAdjacentWater(this.world, candidate.x, candidate.y, 10)) continue;
         this.enqueueEarthworkJob(tribe, candidate.x, candidate.y, "canal", 5);
         planned += 1;
+      }
+    }
+  }
+
+  private planCivicStreets(tribe: TribeState, limit: number): void {
+    let planned = 0;
+    const hubs = this.buildingsForTribe(tribe.id)
+      .filter((building) =>
+        building.type === BuildingType.CapitalHall
+        || building.type === BuildingType.Stockpile
+        || building.type === BuildingType.Warehouse
+        || building.type === BuildingType.Workshop
+        || building.type === BuildingType.House
+        || building.type === BuildingType.Tavern
+        || building.type === BuildingType.Shrine,
+      )
+      .slice(0, 16);
+
+    for (const building of hubs) {
+      if (planned >= limit) break;
+      const center = buildingCenter(building);
+      for (let dy = -3; dy <= 3 && planned < limit; dy += 1) {
+        for (let dx = -3; dx <= 3 && planned < limit; dx += 1) {
+          const x = center.x + dx;
+          const y = center.y + dy;
+          if (!inBounds(x, y, this.world.width, this.world.height)) continue;
+          const index = indexOf(x, y, this.world.width);
+          if (this.world.owner[index] !== tribe.id || this.world.buildingByTile[index] >= 0) continue;
+          const road = this.world.road[index];
+          const adjacency = this.tribeRoadAdjacency(tribe.id, x, y);
+          if (road === 0 && adjacency > 0 && this.canPlaceEarthwork(x, y, "road")) {
+            this.enqueueEarthworkJob(tribe, x, y, "road", 4);
+            planned += 1;
+          } else if (tribe.age >= AgeType.Stone && road === 1 && this.canPlaceEarthwork(x, y, "pave")) {
+            this.enqueueEarthworkJob(tribe, x, y, "pave", 3);
+            planned += 1;
+          }
+        }
       }
     }
   }
@@ -6631,6 +7221,9 @@ export class Simulation {
     if (this.world.buildingByTile[index] >= 0) return false;
     if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow || terrain === TerrainType.River || terrain === TerrainType.Lava || terrain === TerrainType.Mountain) return false;
     if (feature === FeatureType.Volcano || feature === FeatureType.Trees || feature === FeatureType.OreVein || feature === FeatureType.StoneOutcrop) return false;
+    if (kind === "road" || kind === "pave") {
+      return feature !== FeatureType.Volcano && feature !== FeatureType.Palisade && feature !== FeatureType.StoneWall && feature !== FeatureType.Gate;
+    }
     if (kind === "canal") {
       return feature !== FeatureType.IrrigationCanal && feature !== FeatureType.Palisade && feature !== FeatureType.StoneWall && feature !== FeatureType.Gate;
     }
@@ -6909,7 +7502,8 @@ export class Simulation {
       type !== BuildingType.Farm &&
       type !== BuildingType.Orchard &&
       type !== BuildingType.Stockpile &&
-      type !== BuildingType.Warehouse
+      type !== BuildingType.Warehouse &&
+      type !== BuildingType.CapitalHall
     ) {
       return;
     }
@@ -6974,6 +7568,11 @@ export class Simulation {
     if (type === BuildingType.Stockpile) {
       return tribe.age === AgeType.Primitive ? 2 : tribe.age === AgeType.Stone ? (population >= 36 ? 4 : population >= 24 ? 3 : 2) : population >= 48 ? 5 : 4;
     }
+    if (type === BuildingType.CapitalHall) {
+      if (population < 30) return 1;
+      if (population < 52) return 2;
+      return 3;
+    }
     if (type === BuildingType.Warehouse) {
       if (tribe.age < AgeType.Stone) return 0;
       if (tribe.age < AgeType.Bronze) return population >= 38 ? 2 : population >= 24 ? 1 : 0;
@@ -6997,6 +7596,9 @@ export class Simulation {
     }
     if (type === BuildingType.Stockpile || type === BuildingType.Warehouse) {
       return population >= 48 ? 3 : population >= 28 ? 2 : 1;
+    }
+    if (type === BuildingType.CapitalHall) {
+      return 1;
     }
     return 1;
   }
@@ -7132,6 +7734,7 @@ export class Simulation {
       width,
       height,
       hp: 0,
+      level: 1,
       stock: resourceArray(),
     };
     const anchor = this.findRoadAnchor(preview);
@@ -7656,6 +8259,21 @@ export class Simulation {
     if (type === BuildingType.Castle) {
       score += 30 - centerDistance * 0.2;
     }
+    if (type === BuildingType.CapitalHall) {
+      const existingHalls = this.capitalHallsForTribe(tribe.id);
+      const remoteTarget = population >= 44 ? 26 : population >= 30 ? 20 : 16;
+      score += 72 - Math.abs(centerDistance - remoteTarget) * 3.2;
+      score += this.nearbyBuildingCount(tribe.id, BuildingType.House, x, y, 10) * 8;
+      score += this.nearbyBuildingCount(tribe.id, BuildingType.Stockpile, x, y, 10) * 8;
+      score += this.nearbyBuildingCount(tribe.id, BuildingType.Warehouse, x, y, 12) * 10;
+      score += this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, x, y, 10) * 7;
+      score += this.nearbyRoadScore(x, y, 3) * 2.6;
+      score -= existingHalls.reduce((sum, hall) => {
+        const center = buildingCenter(hall);
+        const distance = manhattan(center.x, center.y, x, y);
+        return sum + Math.max(0, 24 - distance) * 8;
+      }, 0);
+    }
     if (type === BuildingType.Watchtower) {
       score += centerDistance * 0.15;
     }
@@ -7783,6 +8401,7 @@ export class Simulation {
       width: def.size[0],
       height: def.size[1],
       hp: 60 + buildingColorStrength(type) * 40,
+      level: 1,
       stock: resourceArray(),
     };
     this.buildings.push(building);
@@ -7962,8 +8581,36 @@ export class Simulation {
     return this.cachedBuildingCountsByTribe[tribeId]?.[type] ?? 0;
   }
 
+  private capitalHallsForTribe(tribeId: number): BuildingState[] {
+    return this.buildingsForTribe(tribeId).filter((building) => building.type === BuildingType.CapitalHall);
+  }
+
+  private hasHeadquarters(tribeId: number): boolean {
+    return this.capitalHallsForTribe(tribeId).length > 0;
+  }
+
   private hasBuilt(tribeId: number, type: BuildingType): boolean {
     return this.buildingCount(tribeId, type) > 0;
+  }
+
+  private updateTribeAnchor(tribeId: number): void {
+    const tribe = this.tribes[tribeId];
+    if (!tribe) return;
+    const halls = this.capitalHallsForTribe(tribeId);
+    if (halls.length === 0) {
+      tribe.capitalBuildingId = -1;
+      const fallbackAgent = this.agents.find((agent) => agent.tribeId === tribeId);
+      if (fallbackAgent) {
+        tribe.capitalX = fallbackAgent.x;
+        tribe.capitalY = fallbackAgent.y;
+      }
+      return;
+    }
+    const preferred = halls.find((hall) => hall.id === tribe.capitalBuildingId) ?? halls[0]!;
+    tribe.capitalBuildingId = preferred.id;
+    const center = buildingCenter(preferred);
+    tribe.capitalX = center.x;
+    tribe.capitalY = center.y;
   }
 
   private resourceStored(tribeId: number, type: ResourceType): number {
@@ -8281,6 +8928,13 @@ export class Simulation {
     });
   }
 
+  private pathPreviewTarget(path: number[], pathIndex: number, x: number, y: number, moveCooldown: number, maxPreviewDelay = 0): { x: number; y: number } {
+    if (moveCooldown > maxPreviewDelay || path.length <= 1 || pathIndex >= path.length - 1) {
+      return { x, y };
+    }
+    return coordsOf(path[pathIndex + 1]!, this.world.width);
+  }
+
   private createSnapshot(): DynamicSnapshot {
     const tileUpdates: TileUpdate[] = [];
     for (const index of this.dirtyTiles) {
@@ -8301,34 +8955,39 @@ export class Simulation {
     }
     this.dirtyTiles.clear();
 
-    const agents: AgentSnapshot[] = this.agents.map((agent) => ({
-      id: agent.id,
-      tribeId: agent.tribeId,
-      name: agent.name,
-      title: agent.title,
-      hero: agent.hero,
-      blessed: agent.blessed,
-      level: agent.level,
-      kills: agent.kills,
-      wounds: agent.wounds,
-      status: agent.status,
-      condition: agent.condition,
-      ageYears: Math.floor(agent.ageTicks / YEAR_TICKS) + 18,
-      role: agent.role,
-      x: agent.x,
-      y: agent.y,
-      targetX: agent.task?.targetX ?? agent.x,
-      targetY: agent.task?.targetY ?? agent.y,
-      health: Math.max(0, Math.floor(agent.health)),
-      fatigue: Math.floor(agent.fatigue),
-      sickness: Math.floor(agent.sickness),
-      inspiration: Math.floor(agent.inspiration),
-      task: agent.task?.kind ?? "idle",
-      underground: agent.underground,
-      carrying: agent.carrying,
-      carryingAmount: agent.carryingAmount,
-      gear: { ...agent.gear },
-    }));
+    const agents: AgentSnapshot[] = this.agents.map((agent) => {
+      const preview = this.pathPreviewTarget(agent.path, agent.pathIndex, agent.x, agent.y, agent.moveCooldown, 0);
+      return {
+        id: agent.id,
+        tribeId: agent.tribeId,
+        name: agent.name,
+        title: agent.title,
+        hero: agent.hero,
+        blessed: agent.blessed,
+        level: agent.level,
+        kills: agent.kills,
+        wounds: agent.wounds,
+        status: agent.status,
+        condition: agent.condition,
+        ageYears: Math.floor(agent.ageTicks / YEAR_TICKS) + 18,
+        role: agent.role,
+        x: agent.x,
+        y: agent.y,
+        moveToX: preview.x,
+        moveToY: preview.y,
+        targetX: agent.task?.targetX ?? agent.x,
+        targetY: agent.task?.targetY ?? agent.y,
+        health: Math.max(0, Math.floor(agent.health)),
+        fatigue: Math.floor(agent.fatigue),
+        sickness: Math.floor(agent.sickness),
+        inspiration: Math.floor(agent.inspiration),
+        task: agent.task?.kind ?? "idle",
+        underground: agent.underground,
+        carrying: agent.carrying,
+        carryingAmount: agent.carryingAmount,
+        gear: { ...agent.gear },
+      };
+    });
 
     const buildings: BuildingSnapshot[] = this.buildings.map((building) => ({
       id: building.id,
@@ -8339,6 +8998,7 @@ export class Simulation {
       width: building.width,
       height: building.height,
       hp: Math.max(0, Math.floor(building.hp)),
+      level: building.level,
       stockResource: this.topStoredResource(building).resourceType,
       stockAmount: this.topStoredResource(building).amount,
     }));
@@ -8347,13 +9007,16 @@ export class Simulation {
       .filter((job) => job.kind === "build")
       .map((job) => {
         const payload = job.payload as BuildPayload;
+        const existing = payload.upgradeBuildingId == null
+          ? null
+          : this.buildings.find((building) => building.id === payload.upgradeBuildingId) ?? null;
         return {
           tribeId: job.tribeId,
           type: payload.buildingType,
-          x: job.x,
-          y: job.y,
-          width: payload.width,
-          height: payload.height,
+          x: existing?.x ?? job.x,
+          y: existing?.y ?? job.y,
+          width: existing?.width ?? payload.width,
+          height: existing?.height ?? payload.height,
           supplied: payload.supplied,
           supplyNeeded: payload.supplyNeeded,
         };
@@ -8364,49 +9027,71 @@ export class Simulation {
       type: animal.type,
       x: animal.x,
       y: animal.y,
+      moveToX: animal.x,
+      moveToY: animal.y,
     }));
 
-    const boats: BoatSnapshot[] = this.boats.map((boat) => ({
-      id: boat.id,
-      tribeId: boat.tribeId,
-      x: boat.x,
-      y: boat.y,
-      cargo: boat.cargo,
-      task: boat.task,
-    }));
+    const boats: BoatSnapshot[] = this.boats.map((boat) => {
+      const preview = this.pathPreviewTarget(boat.path, boat.pathIndex, boat.x, boat.y, boat.moveCooldown, 0);
+      return {
+        id: boat.id,
+        tribeId: boat.tribeId,
+        x: boat.x,
+        y: boat.y,
+        moveToX: preview.x,
+        moveToY: preview.y,
+        cargo: boat.cargo,
+        task: boat.task,
+      };
+    });
 
-    const wagons: WagonSnapshot[] = this.wagons.map((wagon) => ({
-      id: wagon.id,
-      tribeId: wagon.tribeId,
-      x: wagon.x,
-      y: wagon.y,
-      cargoType: wagon.cargoType,
-      cargoAmount: wagon.cargoAmount,
-      task: wagon.task,
-    }));
+    const wagons: WagonSnapshot[] = this.wagons.map((wagon) => {
+      const preview = this.pathPreviewTarget(wagon.path, wagon.pathIndex, wagon.x, wagon.y, wagon.moveCooldown, 0);
+      return {
+        id: wagon.id,
+        tribeId: wagon.tribeId,
+        x: wagon.x,
+        y: wagon.y,
+        moveToX: preview.x,
+        moveToY: preview.y,
+        cargoType: wagon.cargoType,
+        cargoAmount: wagon.cargoAmount,
+        task: wagon.task,
+      };
+    });
 
-    const caravans: CaravanSnapshot[] = this.caravans.map((caravan) => ({
-      id: caravan.id,
-      tribeId: caravan.tribeId,
-      partnerTribeId: caravan.partnerTribeId,
-      x: caravan.x,
-      y: caravan.y,
-      cargoType: caravan.cargoType,
-      cargoAmount: caravan.cargoAmount,
-      task: caravan.task,
-    }));
+    const caravans: CaravanSnapshot[] = this.caravans.map((caravan) => {
+      const preview = this.pathPreviewTarget(caravan.path, caravan.pathIndex, caravan.x, caravan.y, caravan.moveCooldown, 0);
+      return {
+        id: caravan.id,
+        tribeId: caravan.tribeId,
+        partnerTribeId: caravan.partnerTribeId,
+        x: caravan.x,
+        y: caravan.y,
+        moveToX: preview.x,
+        moveToY: preview.y,
+        cargoType: caravan.cargoType,
+        cargoAmount: caravan.cargoAmount,
+        task: caravan.task,
+      };
+    });
 
-    const siegeEngines: SiegeEngineSnapshot[] = this.siegeEngines.map((engine) => ({
-      id: engine.id,
-      tribeId: engine.tribeId,
-      type: engine.type,
-      x: engine.x,
-      y: engine.y,
-      targetX: engine.targetX,
-      targetY: engine.targetY,
-      hp: engine.hp,
-      task: engine.task,
-    }));
+    const siegeEngines: SiegeEngineSnapshot[] = this.siegeEngines.map((engine) => {
+      const preview = this.pathPreviewTarget(engine.path, engine.pathIndex, engine.x, engine.y, engine.moveCooldown, 1);
+      return {
+        id: engine.id,
+        tribeId: engine.tribeId,
+        type: engine.type,
+        x: engine.x,
+        y: engine.y,
+        moveToX: preview.x,
+        moveToY: preview.y,
+        targetX: engine.targetX,
+        targetY: engine.targetY,
+        hp: engine.hp,
+        task: engine.task,
+      };
+    });
 
     const weather: WeatherCellSnapshot[] = this.weatherCells.map((cell) => ({
       x: cell.x,
