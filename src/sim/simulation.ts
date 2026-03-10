@@ -224,8 +224,10 @@ type BuildPayload = {
   buildingType: BuildingType;
   width: number;
   height: number;
+  cost: Partial<Record<ResourceType, number>>;
   supplied: number;
   supplyNeeded: number;
+  delivered: Partial<Record<ResourceType, number>>;
   stockX: number;
   stockY: number;
   upgradeBuildingId?: number | null;
@@ -263,6 +265,7 @@ type CraftPayload = {
   inputs: Partial<Record<ResourceType, number>>;
   supplied: number;
   supplyNeeded: number;
+  delivered: Partial<Record<ResourceType, number>>;
   stockX: number;
   stockY: number;
 };
@@ -864,6 +867,7 @@ export class Simulation {
       this.connectStarterSettlement(tribeId, starterBuildings);
       this.ensureBootstrapFeaturesNearStart(tribe);
       this.seedStarterStockyard(tribe, stockpile);
+      this.seedStarterBuildingStocks(tribe, capital, stockpile);
 
       if ((race.type === RaceType.Dwarves || race.type === RaceType.Darkfolk) && this.random() > 0.3) {
         const hallDef = getBuildingDef(BuildingType.MountainHall);
@@ -1029,6 +1033,41 @@ export class Simulation {
           : resourceType === ResourceType.Clay ? 14
           : resourceType === ResourceType.Grain ? 18
           : 16;
+      }
+    }
+  }
+
+  private seedStarterBuildingStocks(tribe: TribeState, capital: BuildingState, stockpile: BuildingState): void {
+    const stockTargets: Array<{ building: BuildingState; resources: Array<[ResourceType, number]> }> = [
+      {
+        building: stockpile,
+        resources: [
+          [ResourceType.Wood, 18],
+          [ResourceType.Stone, 14],
+          [ResourceType.Grain, 6],
+          [ResourceType.Clay, 6],
+          [ResourceType.Berries, 6],
+          [ResourceType.Rations, 12],
+        ],
+      },
+      {
+        building: capital,
+        resources: [
+          [ResourceType.Wood, 14],
+          [ResourceType.Stone, 8],
+          [ResourceType.Rations, 16],
+          [ResourceType.Meat, 4],
+          [ResourceType.StoneTools, 8],
+          [ResourceType.BasicWeapons, 5],
+          [ResourceType.BasicArmor, 4],
+        ],
+      },
+    ];
+
+    for (const target of stockTargets) {
+      for (const [resourceType, amount] of target.resources) {
+        if (tribe.resources[resourceType] <= 0) continue;
+        this.addBuildingStock(target.building, resourceType, Math.min(amount, tribe.resources[resourceType]));
       }
     }
   }
@@ -1404,8 +1443,28 @@ export class Simulation {
 
       if (wagon.task === WagonTaskType.ToSource) {
         const payload = haulJob.payload as HaulPayload;
+        let sourceBuilding = payload.sourceBuildingId != null
+          ? this.buildings.find((entry) => entry.id === payload.sourceBuildingId) ?? null
+          : this.findStockedSourceBuilding(wagon.tribeId, wagon.x, wagon.y, payload.resourceType);
+        let withdrawn = this.withdrawBuildingStock(sourceBuilding, payload.resourceType, payload.amount);
+        if (withdrawn <= 0) {
+          sourceBuilding = this.findStockedSourceBuilding(wagon.tribeId, wagon.x, wagon.y, payload.resourceType);
+          withdrawn = this.withdrawBuildingStock(sourceBuilding, payload.resourceType, payload.amount);
+        }
+        if (withdrawn <= 0) {
+          haulJob.claimedBy = null;
+          wagon.task = WagonTaskType.Idle;
+          wagon.targetJobId = null;
+          wagon.cargoType = ResourceType.None;
+          wagon.cargoAmount = 0;
+          wagon.targetX = wagon.homeX;
+          wagon.targetY = wagon.homeY;
+          wagon.path = [];
+          wagon.pathIndex = 0;
+          continue;
+        }
         wagon.cargoType = payload.resourceType;
-        wagon.cargoAmount = payload.amount;
+        wagon.cargoAmount = withdrawn;
         wagon.task = WagonTaskType.ToDrop;
         wagon.targetX = payload.dropX;
         wagon.targetY = payload.dropY;
@@ -1417,9 +1476,13 @@ export class Simulation {
       const payload = haulJob.payload as HaulPayload;
       const buildJob = payload.targetJobId === null ? null : this.jobs.find((job) => job.id === payload.targetJobId && (job.kind === "build" || job.kind === "craft"));
       if (buildJob?.kind === "build") {
-        (buildJob.payload as BuildPayload).supplied += 1;
+        const buildPayload = buildJob.payload as BuildPayload;
+        buildPayload.supplied += 1;
+        this.addDeliveredAmount(buildPayload.delivered, payload.resourceType, wagon.cargoAmount);
       } else if (buildJob?.kind === "craft") {
-        (buildJob.payload as CraftPayload).supplied += 1;
+        const craftPayload = buildJob.payload as CraftPayload;
+        craftPayload.supplied += 1;
+        this.addDeliveredAmount(craftPayload.delivered, payload.resourceType, wagon.cargoAmount);
       } else if (payload.destBuildingId != null) {
         const destBuilding = this.buildings.find((entry) => entry.id === payload.destBuildingId) ?? null;
         this.addBuildingStock(destBuilding, payload.resourceType, wagon.cargoAmount);
@@ -3363,12 +3426,20 @@ export class Simulation {
         return;
       }
       if (task.stage === "toSource") {
-        const sourceBuilding = task.payload.sourceBuildingId != null
+        let sourceBuilding = task.payload.sourceBuildingId != null
           ? this.buildings.find((entry) => entry.id === task.payload.sourceBuildingId) ?? null
           : this.findStockedSourceBuilding(tribe.id, task.payload.sourceX, task.payload.sourceY, task.payload.resourceType);
-        const withdrawn = this.withdrawBuildingStock(sourceBuilding, task.payload.resourceType, task.payload.amount);
+        let withdrawn = this.withdrawBuildingStock(sourceBuilding, task.payload.resourceType, task.payload.amount);
+        if (withdrawn <= 0) {
+          sourceBuilding = this.findStockedSourceBuilding(tribe.id, agent.x, agent.y, task.payload.resourceType);
+          withdrawn = this.withdrawBuildingStock(sourceBuilding, task.payload.resourceType, task.payload.amount);
+        }
+        if (withdrawn <= 0) {
+          this.releaseTask(agent);
+          return;
+        }
         agent.carrying = task.payload.resourceType;
-        agent.carryingAmount = withdrawn > 0 ? withdrawn : task.payload.amount;
+        agent.carryingAmount = withdrawn;
         task.stage = "toDrop";
         task.targetX = task.payload.dropX;
         task.targetY = task.payload.dropY;
@@ -3385,9 +3456,11 @@ export class Simulation {
       if (buildJob?.kind === "build") {
         const payload = buildJob.payload as BuildPayload;
         payload.supplied += 1;
+        this.addDeliveredAmount(payload.delivered, task.payload.resourceType, agent.carryingAmount);
       } else if (buildJob?.kind === "craft") {
         const payload = buildJob.payload as CraftPayload;
         payload.supplied += 1;
+        this.addDeliveredAmount(payload.delivered, task.payload.resourceType, agent.carryingAmount);
       } else if (task.payload.destBuildingId != null) {
         const destBuilding = this.buildings.find((entry) => entry.id === task.payload.destBuildingId) ?? null;
         this.addBuildingStock(destBuilding, task.payload.resourceType, agent.carryingAmount);
@@ -3404,9 +3477,13 @@ export class Simulation {
       }
       task.workLeft -= workRate + tribe.race.buildBias * 0.3;
       if (task.workLeft <= 0) {
-        this.completeBuildingTask(tribe, task.payload, task.targetX, task.targetY);
+        const completed = this.completeBuildingTask(tribe, task.payload, task.targetX, task.targetY);
         this.consumeToolDurability(tribe, task.kind);
-        this.finishTask(agent);
+        if (completed) {
+          this.finishTask(agent);
+        } else {
+          this.releaseTask(agent);
+        }
       }
       return;
     }
@@ -3430,9 +3507,13 @@ export class Simulation {
       }
       task.workLeft -= workRate;
       if (task.workLeft <= 0) {
-        this.completeCraftTask(tribe, task.payload);
+        const completed = this.completeCraftTask(tribe, task.payload);
         this.consumeToolDurability(tribe, task.kind);
-        this.finishTask(agent);
+        if (completed) {
+          this.finishTask(agent);
+        } else {
+          this.releaseTask(agent);
+        }
       }
       return;
     }
@@ -3505,6 +3586,17 @@ export class Simulation {
     const job = this.jobs.find((entry) => entry.claimedBy === agent.id);
     if (job) {
       this.jobs.splice(this.jobs.indexOf(job), 1);
+    }
+    agent.task = null;
+    agent.path = [];
+    agent.pathIndex = 0;
+    agent.underground = false;
+  }
+
+  private releaseTask(agent: AgentState): void {
+    const job = this.jobs.find((entry) => entry.claimedBy === agent.id);
+    if (job) {
+      job.claimedBy = null;
     }
     agent.task = null;
     agent.path = [];
@@ -3678,6 +3770,44 @@ export class Simulation {
       return;
     }
     building.stock[resourceType] = (building.stock[resourceType] ?? 0) + amount;
+  }
+
+  private deliveredAmount(
+    delivered: Partial<Record<ResourceType, number>> | undefined,
+    resourceType: ResourceType,
+  ): number {
+    return delivered?.[resourceType] ?? 0;
+  }
+
+  private addDeliveredAmount(
+    delivered: Partial<Record<ResourceType, number>>,
+    resourceType: ResourceType,
+    amount: number,
+  ): void {
+    if (resourceType === ResourceType.None || amount <= 0) {
+      return;
+    }
+    delivered[resourceType] = (delivered[resourceType] ?? 0) + amount;
+  }
+
+  private hasDeliveredCost(
+    delivered: Partial<Record<ResourceType, number>> | undefined,
+    cost: Partial<Record<ResourceType, number>>,
+  ): boolean {
+    return Object.entries(cost).every(([resource, amount]) =>
+      this.deliveredAmount(delivered, Number(resource) as ResourceType) >= (amount ?? 0),
+    );
+  }
+
+  private pendingHaulAmount(targetJobId: number, resourceType: ResourceType): number {
+    return this.jobs.reduce((total, job) => {
+      if (job.kind !== "haul") return total;
+      const payload = job.payload as HaulPayload;
+      if (payload.targetJobId !== targetJobId || payload.resourceType !== resourceType) {
+        return total;
+      }
+      return total + payload.amount;
+    }, 0);
   }
 
   private topStoredResource(building: BuildingState): { resourceType: ResourceType; amount: number } {
@@ -4102,11 +4232,15 @@ export class Simulation {
     return true;
   }
 
-  private completeBuildingTask(tribe: TribeState, payload: BuildPayload, x: number, y: number): void {
+  private completeBuildingTask(tribe: TribeState, payload: BuildPayload, x: number, y: number): boolean {
+    if (!this.hasDeliveredCost(payload.delivered, payload.cost)) {
+      return false;
+    }
+
     if (payload.upgradeBuildingId != null) {
       const building = this.buildings.find((entry) => entry.id === payload.upgradeBuildingId && entry.tribeId === tribe.id);
       if (!building) {
-        return;
+        return false;
       }
       const nextLevel = Math.max(building.level + 1, payload.upgradeLevel ?? building.level + 1);
       building.level = Math.max(building.level, nextLevel);
@@ -4129,7 +4263,7 @@ export class Simulation {
         y: buildingCenter(building).y,
         tribeId: tribe.id,
       });
-      return;
+      return true;
     }
 
     const building = this.placeBuilding(tribe.id, payload.buildingType, x, y);
@@ -4172,6 +4306,7 @@ export class Simulation {
       y,
       tribeId: tribe.id,
     });
+    return true;
   }
 
   private completeEarthworkTask(tribe: TribeState, payload: EarthworkPayload, x: number, y: number): void {
@@ -4242,13 +4377,17 @@ export class Simulation {
     }
   }
 
-  private completeCraftTask(tribe: TribeState, payload: CraftPayload): void {
+  private completeCraftTask(tribe: TribeState, payload: CraftPayload): boolean {
+    if (!this.hasDeliveredCost(payload.delivered, payload.inputs)) {
+      return false;
+    }
     const building = this.buildings.find((entry) => entry.id === payload.buildingId);
     const poweredIndustry = this.buildingCount(tribe.id, BuildingType.PowerPlant) > 0 && (building?.type === BuildingType.Factory || building?.type === BuildingType.Foundry || building?.type === BuildingType.Armory);
     const directModernSite = building?.type === BuildingType.PowerPlant ? 1.35 : building?.type === BuildingType.Airfield ? 1.15 : poweredIndustry ? 1.2 : 1;
     const craftedAmount = Math.max(1, Math.floor(payload.amount * directModernSite));
     tribe.resources[payload.output] += craftedAmount;
     this.addBuildingStock(building ?? null, payload.output, craftedAmount);
+    return true;
   }
 
   private applyDamage(target: AgentState, amount: number): boolean {
@@ -4939,6 +5078,7 @@ export class Simulation {
         this.generateExplorationPlans(tribe);
         this.generateEarthworkPlans(tribe);
         this.generateCraftingPlans(tribe);
+        this.ensurePendingSupplyHauls(tribe);
         this.generateRedistributionHauls(tribe);
         this.generateMilitaryPlans(tribe);
         this.generateAdventurePlans(tribe);
@@ -5461,8 +5601,10 @@ export class Simulation {
         buildingType: type,
         width: def.size[0],
         height: def.size[1],
+        cost: def.cost,
         supplied: 0,
         supplyNeeded: Math.max(1, haulSpecs.length),
+        delivered: {},
         stockX: site.x + Math.floor(def.size[0] / 2),
         stockY: site.y + Math.floor(def.size[1] / 2),
       },
@@ -5893,8 +6035,10 @@ export class Simulation {
         buildingType: building.type,
         width: building.width,
         height: building.height,
+        cost,
         supplied: 0,
         supplyNeeded: Math.max(1, haulSpecs.length),
+        delivered: {},
         stockX: center.x,
         stockY: center.y,
         upgradeBuildingId: building.id,
@@ -6475,6 +6619,97 @@ export class Simulation {
       this.enqueueCraftJob(tribe, ResourceType.MetalWeapons, 9, { [ResourceType.Ore]: 16, [ResourceType.Charcoal]: 6, [ResourceType.Bricks]: 3 }, productionHub, 9);
       this.enqueueCraftJob(tribe, ResourceType.MetalArmor, 8, { [ResourceType.Ore]: 15, [ResourceType.Charcoal]: 5, [ResourceType.Bricks]: 3 }, productionHub, 9);
       this.enqueueCraftJob(tribe, ResourceType.IronTools, 8, { [ResourceType.Ore]: 10, [ResourceType.Charcoal]: 4, [ResourceType.Bricks]: 2 }, logisticsHub, 7);
+    }
+  }
+
+  private ensurePendingSupplyHauls(tribe: TribeState): void {
+    for (const job of this.jobs) {
+      if (job.tribeId !== tribe.id || (job.kind !== "build" && job.kind !== "craft")) {
+        continue;
+      }
+      if (job.kind === "build") {
+        this.ensureBuildJobSupplyHauls(tribe, job);
+      } else {
+        this.ensureCraftJobSupplyHauls(tribe, job);
+      }
+    }
+  }
+
+  private ensureBuildJobSupplyHauls(tribe: TribeState, job: JobState): void {
+    const payload = job.payload as BuildPayload;
+    for (const [resource, requiredAmount] of Object.entries(payload.cost)) {
+      const resourceType = Number(resource) as ResourceType;
+      const delivered = this.deliveredAmount(payload.delivered, resourceType);
+      const pending = this.pendingHaulAmount(job.id, resourceType);
+      if (delivered + pending >= (requiredAmount ?? 0)) {
+        continue;
+      }
+      const sourceBuilding = this.findStockedSourceBuilding(tribe.id, payload.stockX, payload.stockY, resourceType);
+      if (!sourceBuilding) {
+        continue;
+      }
+      const missing = (requiredAmount ?? 0) - delivered - pending;
+      for (const haul of this.constructionHaulPlan({ [resourceType]: missing })) {
+        const sourceSite = buildingCenter(sourceBuilding);
+        this.jobs.push({
+          id: this.nextJobId++,
+          tribeId: tribe.id,
+          kind: "haul",
+          x: sourceSite.x,
+          y: sourceSite.y,
+          priority: Math.max(4, job.priority - 1),
+          claimedBy: null,
+          payload: {
+            sourceX: sourceSite.x,
+            sourceY: sourceSite.y,
+            sourceBuildingId: sourceBuilding.id,
+            dropX: payload.stockX,
+            dropY: payload.stockY,
+            resourceType: haul.resourceType,
+            amount: haul.amount,
+            targetJobId: job.id,
+          },
+        });
+      }
+    }
+  }
+
+  private ensureCraftJobSupplyHauls(tribe: TribeState, job: JobState): void {
+    const payload = job.payload as CraftPayload;
+    for (const [resource, requiredAmount] of Object.entries(payload.inputs)) {
+      const resourceType = Number(resource) as ResourceType;
+      const delivered = this.deliveredAmount(payload.delivered, resourceType);
+      const pending = this.pendingHaulAmount(job.id, resourceType);
+      if (delivered + pending >= (requiredAmount ?? 0)) {
+        continue;
+      }
+      const sourceBuilding = this.findStockedSourceBuilding(tribe.id, payload.stockX, payload.stockY, resourceType);
+      if (!sourceBuilding) {
+        continue;
+      }
+      const missing = (requiredAmount ?? 0) - delivered - pending;
+      for (const haul of this.constructionHaulPlan({ [resourceType]: missing })) {
+        const sourceSite = buildingCenter(sourceBuilding);
+        this.jobs.push({
+          id: this.nextJobId++,
+          tribeId: tribe.id,
+          kind: "haul",
+          x: sourceSite.x,
+          y: sourceSite.y,
+          priority: 4,
+          claimedBy: null,
+          payload: {
+            sourceX: sourceSite.x,
+            sourceY: sourceSite.y,
+            sourceBuildingId: sourceBuilding.id,
+            dropX: payload.stockX,
+            dropY: payload.stockY,
+            resourceType: haul.resourceType,
+            amount: haul.amount,
+            targetJobId: job.id,
+          },
+        });
+      }
     }
   }
 
@@ -7458,6 +7693,7 @@ export class Simulation {
         inputs,
         supplied: 0,
         supplyNeeded: Math.max(1, haulSpecs.length),
+        delivered: {},
         stockX: stock.x,
         stockY: stock.y,
       },
@@ -7531,8 +7767,10 @@ export class Simulation {
         buildingType: type,
         width: def.size[0],
         height: def.size[1],
+        cost: def.cost,
         supplied: 0,
         supplyNeeded: Math.max(1, haulSpecs.length),
+        delivered: {},
         stockX: site.x + Math.floor(def.size[0] / 2),
         stockY: site.y + Math.floor(def.size[1] / 2),
       },

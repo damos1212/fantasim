@@ -787,3 +787,27 @@ The main future expansion track from the current prototype state is:
 - better observer tooling: charts/history views, kingdom comparison, legends browser, filters, time controls, and event jump/focus tools
 - save/load and replayable seeds with exportable world state
 - more balancing and long-run tuning so growth, collapse, diplomacy, war, and recovery stay interesting for hours rather than flattening
+
+## 21. Current Execution Priorities
+
+The active implementation priorities are now:
+
+- performance and smoothness:
+  - lower live render cost
+  - smoother interpolation
+  - less UI churn during live updates
+- physical logistics:
+  - construction and crafting fed by real hauled materials
+  - less fake resource teleportation
+  - stronger visible local storage and redistribution
+- early-game flow:
+  - tribes secure survival infrastructure first
+  - tribes expand outward by roads and territory instead of only idling at the capital
+- settlement growth:
+  - branch halls and satellite districts
+  - warehouse-driven hubs
+  - stronger road-linked specialization
+- long-run readability:
+  - clearer world feedback for hauling, stock, work, and expansion
+
+These execution priorities sit in front of the deeper backlog because they make the existing systems behave like a more credible simulation instead of only adding more content layers.

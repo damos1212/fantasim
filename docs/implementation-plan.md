@@ -668,6 +668,40 @@ The following backlog is intentionally kept explicit so the next major system pu
 - save/load and replayable seeds with exportable world state
 - more balancing and long-run tuning so growth, collapse, diplomacy, war, and recovery stay interesting for hours rather than flattening
 
+## Current Execution Plan
+
+The active plan from the current prototype state is:
+
+1. Performance and smoothness baseline
+   - keep reducing live render cost at observer zoom
+   - keep smoothing unit/cloud/entity interpolation
+   - preserve UI state under live updates
+   - keep the default world/test setup fast enough to tune the sim
+2. Physical logistics and construction realism
+   - remove fake zero-stock haul pickups
+   - make build/craft jobs wait on real delivered materials
+   - push more source-to-storage-to-production movement through actual buildings
+   - keep visible local stock and carried-resource feedback readable
+3. Early-game activity and expansion
+   - make tribes reliably secure food, water, wood, stone, and housing first
+   - force towns to spread by roads, territory, branch halls, and satellite districts
+   - keep tribes active after bootstrap instead of flattening into idle equilibrium
+4. Midgame specialization
+   - stronger warehouse hubs
+   - stronger extractor-to-district growth
+   - clearer proto-industry, refined goods, and trade pressure
+5. Readability and observer depth
+   - better event/history tooling
+   - stronger battle readability
+   - stronger selected-unit and settlement feedback
+
+Definition of done for the current execution plan:
+
+- tribes visibly gather, haul, build, upgrade, and expand for long runs
+- towns spread into connected districts and branch halls instead of only one clump
+- construction and crafting depend on visible delivered materials
+- performance is stable enough that the simulation remains readable while the world grows
+
 ## Detailed Next-Phase Plan
 
 The next major work should happen in this order so the sim becomes easier to watch, easier to tune, and deeper without collapsing under unreadable complexity.
