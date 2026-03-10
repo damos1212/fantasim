@@ -5715,6 +5715,10 @@ export class Simulation {
       return true;
     }
 
+    if (!this.canFinalizeBuildingPlacement(tribe.id, payload, x, y)) {
+      return false;
+    }
+
     const building = this.placeBuilding(tribe.id, payload.buildingType, x, y);
     if (payload.buildingType === BuildingType.CapitalHall) {
       const halls = this.capitalHallsForTribe(tribe.id);
@@ -9614,10 +9618,16 @@ export class Simulation {
     const index = indexOf(x, y, this.world.width);
     const terrain = this.world.terrain[index];
     const feature = this.world.feature[index];
+    const owner = this.world.owner[index];
     if (this.world.buildingByTile[index] >= 0) return false;
     if (terrain === TerrainType.WaterDeep || terrain === TerrainType.WaterShallow || terrain === TerrainType.River || terrain === TerrainType.Lava || terrain === TerrainType.Mountain) return false;
     if (feature === FeatureType.Volcano || feature === FeatureType.Trees || feature === FeatureType.OreVein || feature === FeatureType.StoneOutcrop) return false;
     if (kind === "road" || kind === "pave") {
+      if (this.world.road[index] === 0) {
+        if (owner < 0 || this.tribeRoadAdjacency(owner, x, y) === 0) {
+          return false;
+        }
+      }
       return feature !== FeatureType.Volcano && feature !== FeatureType.Palisade && feature !== FeatureType.StoneWall && feature !== FeatureType.Gate;
     }
     if (kind === "canal") {
@@ -10143,16 +10153,13 @@ export class Simulation {
     }
     const centerX = x + Math.floor(width / 2);
     const centerY = y + Math.floor(height / 2);
-    for (let dy = -2; dy <= height + 1; dy += 1) {
-      for (let dx = -2; dx <= width + 1; dx += 1) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (!inBounds(nx, ny, this.world.width, this.world.height)) continue;
-        const index = indexOf(nx, ny, this.world.width);
-        if (this.world.road[index] > 0 && this.world.owner[index] === tribeId) {
-          return true;
-        }
-      }
+    for (let tx = x; tx < x + width; tx += 1) {
+      if (this.tribeRoadAdjacency(tribeId, tx, y) > 0) return true;
+      if (this.tribeRoadAdjacency(tribeId, tx, y + height - 1) > 0) return true;
+    }
+    for (let ty = y; ty < y + height; ty += 1) {
+      if (this.tribeRoadAdjacency(tribeId, x, ty) > 0) return true;
+      if (this.tribeRoadAdjacency(tribeId, x + width - 1, ty) > 0) return true;
     }
 
     const preview: BuildingState = {
@@ -10372,6 +10379,13 @@ export class Simulation {
       }
     }
     return true;
+  }
+
+  private canFinalizeBuildingPlacement(tribeId: number, payload: BuildPayload, x: number, y: number): boolean {
+    if (payload.upgradeBuildingId != null) {
+      return true;
+    }
+    return this.canPlaceBuilding(payload.buildingType, x, y, payload.width, payload.height, tribeId);
   }
 
   private pushEvent(event: Omit<EventState, "id" | "tick">): void {

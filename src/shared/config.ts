@@ -1,5 +1,5 @@
-export const WORLD_WIDTH = 768;
-export const WORLD_HEIGHT = 768;
+export const WORLD_WIDTH = 384;
+export const WORLD_HEIGHT = 384;
 export const CHUNK_SIZE = 32;
 export const TILE_SIZE = 16;
 

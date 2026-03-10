@@ -951,10 +951,10 @@ export class GameRenderer {
     if (!ctx) {
       throw new Error("Failed to create cached texture context");
     }
-    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingEnabled = false;
     draw(ctx);
     const texture = Texture.from(canvas);
-    texture.source.scaleMode = "linear";
+    texture.source.scaleMode = "nearest";
     this.iconTextures.set(key, texture);
     return texture;
   }
@@ -1927,9 +1927,9 @@ export class GameRenderer {
     if (!context) {
       throw new Error("Failed to create static chunk render context");
     }
-    context.imageSmoothingEnabled = true;
+    context.imageSmoothingEnabled = false;
     const texture = Texture.from(canvas);
-    texture.source.scaleMode = "linear";
+    texture.source.scaleMode = "nearest";
     const sprite = new Sprite(texture);
     sprite.x = chunkX * this.chunkPixelSize(lodStep);
     sprite.y = chunkY * this.chunkPixelSize(lodStep);
@@ -2814,9 +2814,9 @@ export class GameRenderer {
     if (!ctx) return;
     const scaleX = this.minimap.width / world.width;
     const scaleY = this.minimap.height / world.height;
-    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingEnabled = false;
     if (this.minimapTerrainDirty && backdropCtx) {
-      backdropCtx.imageSmoothingEnabled = true;
+      backdropCtx.imageSmoothingEnabled = false;
       backdropCtx.clearRect(0, 0, this.minimapBackdrop.width, this.minimapBackdrop.height);
       for (let y = 0; y < this.minimap.height; y += 1) {
         for (let x = 0; x < this.minimap.width; x += 1) {

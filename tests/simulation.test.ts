@@ -157,6 +157,56 @@ describe("simulation", () => {
     })).toBe(true);
   });
 
+  test("completed builds cannot overlap an occupied footprint", () => {
+    const sim = createSimulation("build-overlap-guard", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    const existing = sim.buildings.find((building: any) => building.tribeId === tribe.id && building.type === BuildingType.Stockpile);
+
+    expect(existing).toBeTruthy();
+
+    const ok = sim.completeBuildingTask(tribe, {
+      buildingType: BuildingType.House,
+      width: 3,
+      height: 3,
+      cost: {},
+      supplied: 0,
+      supplyNeeded: 0,
+      delivered: {},
+      stockX: existing.x,
+      stockY: existing.y,
+    }, existing.x, existing.y);
+
+    expect(ok).toBe(false);
+  });
+
+  test("new road tiles must connect to an existing road network", () => {
+    const sim = createSimulation("road-tree", { width: 384, height: 384 }) as any;
+    const tribe = sim.tribes[0];
+    let nearCandidate: { x: number; y: number } | null = null;
+    for (let y = 1; y < sim.world.height - 1 && !nearCandidate; y += 1) {
+      for (let x = 1; x < sim.world.width - 1 && !nearCandidate; x += 1) {
+        const index = y * sim.world.width + x;
+        if (sim.world.owner[index] !== tribe.id || sim.world.road[index] <= 0) continue;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          const nearIndex = ny * sim.world.width + nx;
+          if (sim.world.owner[nearIndex] === tribe.id && sim.world.road[nearIndex] === 0 && sim.world.buildingByTile[nearIndex] < 0) {
+            nearCandidate = { x: nx, y: ny };
+            break;
+          }
+        }
+      }
+    }
+
+    const farX = Math.max(2, Math.min(sim.world.width - 3, tribe.capitalX + 18));
+    const farY = Math.max(2, Math.min(sim.world.height - 3, tribe.capitalY + 18));
+
+    expect(nearCandidate).toBeTruthy();
+    expect(sim.canPlaceEarthwork(farX, farY, "road")).toBe(false);
+    expect(sim.canPlaceEarthwork(nearCandidate!.x, nearCandidate!.y, "road")).toBe(true);
+  });
+
   test("builders pave streets and mature buildings over time", { timeout: 30000 }, () => {
     const sim = createSimulation("builder-upkeep", { width: 384, height: 384 });
     let lastSnapshot = sim.snapshotNow();
