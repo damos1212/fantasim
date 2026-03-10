@@ -1541,13 +1541,17 @@ export class GameRenderer {
     }
 
     if (this.viewMode === "surface" && lodStep === 1) {
-      const drawLiveBuildings = this.zoom > 1.98;
+      const drawDetailedBuildings = this.zoom > 1.98;
+      const drawSimplifiedBuildings = this.zoom > 0.72;
       for (const building of this.state.buildings) {
         if (building.x + building.width < minTileX || building.y + building.height < minTileY || building.x > maxTileX || building.y > maxTileY) {
           continue;
         }
-        if (drawLiveBuildings) {
+        if (drawDetailedBuildings) {
           this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), true, 0, 0, true);
+        } else if (drawSimplifiedBuildings) {
+          this.drawBuilding(this.overlayGraphics, building, tribeById.get(building.tribeId), false, 0, 0, false);
+          this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
         } else {
           this.drawBuildingDynamicOverlay(this.overlayGraphics, building, tribeById.get(building.tribeId));
         }

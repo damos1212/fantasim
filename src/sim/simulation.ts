@@ -3505,6 +3505,18 @@ export class Simulation {
     return adjacent;
   }
 
+  private roadLinearityScore(tribeId: number, x: number, y: number): number {
+    let score = 0;
+    const west = x > 0 && this.world.owner[indexOf(x - 1, y, this.world.width)] === tribeId && this.world.road[indexOf(x - 1, y, this.world.width)] > 0;
+    const east = x < this.world.width - 1 && this.world.owner[indexOf(x + 1, y, this.world.width)] === tribeId && this.world.road[indexOf(x + 1, y, this.world.width)] > 0;
+    const north = y > 0 && this.world.owner[indexOf(x, y - 1, this.world.width)] === tribeId && this.world.road[indexOf(x, y - 1, this.world.width)] > 0;
+    const south = y < this.world.height - 1 && this.world.owner[indexOf(x, y + 1, this.world.width)] === tribeId && this.world.road[indexOf(x, y + 1, this.world.width)] > 0;
+    if ((west && east) || (north && south)) score += 3;
+    if ((west || east) && (north || south)) score += 2;
+    if (west || east || north || south) score += 1;
+    return score;
+  }
+
   private findBuilderMaintenanceTask(agent: AgentState, tribe: TribeState): AgentTask | null {
     const candidates = this.buildingsForTribe(tribe.id)
       .filter((building) =>
@@ -3551,7 +3563,9 @@ export class Simulation {
             + this.nearbyBuildingCount(tribe.id, BuildingType.Workshop, x, y, 5);
           if (this.world.road[index] === 0) {
             if (adjacency === 0 || !this.canPlaceEarthwork(x, y, "road")) continue;
-            const score = 84 + nearbyBuildings * 8 + adjacency * 6 - hubDistance * 5 - distance * 2;
+            const linearity = this.roadLinearityScore(tribe.id, x, y);
+            if (adjacency > 2 && linearity < 2) continue;
+            const score = 68 + nearbyBuildings * 5 + adjacency * 4 + linearity * 12 - hubDistance * 7 - distance * 2.4;
             if (!best || score > best.score) {
               best = { x, y, kind: "road", score };
             }
@@ -8753,11 +8767,16 @@ export class Simulation {
           if (this.world.owner[index] !== tribe.id || this.world.buildingByTile[index] >= 0) continue;
           const road = this.world.road[index];
           const adjacency = this.tribeRoadAdjacency(tribe.id, x, y);
-          if (road === 0 && adjacency > 0 && this.canPlaceEarthwork(x, y, "road")) {
-            this.enqueueEarthworkJob(tribe, x, y, "road", 4);
-            planned += 1;
-          } else if (tribe.age >= AgeType.Stone && road === 1 && this.canPlaceEarthwork(x, y, "pave")) {
+          if (tribe.age >= AgeType.Stone && road === 1 && this.canPlaceEarthwork(x, y, "pave")) {
             this.enqueueEarthworkJob(tribe, x, y, "pave", 3);
+            planned += 1;
+          } else if (
+            road === 0
+            && adjacency > 0
+            && this.roadLinearityScore(tribe.id, x, y) >= 2
+            && this.canPlaceEarthwork(x, y, "road")
+          ) {
+            this.enqueueEarthworkJob(tribe, x, y, "road", 3);
             planned += 1;
           }
         }
