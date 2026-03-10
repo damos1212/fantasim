@@ -481,6 +481,10 @@ export class GameRenderer {
   lastSnapshotInterval = (1000 / SIM_TICKS_PER_SECOND) * SNAPSHOT_TICKS;
   lastFrameAt = performance.now();
   presentationClock = 0;
+  frameTimeMs = 16.7;
+  fpsEstimate = 60;
+  lastPerfSampleAt = performance.now();
+  framesSincePerfSample = 0;
   lastHudRenderAt = 0;
   hudDirty = true;
   lastTopbarMarkup = "";
@@ -1427,6 +1431,14 @@ export class GameRenderer {
 
     const nowMs = performance.now();
     const frameDelta = Math.min(0.05, Math.max(0, (nowMs - this.lastFrameAt) / 1000));
+    this.frameTimeMs = this.frameTimeMs * 0.9 + frameDelta * 1000 * 0.1;
+    this.framesSincePerfSample += 1;
+    if (nowMs - this.lastPerfSampleAt >= 500) {
+      this.fpsEstimate = Math.round((this.framesSincePerfSample * 1000) / Math.max(1, nowMs - this.lastPerfSampleAt));
+      this.framesSincePerfSample = 0;
+      this.lastPerfSampleAt = nowMs;
+      this.hudDirty = true;
+    }
     this.lastFrameAt = nowMs;
     this.presentationClock += frameDelta * (this.paused ? 0.35 : 0.7 + this.simSpeed * 0.18);
     const tribeById = new Map(this.state.tribes.map((tribe) => [tribe.id, tribe]));
@@ -1688,16 +1700,16 @@ export class GameRenderer {
         const shouldDrawAgentOverlay =
           this.selectedUnitId === agent.id ||
           agent.hero ||
-          (this.zoom > 1.95 && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.task !== "idle")) ||
+          (this.zoom > 2.12 && (agent.role === AgentRole.Soldier || agent.role === AgentRole.Mage || agent.task !== "idle")) ||
           agent.health < 55;
         if (shouldDrawAgentOverlay) {
           const px = position.x * TILE_SIZE;
           const py = position.y * TILE_SIZE;
-          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.05 || agent.health < 55) {
+          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.18 || agent.health < 55) {
             drawPixelRect(this.unitGraphics, px + 3, py + 1, 10 * (agent.health / 100), 1, 0x78d67a, 0.9);
             drawPixelRect(this.unitGraphics, px + 3, py + 2, 10, 1, 0x2d3a2e, 0.45);
           }
-          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.1) {
+          if (this.selectedUnitId === agent.id || agent.hero || this.zoom > 2.24) {
             const taskBob = (Math.sin(this.presentationClock * 4 + agent.id * 0.3) + 1) * 0.8;
             this.drawTaskIndicator(agent.task, px, py - 3 - taskBob);
             this.drawActionEffect(agent, px, py);
@@ -2098,7 +2110,7 @@ export class GameRenderer {
         this.atmosphereGraphics.endFill();
       }
 
-      const particleCount = this.zoom > 1.8 ? 8 : this.zoom > 1.35 ? 5 : 3;
+      const particleCount = this.zoom > 2.15 ? 6 : this.zoom > 1.55 ? 4 : 2;
       for (let i = 0; i < particleCount; i += 1) {
         const angle = (i / particleCount) * Math.PI * 2 + (this.presentationClock * 0.9);
         const radial = ((i * 37 + Math.floor(this.presentationClock * 60)) % 100) / 100;
@@ -3361,6 +3373,8 @@ export class GameRenderer {
       this.statMarkup("Inspired", `${totalInspired}`),
       this.statMarkup("Animals", `${this.state.animals.length}`),
       this.statMarkup("Wars/Hostility", `${activeWars}`),
+      this.statMarkup("FPS", `${this.fpsEstimate}`),
+      this.statMarkup("Frame", `${this.frameTimeMs.toFixed(1)}ms`),
       this.statMarkup("Speed", this.paused ? "Paused" : `${this.simSpeed}x`),
       this.statMarkup("Tick", `${this.state.tick}`),
     ].join("");
